@@ -1,2 +1,3 @@
 module_id,category_id,display_name,module_description,active
 001,01,Module 001 Placeholder,Example module that produces a deterministic text output and manifest.,true
+002,01,Module 002 Derived Notes,Placeholder transform module that depends on 001 and emits derived notes output.,true
