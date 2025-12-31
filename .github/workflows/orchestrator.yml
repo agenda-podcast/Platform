@@ -28,8 +28,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Install GitHub CLI
-        uses: cli/cli-action@v2
+      # GitHub-hosted runners already include the GitHub CLI (`gh`).
+      # This step is a sanity check and makes failures obvious if you later
+      # migrate to a container-based job or a self-hosted runner.
+      - name: Verify GitHub CLI
+        run: gh --version
 
       - name: Bootstrap billing-state (download or seed)
         env:

@@ -29,8 +29,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Install GitHub CLI
-        uses: cli/cli-action@v2
+      # GitHub-hosted runners already include the GitHub CLI (`gh`).
+      - name: Verify GitHub CLI
+        run: gh --version
 
       - name: Download billing-state
         env:
