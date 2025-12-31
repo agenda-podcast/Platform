@@ -1,0 +1,11 @@
+g,category_id,module_id,reason_id,reason_key,active,notes
+0,14,000,001,workorder_invalid,true,Work order YAML invalid.
+0,15,000,001,unauthorized_release_access,true,Cross-tenant access denied.
+0,16,000,001,not_enough_credits,true,Global billing check failed.
+0,16,000,002,tenant_suspended,true,Tenant suspended.
+0,16,000,003,internal_error,true,Unexpected internal error.
+1,01,001,001,missing_required_input,true,Module 001 param/input validation.
+1,01,001,002,bad_input_format,true,Module 001 param/input validation.
+1,01,001,003,external_api_error,true,Placeholder upstream error.
+1,12,001,001,skipped_cache,true,Cache hit => run skipped and logged as FAILED for refund logic.
+1,14,001,001,artifacts_not_eligible,true,Artifacts purchased but not eligible per policy/support.

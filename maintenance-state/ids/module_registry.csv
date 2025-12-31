@@ -1,0 +1,2 @@
+module_id,category_id,display_name,module_description,active
+001,01,Module 001 Placeholder,Example module that produces a deterministic text output and manifest.,true

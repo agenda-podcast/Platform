@@ -1,0 +1,53 @@
+name: Cache Prune
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * 0"  # Sundays 05:00 UTC
+
+permissions:
+  actions: write
+  contents: write
+
+env:
+  BILLING_RELEASE_TAG: "billing-state-v1"
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install GitHub CLI
+        uses: cli/cli-action@v2
+
+      - name: Download billing-state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p .billing-state
+          gh release download "${BILLING_RELEASE_TAG}" -D .billing-state -p "cache_index.csv" -p "state_manifest.json"
+
+      - name: Cache prune (dry-run)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -m platform.cli cache-prune --billing-state-dir .billing-state --dry-run
+
+      - name: Upload updated cache index
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -c "from pathlib import Path; from platform.billing.state import BillingState; BillingState(Path('.billing-state')).write_state_manifest(['cache_index.csv'])"
+          gh release upload "${BILLING_RELEASE_TAG}" .billing-state/cache_index.csv .billing-state/state_manifest.json --clobber

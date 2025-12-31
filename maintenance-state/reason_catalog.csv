@@ -1,0 +1,11 @@
+reason_code,g,category_id,module_id,reason_key,category_name,description,scope
+014000001,0,14,000,workorder_invalid,Validation,Work order file failed schema validation.,GLOBAL
+015000001,0,15,000,unauthorized_release_access,Access Control,Cross-tenant access denied by tenant relationships.,GLOBAL
+016000001,0,16,000,not_enough_credits,Billing,Tenant credits do not cover estimated work order spend.,GLOBAL
+016000002,0,16,000,tenant_suspended,Billing,Tenant account is suspended; execution not allowed.,GLOBAL
+016000003,0,16,000,internal_error,Billing,Unexpected internal system error.,GLOBAL
+101001001,1,01,001,missing_required_input,Acquisition,A required module input was not provided or could not be resolved.,MODULE
+101001002,1,01,001,bad_input_format,Acquisition,Input was present but not in a supported format.,MODULE
+101001003,1,01,001,external_api_error,Acquisition,Upstream API call failed or returned an error.,MODULE
+112001001,1,12,001,skipped_cache,Caching,Cache was used; module execution skipped and marked FAILED for refund logic.,MODULE
+114001001,1,14,001,artifacts_not_eligible,Validation,Artifacts were purchased but not eligible per policy or module capability.,MODULE
