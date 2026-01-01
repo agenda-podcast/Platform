@@ -45,12 +45,9 @@ def _assert_exact_header(path: Path, expected: List[str]) -> None:
     got = _read_csv_header(path)
     if got != expected:
         _die(
-            "CSV header mismatch:
-"
-            f"  file: {path}
-"
-            f"  expected: {expected}
-"
+            "CSV header mismatch:\n"
+            f"  file: {path}\n"
+            f"  expected: {expected}\n"
             f"  got:      {got}"
         )
 
