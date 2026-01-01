@@ -1,0 +1,27 @@
+# Template module.yaml. Maintenance will assign numeric module_id and rewrite placeholders.
+module:
+  id: "__MODULE_ID__"                 # replaced with 3-digit numeric id, e.g. "002"
+  name: "google_search_pages"
+  version: "1.0.0"
+  entrypoint: "google_search_pages:run_module___MODULE_ID__"  # rewritten to run_module_002
+  description: "Google Custom Search (web/pages only) source collector."
+
+secrets:
+  # Maintenance rewrites env names to "<ID>_GOOGLE_SEARCH_API_KEY" and "<ID>_GOOGLE_SEARCH_ENGINE_ID"
+  api_key_env: "__MODULE_ID___GOOGLE_SEARCH_API_KEY"
+  engine_id_env: "__MODULE_ID___GOOGLE_SEARCH_ENGINE_ID"
+
+behavior:
+  non_image_only: true
+  results_per_page_fixed: 10
+  start_index_fixed: 1
+  max_results_per_query_cap: 100
+  max_queries_per_run_cap: 5
+  dedupe_default_on: true
+  safe_default: "active"
+
+outputs:
+  base_dir: "outputs/{topic_id}/__MODULE_ID___google_search_pages"
+  raw_dir: "outputs/{topic_id}/__MODULE_ID___google_search_pages/raw"
+  results_jsonl: "outputs/{topic_id}/__MODULE_ID___google_search_pages/results.jsonl"
+  report_json: "outputs/{topic_id}/__MODULE_ID___google_search_pages/report.json"

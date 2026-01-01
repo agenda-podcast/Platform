@@ -1,0 +1,241 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:platform:module:__MODULE_ID__:output:report",
+  "title": "__MODULE_ID__ Google Search Pages - Run Report",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "module_id": {
+      "type": "string",
+      "pattern": "^\\d{3}$"
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requested": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "queries": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {
+            "type": "string"
+          }
+        },
+        "max_items_per_query": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "safe": {
+          "type": "string",
+          "enum": [
+            "active",
+            "off"
+          ]
+        }
+      },
+      "required": [
+        "queries",
+        "max_items_per_query",
+        "safe"
+      ]
+    },
+    "effective": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "num_per_page": {
+          "type": "integer",
+          "const": 10
+        },
+        "start_first": {
+          "type": "integer",
+          "const": 1
+        },
+        "max_retrievable_per_query": {
+          "type": "integer",
+          "const": 100
+        },
+        "max_total_results_per_run": {
+          "type": "integer",
+          "const": 500
+        }
+      },
+      "required": [
+        "num_per_page",
+        "start_first",
+        "max_retrievable_per_query",
+        "max_total_results_per_run"
+      ]
+    },
+    "per_query": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "query_index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4
+          },
+          "requested_max": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "retrieved_total_raw": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "retrieved_total_unique": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "api_capped": {
+            "type": "boolean"
+          },
+          "api_cap_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pages_fetched": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10
+          },
+          "starts_used": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 91
+            }
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "page_start": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "error_type": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "http_status": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "page_start",
+                "error_type",
+                "message",
+                "http_status"
+              ]
+            }
+          }
+        },
+        "required": [
+          "query",
+          "query_index",
+          "requested_max",
+          "retrieved_total_raw",
+          "retrieved_total_unique",
+          "api_capped",
+          "api_cap_reason",
+          "pages_fetched",
+          "starts_used",
+          "errors"
+        ]
+      }
+    },
+    "dedupe_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "strip_tracking_params": {
+          "type": "boolean"
+        },
+        "duplicates_removed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "enabled",
+        "strip_tracking_params",
+        "duplicates_removed"
+      ]
+    },
+    "outputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "results_jsonl_path": {
+          "type": "string"
+        },
+        "raw_dir_path": {
+          "type": "string"
+        },
+        "report_json_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "results_jsonl_path",
+        "raw_dir_path",
+        "report_json_path"
+      ]
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "module_id",
+    "tenant_id",
+    "run_id",
+    "requested",
+    "effective",
+    "per_query",
+    "dedupe_summary",
+    "outputs",
+    "started_at",
+    "finished_at"
+  ]
+}
