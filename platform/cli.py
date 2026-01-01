@@ -138,9 +138,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--note", default="")
     sp.add_argument("--billing-state-dir", default=".billing-state")
     sp.set_defaults(func=cmd_admin_topup)
-sp = sub.add_parser("reconcile-payments", help="Reconcile repo-recorded payments into billing-state")
-sp.add_argument("--billing-state-dir", default=".billing-state")
-sp.set_defaults(func=cmd_reconcile_payments)
+    sp = sub.add_parser("reconcile-payments", help="Reconcile repo-recorded payments into billing-state")
+    sp.add_argument("--billing-state-dir", default=".billing-state")
+    sp.set_defaults(func=cmd_reconcile_payments)
 
 
 
