@@ -1,3 +1,1 @@
-module_id,price_run_credits,price_save_to_release_credits,effective_from,effective_to,active,notes
-001,5,2,,,true,Seed placeholder pricing for module 001
-002,5,2,,,true,Seed placeholder pricing for module 002
+module_id,price_unit,price_credits,price_scope,note
