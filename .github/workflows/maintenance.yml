@@ -5,32 +5,98 @@ on:
   schedule:
     - cron: "17 3 * * *"
 
+# Needed to allow committing/pushing back to the repo.
+permissions:
+  contents: write
+
+concurrency:
+  group: maintenance
+  cancel-in-progress: false
+
 jobs:
   maintenance:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - name: Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      - name: Show runner context
+        run: |
+          set -euxo pipefail
+          python --version
+          pip --version
+          uname -a
+          echo "PWD=$(pwd)"
+          echo "GITHUB_REF=$GITHUB_REF"
+          echo "GITHUB_SHA=$GITHUB_SHA"
+          ls -la
+
       - name: Install deps
         run: |
+          set -euxo pipefail
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            echo "requirements.txt not found"
+          fi
+          # Ensure PyYAML is present for maintenance scripts that parse module.yaml
+          pip install pyyaml
+          python -c "import yaml; print('PyYAML OK', yaml.__version__)"
 
-      - name: Maintenance: ensure module prices + generate billing-state seed
+      - name: Run Maintenance (prices + seed)
         run: |
+          set -euxo pipefail
+          mkdir -p runtime
           python scripts/maintenance_prices_authoritative.py             --modules-dir modules             --repo-prices-path platform/billing/module_prices.csv             --seed-dir platform/billing_state_seed             --default-run-credits 5             --default-save-to-release-credits 2             --report-path runtime/maintenance_prices_report.json
 
-      - name: Verify maintenance seed prices cover all modules
+      - name: Verify Maintenance seed prices cover all modules
         run: |
+          set -euxo pipefail
           python scripts/ci_verify_prices_seed.py             --modules-dir modules             --seed-path platform/billing_state_seed/module_prices.csv
+
+      - name: Git status
+        if: always()
+        run: |
+          set -euxo pipefail
+          git status --porcelain || true
+          git diff --stat || true
+
+      - name: Dump Maintenance artifacts (always)
+        if: always()
+        run: |
+          set -euxo pipefail
+          echo "---- runtime ----"
+          ls -la runtime || true
+          echo "---- report ----"
+          (cat runtime/maintenance_prices_report.json || true) | sed -e 's/./&/'
+          echo "---- repo prices ----"
+          (head -n 50 platform/billing/module_prices.csv || true)
+          echo "---- seed prices ----"
+          (head -n 50 platform/billing_state_seed/module_prices.csv || true)
+
+      - name: Upload Maintenance artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maintenance-artifacts
+          path: |
+            runtime/**
+            platform/billing/module_prices.csv
+            platform/billing_state_seed/module_prices.csv
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Commit maintenance outputs
         run: |
-          git status --porcelain
+          set -euxo pipefail
           git add platform/billing/module_prices.csv platform/billing_state_seed/module_prices.csv runtime/maintenance_prices_report.json
           git commit -m "Maintenance: backfill module prices + seed" || echo "No changes"
           git push
