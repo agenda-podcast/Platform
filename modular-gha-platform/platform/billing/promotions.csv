@@ -1,0 +1,2 @@
+promo_id,code,type,value_credits,max_uses_per_tenant,valid_from,valid_to,active,rules_json,notes
+PROMO-001,WELCOME10,PROMO_CODE,10,1,,,true,{},One-time welcome credit applied as a discount on spend (negative line item)

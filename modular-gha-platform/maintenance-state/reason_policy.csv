@@ -1,0 +1,16 @@
+reason_code,fail,refundable,notes
+014000001,true,false,Work order invalid; no Spend recorded.
+015000001,true,false,Unauthorized access is not refundable.
+016000001,true,false,Not enough credits: no Spend recorded.
+016000002,true,false,Suspended tenants cannot run.
+016000003,true,true,Internal errors refundable by default (override as needed).
+101001001,true,true,Validation failures are refundable.
+101001002,true,true,Validation failures are refundable.
+101001003,true,true,External API failure refundable.
+101002001,true,true,
+101002002,true,true,
+101002003,true,true,
+112001001,true,true,Cache skip refundable (skipped modules refunded).
+112002001,true,true,
+114001001,true,true,Artifacts not eligible; refundable.
+114002001,true,true,
