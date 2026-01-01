@@ -3,104 +3,34 @@ name: Maintenance
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 3 * * *"  # 03:00 UTC daily
-
-permissions:
-  contents: write
-
-env:
-  BILLING_RELEASE_TAG: "billing-state-v1"
-
+    - cron: "17 3 * * *"
 
 jobs:
-  compile:
+  maintenance:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Verify GitHub CLI
-        run: gh --version
-
-      - name: Download billing-state
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Maintenance: ensure module prices + generate billing-state seed
         run: |
-          mkdir -p .billing-state
-          if gh release view "${BILLING_RELEASE_TAG}" >/dev/null 2>&1; then
-            echo "Downloading billing-state assets"
-            gh release download "${BILLING_RELEASE_TAG}" -D .billing-state \
-              -p "tenants_credits.csv" \
-              -p "transactions.csv" \
-              -p "transaction_items.csv" \
-              -p "promotion_redemptions.csv" \
-              -p "cache_index.csv" \
-              -p "workorders_log.csv" \
-              -p "module_runs_log.csv" \
-              -p "state_manifest.json"
-          else
-            echo "Creating billing-state release ${BILLING_RELEASE_TAG} from seed"
-            cp billing-state-seed/tenants_credits.csv .billing-state/
-            cp billing-state-seed/transactions.csv .billing-state/
-            cp billing-state-seed/transaction_items.csv .billing-state/
-            cp billing-state-seed/promotion_redemptions.csv .billing-state/
-            cp billing-state-seed/cache_index.csv .billing-state/
-            cp billing-state-seed/workorders_log.csv .billing-state/
-            cp billing-state-seed/module_runs_log.csv .billing-state/
-            cp billing-state-seed/state_manifest.json .billing-state/
-            gh release create "${BILLING_RELEASE_TAG}" --title "Billing State" --notes "Automated billing state" \
-              .billing-state/tenants_credits.csv \
-              .billing-state/transactions.csv \
-              .billing-state/transaction_items.csv \
-              .billing-state/promotion_redemptions.csv \
-              .billing-state/cache_index.csv \
-              .billing-state/workorders_log.csv \
-              .billing-state/module_runs_log.csv \
-              .billing-state/state_manifest.json
-          fi
+          python scripts/maintenance_prices_authoritative.py             --modules-dir modules             --repo-prices-path platform/billing/module_prices.csv             --seed-dir platform/billing_state_seed             --default-run-credits 5             --default-save-to-release-credits 2             --report-path runtime/maintenance_prices_report.json
 
-      - name: Reconcile payments into billing-state (repo → Release)
+      - name: Verify maintenance seed prices cover all modules
         run: |
-          python -m platform.cli validate-payments
-          python -m platform.cli reconcile-payments --billing-state-dir .billing-state
+          python scripts/ci_verify_prices_seed.py             --modules-dir modules             --seed-path platform/billing_state_seed/module_prices.csv
 
-      - name: Upload updated billing-state (if changed)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Commit maintenance outputs
         run: |
-          if [ ! -f .billing-state/.billing_changed ]; then
-            echo "No billing changes."
-            exit 0
-          fi
-          echo "Billing changed: $(cat .billing-state/.billing_changed) payment(s) applied"
-          gh release upload "${BILLING_RELEASE_TAG}" --clobber \
-            .billing-state/tenants_credits.csv \
-            .billing-state/transactions.csv \
-            .billing-state/transaction_items.csv \
-            .billing-state/state_manifest.json
-
-      - name: Compile maintenance-state
-        run: |
-          python -m platform.cli maintenance
-
-      - name: Commit changes (if any)
-        run: |
-          if git diff --quiet; then
-            echo "No changes."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add maintenance-state
-          git commit -m "chore: update maintenance-state"
+          git status --porcelain
+          git add platform/billing/module_prices.csv platform/billing_state_seed/module_prices.csv runtime/maintenance_prices_report.json
+          git commit -m "Maintenance: backfill module prices + seed" || echo "No changes"
           git push
