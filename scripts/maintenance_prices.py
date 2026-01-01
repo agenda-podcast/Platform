@@ -7,11 +7,6 @@ from datetime import date
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-try:
-    import yaml  # type: ignore
-except Exception:
-    yaml = None
-
 EXPECTED_HEADER = [
     "module_id",
     "price_run_credits",
@@ -27,7 +22,7 @@ DIGITS_RE = re.compile(r"^\d+$")
 
 DEFAULT_EFFECTIVE_FROM = "1970-01-01"
 DEFAULT_ACTIVE = "true"
-DEFAULT_NOTES = "Auto-added by Maintenance using billing defaults."
+DEFAULT_NOTES = "Auto-added by Maintenance using platform billing defaults."
 
 
 def _normalize_mid(mid: str) -> str:
@@ -91,31 +86,37 @@ def _collect_module_ids(modules_dir: Path) -> List[str]:
     return sorted(set(ids))
 
 
-def _load_defaults(config_path: Path) -> Tuple[int, int]:
-    # Defaults if config is missing or unreadable.
+def _load_defaults(defaults_csv: Path) -> Tuple[int, int]:
+    # Safe built-ins if defaults file missing or malformed.
     run_default = 5
     save_default = 2
 
-    if not config_path.exists():
+    if not defaults_csv.exists():
         return run_default, save_default
 
-    if yaml is None:
-        raise RuntimeError("PyYAML is required to read billing_config.yaml. Add 'pyyaml' to requirements.txt")
-
-    data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    bd = data.get("billing_defaults") or {}
-    try:
-        run_default = int(bd.get("default_price_run_credits", run_default))
-        save_default = int(bd.get("default_price_save_to_release_credits", save_default))
-    except Exception:
-        # If config values are malformed, keep safe defaults.
-        pass
+    with defaults_csv.open("r", encoding="utf-8", newline="") as f:
+        r = csv.DictReader(f)
+        for row in r:
+            k = (row.get("key") or "").strip()
+            v = (row.get("value") or "").strip()
+            if not k:
+                continue
+            if k == "default_price_run_credits":
+                try:
+                    run_default = int(v)
+                except Exception:
+                    pass
+            elif k == "default_price_save_to_release_credits":
+                try:
+                    save_default = int(v)
+                except Exception:
+                    pass
 
     return run_default, save_default
 
 
 def backfill_module_prices(module_prices_csv: Path, modules_dir: Path, run_default: int, save_default: int) -> Dict[str, int]:
-    # module_prices.csv must already exist in repo. If missing, create it with correct header.
+    # If missing, create with correct header.
     if not module_prices_csv.exists():
         _write_csv(module_prices_csv, EXPECTED_HEADER, [])
 
@@ -130,7 +131,7 @@ def backfill_module_prices(module_prices_csv: Path, modules_dir: Path, run_defau
     today = date.today()
     module_ids = _collect_module_ids(modules_dir)
 
-    # Normalize + dedupe (single-row model per module_id)
+    # Normalize + dedupe per module_id, preferring effective rows.
     by_mid: Dict[str, Dict[str, str]] = {}
     for r in rows:
         mid = _normalize_mid(r.get("module_id", ""))
@@ -140,7 +141,6 @@ def backfill_module_prices(module_prices_csv: Path, modules_dir: Path, run_defau
         if mid not in by_mid:
             by_mid[mid] = r
         else:
-            # prefer effective row if duplicates
             if _is_effective_now(r, today) and not _is_effective_now(by_mid[mid], today):
                 by_mid[mid] = r
 
@@ -165,14 +165,12 @@ def backfill_module_prices(module_prices_csv: Path, modules_dir: Path, run_defau
             added += 1
             continue
 
-        # Ensure row is usable (active + effective) but DO NOT overwrite explicit tenant pricing.
+        # Ensure usability; do not overwrite explicit prices if present.
         r = idx[mid]
         before = dict(r)
 
-        # Normalize id
         r["module_id"] = _normalize_mid(r.get("module_id", ""))
 
-        # Ensure fields exist
         if (r.get("price_run_credits") or "").strip() == "":
             r["price_run_credits"] = str(run_default)
         if (r.get("price_save_to_release_credits") or "").strip() == "":
@@ -198,20 +196,19 @@ def backfill_module_prices(module_prices_csv: Path, modules_dir: Path, run_defau
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Maintenance: backfill platform/billing/module_prices.csv with defaults for any missing modules.")
+    ap = argparse.ArgumentParser(description="Maintenance: backfill platform/billing/module_prices.csv for any missing module folders.")
     ap.add_argument("--modules-dir", default="modules")
     ap.add_argument("--module-prices-path", default="platform/billing/module_prices.csv")
-    ap.add_argument("--billing-config-path", default="platform/billing/billing_config.yaml")
+    ap.add_argument("--billing-defaults-path", default="platform/billing/billing_defaults.csv")
     args = ap.parse_args()
 
     modules_dir = Path(args.modules_dir)
     module_prices = Path(args.module_prices_path)
-    billing_cfg = Path(args.billing_config_path)
+    defaults_csv = Path(args.billing_defaults_path)
 
-    run_default, save_default = _load_defaults(billing_cfg)
-
+    run_default, save_default = _load_defaults(defaults_csv)
     res = backfill_module_prices(module_prices, modules_dir, run_default, save_default)
-    print(f"[MAINT][OK] module_prices backfill: {res}")
+    print(f"[MAINT_PRICES][OK] {res} (defaults: run={run_default}, save_to_release={save_default})")
     return 0
 
 

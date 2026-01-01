@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+MARKER = "used repo pricing config instead"
+
 REPLACEMENT = """def _find_price(module_prices, module_id):
     # Pricing resolution policy:
     # - Source of truth: platform/billing/module_prices.csv (maintained by Maintenance workflow).
@@ -141,16 +143,25 @@ def main() -> int:
 
     path = Path(args.orchestrator_path)
     if not path.exists():
-        raise SystemExit(f'orchestrator file not found: {path}')
+        print(f"[PATCH][FAIL] orchestrator file not found: {path}")
+        return 2
 
-    text = path.read_text(encoding='utf-8')
-    new_text = replace_top_level_function(text, '_find_price', REPLACEMENT)
+    text = path.read_text(encoding='utf-8', errors='replace')
+    if MARKER in text:
+        print(f"[PATCH][OK] orchestrator already patched (marker present): {MARKER}")
+        return 0
+
+    try:
+        new_text = replace_top_level_function(text, '_find_price', REPLACEMENT)
+    except Exception as e:
+        print(f"[PATCH][FAIL] {e}")
+        return 2
 
     if args.backup:
         path.with_suffix(path.suffix + '.bak').write_text(text, encoding='utf-8')
 
     path.write_text(new_text, encoding='utf-8')
-    print(f"[PATCH_OK] Updated {path} (_find_price now uses repo pricing fallback).") 
+    print(f"[PATCH][OK] Updated {path} (_find_price now uses repo pricing fallback).") 
     return 0
 
 

@@ -33,34 +33,23 @@ jobs:
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           fi
-          pip install pyyaml
-          python -c "import yaml; print('PyYAML OK', yaml.__version__)"
 
       - name: Maintenance - backfill module prices
         run: |
           set -euxo pipefail
-          python scripts/maintenance_prices.py             --modules-dir modules             --module-prices-path platform/billing/module_prices.csv             --billing-config-path platform/billing/billing_config.yaml
+          python scripts/maintenance_prices.py             --modules-dir modules             --module-prices-path platform/billing/module_prices.csv             --billing-defaults-path platform/billing/billing_defaults.csv
 
       - name: Verify module prices coverage (repo config)
         run: |
           set -euxo pipefail
           python scripts/ci_verify_module_prices.py             --modules-dir modules             --prices-path platform/billing/module_prices.csv
 
-      - name: Dump module prices (always)
-        if: always()
-        run: |
-          set -euxo pipefail
-          echo "---- module_prices.csv (head) ----"
-          head -n 50 platform/billing/module_prices.csv || true
-          echo "---- billing_config.yaml ----"
-          cat platform/billing/billing_config.yaml || true
-
       - name: Commit maintenance outputs
         run: |
           set -euxo pipefail
           files=()
           [ -f platform/billing/module_prices.csv ] && files+=(platform/billing/module_prices.csv)
-          [ -f platform/billing/billing_config.yaml ] && files+=(platform/billing/billing_config.yaml)
+          [ -f platform/billing/billing_defaults.csv ] && files+=(platform/billing/billing_defaults.csv)
           if [ ${#files[@]} -eq 0 ]; then
             echo "No maintenance outputs found to commit."
             exit 0
