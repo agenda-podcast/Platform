@@ -1,0 +1,15 @@
+*** Purpose
+If you want CI to auto-migrate legacy headers (instead of failing), add a pre-check in scripts/ci_verify.py
+before it enforces the module_prices.csv header.
+
+*** Suggested change (pseudo-diff)
+1) Add at top:
+   from scripts.migrate_module_prices_csv import EXPECTED_HEADER, LEGACY_HEADER, main as migrate_prices_main
+
+2) In the module_prices.csv header check, do:
+   if got_header == LEGACY_HEADER:
+       print("[CI_VERIFY][WARN] module_prices.csv legacy header detected; auto-migrating to expected header")
+       migrate_prices_main(["--path", str(prices_path)])
+       # then re-read header and continue validation
+
+This keeps backward compatibility and prevents a hard fail during transition.
