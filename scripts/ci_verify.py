@@ -158,51 +158,14 @@ def _verify_maintenance_state(repo_root: Path) -> None:
 
 def _verify_billing_state_dir(billing_state_dir: Path) -> None:
     expected_headers = {
+        # Release-managed state (SoT for accounting)
         "tenants_credits.csv": ["tenant_id", "credits_available", "updated_at", "status"],
-        "transactions.csv": ["transaction_id", "tenant_id", "type", "status", "created_at", "note"],
-        "transaction_items.csv": [
-            "transaction_item_id",
-            "transaction_id",
-            "tenant_id",
-            "category",
-            "name",
-            "amount_credits",
-            "created_at",
-            "note",
-        ],
-        "promotion_redemptions.csv": [
-            "redemption_id",
-            "tenant_id",
-            "promo_id",
-            "code",
-            "event_type",
-            "transaction_item_id",
-            "created_at",
-            "note",
-        ],
-        "cache_index.csv": [
-            "cache_key",
-            "module_id",
-            "tenant_id",
-            "work_order_id",
-            "artifact_relpath",
-            "created_at",
-            "hold_until",
-            "status",
-            "note",
-        ],
-        "workorders_log.csv": ["log_id", "tenant_id", "work_order_id", "status", "created_at", "note"],
-        "module_runs_log.csv": [
-            "log_id",
-            "tenant_id",
-            "work_order_id",
-            "module_id",
-            "module_run_id",
-            "status",
-            "reason_key",
-            "created_at",
-            "note",
-        ],
+        "transactions.csv": ["transaction_id", "tenant_id", "work_order_id", "type", "total_amount_credits", "created_at", "metadata_json"],
+        "transaction_items.csv": ["transaction_item_id", "transaction_id", "tenant_id", "work_order_id", "module_run_id", "name", "category", "amount_credits", "reason_code", "note"],
+        "promotion_redemptions.csv": ["event_id", "tenant_id", "promo_id", "work_order_id", "event_type", "amount_credits", "created_at", "note"],
+        "cache_index.csv": ["cache_key", "tenant_id", "module_id", "created_at", "expires_at", "cache_id"],
+        "workorders_log.csv": ["work_order_id", "tenant_id", "status", "reason_code", "started_at", "finished_at", "github_run_id", "workorder_mode", "requested_modules", "metadata_json"],
+        "module_runs_log.csv": ["module_run_id", "work_order_id", "tenant_id", "module_id", "status", "reason_code", "started_at", "finished_at", "reuse_output_type", "reuse_reference", "cache_key_used", "published_release_tag", "release_manifest_name", "metadata_json"],
     }
 
     for fname, hdr in expected_headers.items():
@@ -214,6 +177,19 @@ def _verify_billing_state_dir(billing_state_dir: Path) -> None:
         ca = t.get("credits_available", "")
         if ca and not ca.isdigit():
             _die(f"tenants_credits.csv credits_available must be integer: {ca!r}")
+
+    # Validate numeric fields in transactions and transaction_items
+    txs = _read_csv_rows(billing_state_dir / "transactions.csv")
+    for tx in txs:
+        ta = tx.get("total_amount_credits", "")
+        if ta and not ta.lstrip("-").isdigit():
+            _die(f"transactions.csv total_amount_credits must be integer: {ta!r}")
+
+    items = _read_csv_rows(billing_state_dir / "transaction_items.csv")
+    for it in items:
+        ac = it.get("amount_credits", "")
+        if ac and not ac.lstrip("-").isdigit():
+            _die(f"transaction_items.csv amount_credits must be integer: {ac!r}")
 
     _ok(f"Billing-state: required files + headers OK in {billing_state_dir}")
 
