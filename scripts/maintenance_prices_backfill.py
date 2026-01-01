@@ -3,11 +3,11 @@ from __future__ import annotations
 import argparse
 import csv
 import re
+import json
 from datetime import date
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-# Platform canonical header expected by scripts/ci_verify.py
 EXPECTED_HEADER = [
     "module_id",
     "price_run_credits",
@@ -18,7 +18,6 @@ EXPECTED_HEADER = [
     "notes",
 ]
 
-# Legacy header observed earlier in this repo history
 LEGACY_HEADER = [
     "module_id",
     "price_unit",
@@ -29,6 +28,13 @@ LEGACY_HEADER = [
 
 MODULE_ID_RE = re.compile(r"^(\d{3})_")
 DIGITS_RE = re.compile(r"^\d+$")
+
+
+def _normalize_mid(mid: str) -> str:
+    mid = (mid or "").strip()
+    if DIGITS_RE.match(mid):
+        return f"{int(mid):03d}"
+    return mid
 
 
 def _parse_date(s: str) -> date | None:
@@ -55,13 +61,6 @@ def _is_effective_now(row: Dict[str, str], today: date) -> bool:
     return True
 
 
-def _normalize_mid(mid: str) -> str:
-    mid = (mid or "").strip()
-    if DIGITS_RE.match(mid):
-        return f"{int(mid):03d}"
-    return mid
-
-
 def _read_csv(path: Path) -> Tuple[List[str], List[Dict[str, str]]]:
     if not path.exists():
         return ([], [])
@@ -79,7 +78,7 @@ def _write_csv(path: Path, header: List[str], rows: List[Dict[str, str]]) -> Non
             w.writerow({k: row.get(k, "") for k in header})
 
 
-def _migrate_legacy_to_expected(rows: List[Dict[str, str]], default_effective_from: str) -> List[Dict[str, str]]:
+def _migrate_legacy_rows(rows: List[Dict[str, str]], default_effective_from: str) -> List[Dict[str, str]]:
     out: List[Dict[str, str]] = []
     for r in rows:
         mid = _normalize_mid(r.get("module_id", ""))
@@ -94,7 +93,7 @@ def _migrate_legacy_to_expected(rows: List[Dict[str, str]], default_effective_fr
             note,
             f"legacy_unit={unit}" if unit else "",
             f"legacy_scope={scope}" if scope else "",
-            "migrated_from_legacy_header",
+            "migrated_from_legacy_header"
         ] if x])
 
         out.append({
@@ -122,14 +121,14 @@ def _collect_module_ids(modules_dir: Path) -> List[str]:
     return sorted(set(ids))
 
 
-def _ensure_header_and_rows(
+def _ensure_prices_table(
     prices_path: Path,
     module_ids: List[str],
     default_run_credits: int,
     default_save_to_release_credits: int,
     default_effective_from: str,
-    ensure_effective_active: bool,
     notes_default: str,
+    ensure_effective_active: bool,
 ) -> Dict[str, int]:
     header, rows = _read_csv(prices_path)
 
@@ -138,9 +137,9 @@ def _ensure_header_and_rows(
         _write_csv(prices_path, EXPECTED_HEADER, [])
         header, rows = _read_csv(prices_path)
 
-    # Migrate legacy if needed
+    # Migrate legacy
     if header == LEGACY_HEADER:
-        rows = _migrate_legacy_to_expected(rows, default_effective_from)
+        rows = _migrate_legacy_rows(rows, default_effective_from)
         header = EXPECTED_HEADER
 
     # Enforce header
@@ -153,21 +152,21 @@ def _ensure_header_and_rows(
 
     today = date.today()
 
-    # Normalize module ids + dedupe by module_id (single-row model)
-    normalized: Dict[str, Dict[str, str]] = {}
+    # Normalize + dedupe (single row per module_id)
+    by_mid: Dict[str, Dict[str, str]] = {}
     for r in rows:
         mid = _normalize_mid(r.get("module_id", ""))
         if not mid:
             continue
         r["module_id"] = mid
-        if mid not in normalized:
-            normalized[mid] = r
+        if mid not in by_mid:
+            by_mid[mid] = r
         else:
-            # Prefer effective row if one exists
-            if _is_effective_now(r, today) and not _is_effective_now(normalized[mid], today):
-                normalized[mid] = r
+            # keep the effective one if available
+            if _is_effective_now(r, today) and not _is_effective_now(by_mid[mid], today):
+                by_mid[mid] = r
 
-    rows = list(normalized.values())
+    rows = list(by_mid.values())
     idx = {r["module_id"]: r for r in rows}
 
     added = 0
@@ -191,25 +190,21 @@ def _ensure_header_and_rows(
         if not ensure_effective_active:
             continue
 
-        # Make sure existing row is usable by orchestrator now (active + in-window)
         r = idx[mid]
         before = dict(r)
 
-        # active
+        # Make it effective+active now if needed (to prevent orchestrator KeyError)
         if (r.get("active") or "").strip().lower() not in ("true", "1", "yes", "y"):
             r["active"] = "true"
 
-        # effective_from
         ef = _parse_date(r.get("effective_from") or "")
         if ef is None or ef > today:
             r["effective_from"] = default_effective_from
 
-        # effective_to
         et = _parse_date(r.get("effective_to") or "")
         if et is not None and et < today:
             r["effective_to"] = ""
 
-        # fill missing prices
         if (r.get("price_run_credits") or "").strip() == "":
             r["price_run_credits"] = str(default_run_credits)
         if (r.get("price_save_to_release_credits") or "").strip() == "":
@@ -218,71 +213,83 @@ def _ensure_header_and_rows(
         if r != before:
             updated += 1
 
-    # Stable ordering
     rows.sort(key=lambda r: r.get("module_id", ""))
     _write_csv(prices_path, EXPECTED_HEADER, rows)
     return {"rows_added": added, "rows_updated": updated}
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Backfill module prices for any new modules and ensure effective/active pricing for orchestrator.")
+    ap = argparse.ArgumentParser(description="Backfill module_prices.csv for new modules and ensure effective+active pricing.")
     ap.add_argument("--modules-dir", default="modules")
     ap.add_argument("--repo-prices-path", default="platform/billing/module_prices.csv")
-    ap.add_argument("--billing-state-dir", default="", help="If set, also writes module_prices.csv into billing-state-dir (for orchestrate runtime).")
-    ap.add_argument("--skip-repo-write", action="store_true", help="Do not write repo prices (useful in CI jobs that should not modify tracked files).")
+    ap.add_argument("--billing-state-dir", default="", help="If set, also writes module_prices.csv into billing-state-dir for orchestrate runtime.")
+    ap.add_argument("--skip-repo-write", action="store_true", help="Do not write repo prices file (CI safety).")
 
     ap.add_argument("--default-run-credits", type=int, default=5)
     ap.add_argument("--default-save-to-release-credits", type=int, default=2)
     ap.add_argument("--default-effective-from", default="1970-01-01")
-    ap.add_argument("--ensure-effective-active", action="store_true", default=True,
-                    help="Ensure every module has a price row active+effective today (prevents orchestrate KeyError).")
+    ap.add_argument("--ensure-effective-active", action="store_true", default=True)
     ap.add_argument("--notes-default", default="Auto-added by Maintenance: default pricing for new module.")
-
+    ap.add_argument("--report-path", default="runtime/maintenance_prices_report.json")
     args = ap.parse_args()
 
-    modules_dir = Path(args.modules_dir)
-    module_ids = _collect_module_ids(modules_dir)
+    module_ids = _collect_module_ids(Path(args.modules_dir))
     if not module_ids:
-        print("[MAINT_PRICES] No modules with numeric IDs found; nothing to do.")
+        print("[MAINT_PRICES][OK] No numeric module folders found; nothing to backfill.")
         return 0
 
-    report: Dict[str, Dict[str, int]] = {}
+    report: Dict[str, object] = {
+        "module_ids": module_ids,
+        "repo": None,
+        "billing_state": [],
+    }
 
     if not args.skip_repo_write:
-        repo_path = Path(args.repo_prices_path)
-        report["repo"] = _ensure_header_and_rows(
-            prices_path=repo_path,
-            module_ids=module_ids,
-            default_run_credits=args.default_run_credits,
-            default_save_to_release_credits=args.default_save_to_release_credits,
-            default_effective_from=args.default_effective_from,
-            ensure_effective_active=args.ensure_effective_active,
-            notes_default=args.notes_default,
-        )
-
-    if args.billing_state_dir:
-        bs_dir = Path(args.billing_state_dir)
-        bs_dir.mkdir(parents=True, exist_ok=True)
-
-        # Write to several plausible billing-state locations (defensive)
-        candidates = [
-            bs_dir / "module_prices.csv",
-            bs_dir / "billing" / "module_prices.csv",
-            bs_dir / "platform" / "billing" / "module_prices.csv",
-        ]
-        for p in candidates:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            report[str(p)] = _ensure_header_and_rows(
-                prices_path=p,
+        report["repo"] = {
+            "path": args.repo_prices_path,
+            **_ensure_prices_table(
+                prices_path=Path(args.repo_prices_path),
                 module_ids=module_ids,
                 default_run_credits=args.default_run_credits,
                 default_save_to_release_credits=args.default_save_to_release_credits,
                 default_effective_from=args.default_effective_from,
-                ensure_effective_active=args.ensure_effective_active,
                 notes_default=args.notes_default,
+                ensure_effective_active=args.ensure_effective_active,
             )
+        }
 
-    print("[MAINT_PRICES] " + str(report))
+    if args.billing_state_dir:
+        bs = Path(args.billing_state_dir)
+        bs.mkdir(parents=True, exist_ok=True)
+
+        # Defensive: write to common locations; orchestrator load path varies across implementations.
+        candidates = [
+            bs / "module_prices.csv",
+            bs / "billing" / "module_prices.csv",
+            bs / "platform" / "billing" / "module_prices.csv",
+        ]
+
+        for p in candidates:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            report["billing_state"].append({
+                "path": str(p),
+                **_ensure_prices_table(
+                    prices_path=p,
+                    module_ids=module_ids,
+                    default_run_credits=args.default_run_credits,
+                    default_save_to_release_credits=args.default_save_to_release_credits,
+                    default_effective_from=args.default_effective_from,
+                    notes_default=args.notes_default,
+                    ensure_effective_active=args.ensure_effective_active,
+                )
+            })
+
+    out = Path(args.report_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    print("[MAINT_PRICES][OK] Backfill complete.")
+    print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
 
