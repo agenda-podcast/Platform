@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 try:
     import yaml  # PyYAML
-except Exception as e:
+except Exception:
     yaml = None
 
 
@@ -62,10 +62,25 @@ def _upsert_rows(
                 rows[i] = merged
                 changed += 1
         else:
-            # normalize to all fields
             rows.append({fn: nr.get(fn, "") for fn in fieldnames})
             changed += 1
     return rows, changed
+
+
+def ensure_csv(path: Path, expected_header: List[str]) -> None:
+    """Create CSV if missing. If exists, enforce header matches expected."""
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(expected_header)
+        return
+
+    header, _ = _read_csv_rows(path)
+    if header and header != expected_header:
+        raise RuntimeError(
+            f"CSV header mismatch for {path}:\n  expected: {expected_header}\n  got:      {header}"
+        )
 
 
 # ----------------------------
@@ -128,10 +143,6 @@ def rewrite_placeholders_in_dir(module_dir: Path, module_id: str) -> int:
 
 
 def assign_ids(modules_dir: Path) -> List[Dict[str, Any]]:
-    """
-    Assign IDs to any non-numeric module folder under modules_dir.
-    Returns structured rename actions.
-    """
     actions: List[Dict[str, Any]] = []
     used_ids = parse_used_ids(modules_dir)
 
@@ -177,19 +188,10 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
 def _dump_yaml(data: Dict[str, Any]) -> str:
     if yaml is None:
         raise RuntimeError("PyYAML is required for maintenance_modules.py (pip install pyyaml)")
-    # stable-ish, readable
     return yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
 
 
 def normalize_module_yaml(module_dir: Path, module_id: str) -> Dict[str, Any]:
-    """
-    Enforce invariants inside module.yaml after placeholder rewrite:
-      - module.id == module_id
-      - entrypoint contains run_module_{module_id}
-      - secrets env names use "{module_id}_..."
-      - pricing / errors / requirements exist (fail-safe auto-add if missing)
-    Returns dict with normalization actions.
-    """
     module_yaml_path = module_dir / "module.yaml"
     data = _load_yaml(module_yaml_path)
 
@@ -201,15 +203,11 @@ def normalize_module_yaml(module_dir: Path, module_id: str) -> Dict[str, Any]:
         actions["updated"] = True
         actions["fixes"].append("module.id")
 
-    # entrypoint normalization
     entry = str(mod.get("entrypoint") or "")
-    # expected suffix function name:
     expected_fn = f"run_module_{module_id}"
     if expected_fn not in entry:
-        # Try replace run_module_XXX or run_module___MODULE_ID__
         entry = re.sub(r"run_module_\d{3}", expected_fn, entry)
         entry = entry.replace("run_module___MODULE_ID__", expected_fn)
-        # If still not there, force format "google_search_pages:run_module_<id>" using module.name if available
         if expected_fn not in entry:
             module_name = mod.get("name") or module_dir.name.split("_", 1)[-1]
             entry = f"{module_name}:{expected_fn}"
@@ -219,12 +217,10 @@ def normalize_module_yaml(module_dir: Path, module_id: str) -> Dict[str, Any]:
 
     data["module"] = mod
 
-    # secrets env normalization
     secrets = data.get("secrets") or {}
-    api_key_env = secrets.get("api_key_env") or f"{module_id}_GOOGLE_SEARCH_API_KEY"
-    engine_id_env = secrets.get("engine_id_env") or f"{module_id}_GOOGLE_SEARCH_ENGINE_ID"
+    api_key_env = str(secrets.get("api_key_env") or f"{module_id}_GOOGLE_SEARCH_API_KEY")
+    engine_id_env = str(secrets.get("engine_id_env") or f"{module_id}_GOOGLE_SEARCH_ENGINE_ID")
 
-    # Replace any hyphen or placeholder patterns
     api_key_env = api_key_env.replace("-", "_").replace("__MODULE_ID__", module_id)
     engine_id_env = engine_id_env.replace("-", "_").replace("__MODULE_ID__", module_id)
 
@@ -244,16 +240,37 @@ def normalize_module_yaml(module_dir: Path, module_id: str) -> Dict[str, Any]:
 
     data["secrets"] = secrets
 
-    # Ensure pricing block exists
-    if "pricing" not in data or not isinstance(data.get("pricing"), dict):
-        data["pricing"] = {
-            "unit": "api_call",
-            "credits": 1,
-            "scope": "per_call",
-            "note": "Each Google CSE request (page fetch) costs 1 credit."
-        }
+    # Ensure pricing block exists (platform format)
+    pricing = data.get("pricing")
+    if not isinstance(pricing, dict):
+        pricing = {}
+
+    if "price_run_credits" not in pricing:
+        pricing["price_run_credits"] = 1
         actions["updated"] = True
-        actions["fixes"].append("pricing (added default)")
+        actions["fixes"].append("pricing.price_run_credits")
+    if "price_save_to_release_credits" not in pricing:
+        pricing["price_save_to_release_credits"] = 0
+        actions["updated"] = True
+        actions["fixes"].append("pricing.price_save_to_release_credits")
+    if "effective_from" not in pricing:
+        pricing["effective_from"] = "2026-01-01"
+        actions["updated"] = True
+        actions["fixes"].append("pricing.effective_from")
+    if "effective_to" not in pricing:
+        pricing["effective_to"] = ""
+        actions["updated"] = True
+        actions["fixes"].append("pricing.effective_to")
+    if "active" not in pricing:
+        pricing["active"] = True
+        actions["updated"] = True
+        actions["fixes"].append("pricing.active")
+    if "notes" not in pricing:
+        pricing["notes"] = "Baseline per-run credit charge."
+        actions["updated"] = True
+        actions["fixes"].append("pricing.notes")
+
+    data["pricing"] = pricing
 
     # Ensure errors list exists
     if "errors" not in data or not isinstance(data.get("errors"), list) or not data.get("errors"):
@@ -274,7 +291,7 @@ def normalize_module_yaml(module_dir: Path, module_id: str) -> Dict[str, Any]:
                 "code": "HTTP_RETRY_EXHAUSTED",
                 "severity": "ERROR",
                 "description": "Google API request failed after retries (rate limits or transient errors).",
-                "remediation": "Reduce query volume, add backoff, verify quota, and retry later."
+                "remediation": "Reduce query volume, verify Google quota, and retry later."
             },
             {
                 "code": "OUTPUT_WRITE_FAILED",
@@ -308,15 +325,6 @@ def normalize_module_yaml(module_dir: Path, module_id: str) -> Dict[str, Any]:
 # Platform registries
 # ----------------------------
 
-def ensure_csv(path: Path, header: List[str]) -> None:
-    if path.exists():
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(header)
-
-
 def register_tenant_schema(modules_dir: Path, registry_dir: Path) -> List[str]:
     registry_dir.mkdir(parents=True, exist_ok=True)
     copied: List[str] = []
@@ -342,12 +350,10 @@ def update_platform_tables(
     prices_path: Path,
     error_reasons_path: Path
 ) -> Dict[str, Any]:
-    """
-    Upsert catalog, requirements, prices, error reasons based on module.yaml content.
-    """
+    # Enforce platform headers (match your ci_verify expectations)
     ensure_csv(module_catalog_path, ["module_id","module_name","version","folder","entrypoint","description"])
     ensure_csv(requirements_path, ["module_id","requirement_type","requirement_key","requirement_value","note"])
-    ensure_csv(prices_path, ["module_id","price_unit","price_credits","price_scope","note"])
+    ensure_csv(prices_path, ["module_id","price_run_credits","price_save_to_release_credits","effective_from","effective_to","active","notes"])
     ensure_csv(error_reasons_path, ["module_id","error_code","severity","description","remediation"])
 
     cat_fields, cat_rows = _read_csv_rows(module_catalog_path)
@@ -382,19 +388,21 @@ def update_platform_tables(
             "entrypoint": entrypoint,
             "description": description
         }]
-        cat_rows, c = _upsert_rows(cat_fields or ["module_id","module_name","version","folder","entrypoint","description"], cat_rows, ["module_id"], new_cat)
+        cat_rows, c = _upsert_rows(cat_fields, cat_rows, ["module_id"], new_cat)
         cat_changed += c
 
-        # Pricing upsert (one row per module)
+        # Pricing upsert (one row per module, platform schema)
         pricing = data.get("pricing") or {}
         new_price = [{
             "module_id": module_id,
-            "price_unit": str(pricing.get("unit") or ""),
-            "price_credits": str(pricing.get("credits") if pricing.get("credits") is not None else ""),
-            "price_scope": str(pricing.get("scope") or ""),
-            "note": str(pricing.get("note") or ""),
+            "price_run_credits": str(pricing.get("price_run_credits") if pricing.get("price_run_credits") is not None else ""),
+            "price_save_to_release_credits": str(pricing.get("price_save_to_release_credits") if pricing.get("price_save_to_release_credits") is not None else ""),
+            "effective_from": str(pricing.get("effective_from") or ""),
+            "effective_to": str(pricing.get("effective_to") or ""),
+            "active": "true" if bool(pricing.get("active", True)) else "false",
+            "notes": str(pricing.get("notes") or ""),
         }]
-        price_rows, c = _upsert_rows(price_fields or ["module_id","price_unit","price_credits","price_scope","note"], price_rows, ["module_id"], new_price)
+        price_rows, c = _upsert_rows(price_fields, price_rows, ["module_id"], new_price)
         price_changed += c
 
         # Requirements upsert (one row per requirement)
@@ -410,7 +418,7 @@ def update_platform_tables(
                 "requirement_value": str(r.get("value") or ""),
                 "note": str(r.get("note") or ""),
             })
-        req_rows, c = _upsert_rows(req_fields or ["module_id","requirement_type","requirement_key","requirement_value","note"], req_rows, ["module_id","requirement_type","requirement_key"], new_reqs)
+        req_rows, c = _upsert_rows(req_fields, req_rows, ["module_id","requirement_type","requirement_key"], new_reqs)
         req_changed += c
 
         # Error reasons upsert (one row per error code)
@@ -426,14 +434,13 @@ def update_platform_tables(
                 "description": str(e.get("description") or ""),
                 "remediation": str(e.get("remediation") or ""),
             })
-        err_rows, c = _upsert_rows(err_fields or ["module_id","error_code","severity","description","remediation"], err_rows, ["module_id","error_code"], new_errs)
+        err_rows, c = _upsert_rows(err_fields, err_rows, ["module_id","error_code"], new_errs)
         err_changed += c
 
-    # Persist
-    _write_csv_rows(module_catalog_path, cat_fields or ["module_id","module_name","version","folder","entrypoint","description"], cat_rows)
-    _write_csv_rows(prices_path, price_fields or ["module_id","price_unit","price_credits","price_scope","note"], price_rows)
-    _write_csv_rows(requirements_path, req_fields or ["module_id","requirement_type","requirement_key","requirement_value","note"], req_rows)
-    _write_csv_rows(error_reasons_path, err_fields or ["module_id","error_code","severity","description","remediation"], err_rows)
+    _write_csv_rows(module_catalog_path, cat_fields, cat_rows)
+    _write_csv_rows(prices_path, price_fields, price_rows)
+    _write_csv_rows(requirements_path, req_fields, req_rows)
+    _write_csv_rows(error_reasons_path, err_fields, err_rows)
 
     return {
         "catalog_rows_changed": cat_changed,
@@ -560,7 +567,7 @@ def main() -> int:
     # 3) Register schemas
     report["schemas_registered"] = register_tenant_schema(modules_dir, registry_dir)
 
-    # 4) Update platform registries
+    # 4) Update platform registries (headers enforced)
     report["platform_table_updates"] = update_platform_tables(
         modules_dir=modules_dir,
         module_catalog_path=Path(args.module_catalog_path),

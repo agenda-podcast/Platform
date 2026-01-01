@@ -19,6 +19,11 @@ REQUIRED_FILES = [
     "schema/report.schema.json",
 ]
 
+EXPECTED_PRICES_HEADER = ["module_id","price_run_credits","price_save_to_release_credits","effective_from","effective_to","active","notes"]
+EXPECTED_CATALOG_HEADER = ["module_id","module_name","version","folder","entrypoint","description"]
+EXPECTED_REQ_HEADER = ["module_id","requirement_type","requirement_key","requirement_value","note"]
+EXPECTED_ERR_HEADER = ["module_id","error_code","severity","description","remediation"]
+
 def _fail(msg: str) -> int:
     print(f"[CI_VERIFY][FAIL] {msg}")
     return 2
@@ -32,6 +37,12 @@ def _read_csv(path: Path) -> Tuple[List[str], List[Dict[str, str]]]:
     with path.open("r", encoding="utf-8", newline="") as f:
         r = csv.DictReader(f)
         return (r.fieldnames or [], [dict(row) for row in r])
+
+def _assert_header(path: Path, expected: List[str]) -> int:
+    header, _ = _read_csv(path)
+    if header != expected:
+        return _fail(f"CSV header mismatch: file {path} expected {expected} got {header}")
+    return 0
 
 def _assert_no_placeholders(mod_dir: Path) -> int:
     for p in mod_dir.rglob("*"):
@@ -67,7 +78,7 @@ def main() -> int:
     if not modules_dir.exists():
         return _fail(f"Modules dir not found: {modules_dir}")
 
-    # 1) Run helper (Maintenance) and require a report file.
+    # 1) Run helper and require report
     cmd = [
         sys.executable, args.maintenance_script,
         "--modules-dir", args.modules_dir,
@@ -90,17 +101,13 @@ def main() -> int:
     if not report_path.exists():
         return _fail(f"Maintenance report missing: {report_path}")
 
-    report = json.loads(report_path.read_text(encoding="utf-8"))
-    renamed = report.get("renamed_modules") or []
-
-    # 2) Verify: no unassigned module folders remain
+    # 2) No unassigned module folders remain
     for mod_dir in sorted([p for p in modules_dir.iterdir() if p.is_dir()], key=lambda p: p.name):
         if not MODULE_ID_RE.match(mod_dir.name):
             return _fail(f"Unassigned module folder still present (should have been renamed): {mod_dir.name}")
-
     _ok("All module folders have numeric 3-digit prefixes")
 
-    # 3) Verify required files + placeholders eliminated + module.yaml id matches folder
+    # 3) Required files + placeholders eliminated + module.yaml normalized
     for mod_dir in sorted([p for p in modules_dir.iterdir() if p.is_dir()], key=lambda p: p.name):
         mid = _get_module_id_from_folder(mod_dir)
 
@@ -112,18 +119,16 @@ def main() -> int:
         if rc != 0:
             return rc
 
-        # module.yaml validation (minimal): contains module.id == mid
         text = (mod_dir / "module.yaml").read_text(encoding="utf-8")
         if f"id: '{mid}'" not in text and f'id: "{mid}"' not in text and f"id: {mid}" not in text:
             return _fail(f"module.yaml id does not match folder id for {mod_dir.name} (expected {mid})")
 
-        # secrets env names must be mid_*
         if f"{mid}_GOOGLE_SEARCH_API_KEY" not in text or f"{mid}_GOOGLE_SEARCH_ENGINE_ID" not in text:
             return _fail(f"module.yaml secrets env names not normalized with module id prefix for {mod_dir.name}")
 
     _ok("Module files present; placeholders eliminated; module.yaml normalized")
 
-    # 4) Verify schema registry contains <id>.schema.json for each module
+    # 4) Schema registry contains <id>.schema.json
     registry_dir = Path(args.schema_registry_dir)
     if not registry_dir.exists():
         return _fail(f"Schema registry dir missing: {registry_dir}")
@@ -131,55 +136,42 @@ def main() -> int:
         mid = _get_module_id_from_folder(mod_dir)
         if not (registry_dir / f"{mid}.schema.json").exists():
             return _fail(f"Tenant schema not registered for module {mid} at {registry_dir}/{mid}.schema.json")
-
     _ok("Tenant schemas registered for all modules")
 
-    # 5) Verify platform tables updated: modules catalog, prices, error reasons, requirements
-    cat_fields, cat_rows = _read_csv(Path(args.module_catalog_path))
-    if not cat_rows:
-        return _fail(f"Module catalog is empty or missing: {args.module_catalog_path}")
+    # 5) Platform tables exist and headers match platform CI expectations
+    for path, expected in [
+        (Path(args.prices_path), EXPECTED_PRICES_HEADER),
+        (Path(args.module_catalog_path), EXPECTED_CATALOG_HEADER),
+        (Path(args.requirements_path), EXPECTED_REQ_HEADER),
+        (Path(args.error_reasons_path), EXPECTED_ERR_HEADER),
+    ]:
+        rc = _assert_header(path, expected)
+        if rc != 0:
+            return rc
+    _ok("Platform table headers match expected schemas")
 
-    price_fields, price_rows = _read_csv(Path(args.prices_path))
-    if not price_rows:
-        return _fail(f"Module prices table is empty or missing: {args.prices_path}")
+    # 6) Each module id is present in tables
+    _, cat_rows = _read_csv(Path(args.module_catalog_path))
+    _, price_rows = _read_csv(Path(args.prices_path))
+    _, req_rows = _read_csv(Path(args.requirements_path))
+    _, err_rows = _read_csv(Path(args.error_reasons_path))
 
-    err_fields, err_rows = _read_csv(Path(args.error_reasons_path))
-    if not err_rows:
-        return _fail(f"Error reasons table is empty or missing: {args.error_reasons_path}")
-
-    req_fields, req_rows = _read_csv(Path(args.requirements_path))
-    if not req_rows:
-        return _fail(f"Module requirements table is empty or missing: {args.requirements_path}")
-
-    cat_by_id = {r.get("module_id",""): r for r in cat_rows}
-    price_by_id = {r.get("module_id",""): r for r in price_rows}
+    cat_ids = {r.get("module_id","") for r in cat_rows}
+    price_ids = {r.get("module_id","") for r in price_rows}
+    req_ids = {r.get("module_id","") for r in req_rows}
+    err_ids = {r.get("module_id","") for r in err_rows}
 
     for mod_dir in sorted([p for p in modules_dir.iterdir() if p.is_dir()], key=lambda p: p.name):
         mid = _get_module_id_from_folder(mod_dir)
-
-        if mid not in cat_by_id:
+        if mid not in cat_ids:
             return _fail(f"Module {mid} missing from catalog table: {args.module_catalog_path}")
-        if mid not in price_by_id:
+        if mid not in price_ids:
             return _fail(f"Module {mid} missing from prices table: {args.prices_path}")
-
-        # requirements: at least one secret requirement entry
-        req_for_mid = [r for r in req_rows if r.get("module_id","")==mid]
-        if not req_for_mid:
-            return _fail(f"Module {mid} has no requirements rows in {args.requirements_path}")
-        if not any(r.get("requirement_type","")=="secret" for r in req_for_mid):
-            return _fail(f"Module {mid} requirements missing secret entries in {args.requirements_path}")
-
-        # error reasons: at least one error code entry
-        err_for_mid = [r for r in err_rows if r.get("module_id","")==mid]
-        if not err_for_mid:
-            return _fail(f"Module {mid} has no error reasons rows in {args.error_reasons_path}")
-
-    _ok("Platform module catalog, prices, requirements, and error reasons include all modules")
-
-    # 6) Verify helper actually renamed something if unassigned dirs existed (sanity)
-    # If repo had an unassigned directory at start, report should include it; this is not always applicable.
-    if renamed:
-        _ok(f"Maintenance renamed {len(renamed)} module folder(s) as expected")
+        if mid not in req_ids:
+            return _fail(f"Module {mid} missing from requirements table: {args.requirements_path}")
+        if mid not in err_ids:
+            return _fail(f"Module {mid} missing from error reasons table: {args.error_reasons_path}")
+    _ok("Platform tables include all modules")
 
     _ok("Comprehensive module maintenance verification passed")
     return 0

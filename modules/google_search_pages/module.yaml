@@ -2,7 +2,7 @@
 module:
   id: "__MODULE_ID__"                 # replaced with 3-digit numeric id, e.g. "002"
   name: "google_search_pages"
-  version: "1.0.1"
+  version: "1.0.2"
   entrypoint: "google_search_pages:run_module___MODULE_ID__"  # rewritten to run_module_002
   description: "Google Custom Search (web/pages only) source collector."
 
@@ -20,16 +20,16 @@ behavior:
   dedupe_default_on: true
   safe_default: "active"
 
-# Pricing is required for billing + UI.
-# Recommended model for this module: charge per Google API call (each page fetch is 1 call).
+# Pricing aligned to platform/billing/module_prices.csv header:
+# ['module_id','price_run_credits','price_save_to_release_credits','effective_from','effective_to','active','notes']
 pricing:
-  unit: "api_call"            # enum: api_call | result | run
-  credits: 1                  # integer credits per unit
-  scope: "per_call"           # enum: per_call | per_result | per_run
-  note: "Each Google CSE request (page fetch) costs 1 credit."
+  price_run_credits: 1
+  price_save_to_release_credits: 0
+  effective_from: "2026-01-01"
+  effective_to: ""
+  active: true
+  notes: "Baseline per-run credit charge. Execution report also includes pages fetched for per-call cost auditing."
 
-# Error reasons are required for the platform error table.
-# Helper will register these into platform/errors/error_reasons.csv (or discovered table).
 errors:
   - code: "MISSING_SECRET"
     severity: "ERROR"
@@ -42,14 +42,12 @@ errors:
   - code: "HTTP_RETRY_EXHAUSTED"
     severity: "ERROR"
     description: "Google API request failed after retries (rate limits or transient errors)."
-    remediation: "Reduce query volume, add backoff, verify quota, and retry later."
+    remediation: "Reduce query volume, verify Google quota, and retry later."
   - code: "OUTPUT_WRITE_FAILED"
     severity: "ERROR"
     description: "Module could not write output artifacts (results/report/raw)."
     remediation: "Verify filesystem permissions and that runtime output directories exist."
 
-# Requirements for installation/runtime validation.
-# Helper will register these into platform/modules/requirements.csv (or discovered table).
 requirements:
   - type: "secret"
     key: "GOOGLE_SEARCH_API_KEY"
