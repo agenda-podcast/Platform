@@ -1,0 +1,108 @@
+*** a/platform/orchestration/orchestrator.py
+--- b/platform/orchestration/orchestrator.py
+@@
++from pathlib import Path
++import csv
++from datetime import date
++
++
++def _normalize_module_id(module_id: str) -> str:
++    s = (module_id or "").strip()
++    # Normalize numeric IDs to 3-digit folder style (001, 002, ...)
++    if s.isdigit():
++        return f"{int(s):03d}"
++    return s
++
++
++def _parse_iso_date(s: str):
++    s = (s or "").strip()
++    if not s:
++        return None
++    try:
++        y, m, d = s.split("-")
++        return date(int(y), int(m), int(d))
++    except Exception:
++        return None
++
++
++def _row_is_effective_active(row: dict, today: date) -> bool:
++    active = str(row.get("active", "")).strip().lower() in ("true", "1", "yes", "y")
++    if not active:
++        return False
++    ef = _parse_iso_date(str(row.get("effective_from", "") or ""))
++    et = _parse_iso_date(str(row.get("effective_to", "") or ""))
++    if ef and ef > today:
++        return False
++    if et and et < today:
++        return False
++    return True
++
++
++def _load_repo_module_prices_csv() -> list[dict]:
++    """Load pricing from platform/billing/module_prices.csv (platform-maintained config).
++
++    This is the authoritative source-of-truth for spend estimation.
++    It must exist and be kept in sync by the Maintenance workflow.
++    """
++    repo_root = Path(__file__).resolve().parents[2]  # .../platform/orchestration/orchestrator.py -> repo root
++    prices_path = repo_root / "platform" / "billing" / "module_prices.csv"
++    if not prices_path.exists():
++        return []
++
++    with prices_path.open("r", encoding="utf-8", newline="") as f:
++        r = csv.DictReader(f)
++        return [dict(row) for row in r]
++
++
++def _find_price_in_rows(rows: list[dict], module_id: str):
++    """Return (run_price, save_to_release_price) if found, else None."""
++    today = date.today()
++    mid = _normalize_module_id(module_id)
++
++    # Filter matching rows first
++    matches = [row for row in rows if _normalize_module_id(row.get("module_id", "")) == mid]
++    if not matches:
++        return None
++
++    # Prefer effective+active rows; if multiple, pick the one with latest effective_from
++    effective = [row for row in matches if _row_is_effective_active(row, today)]
++    if not effective:
++        return None
++
++    def key_fn(row: dict):
++        ef = _parse_iso_date(str(row.get("effective_from", "") or "")) or date(1970, 1, 1)
++        return ef
++
++    best = sorted(effective, key=key_fn, reverse=True)[0]
++
++    try:
++        run_price = int(str(best.get("price_run_credits", "")).strip() or "0")
++    except Exception:
++        run_price = 0
++    try:
++        rel_price = int(str(best.get("price_save_to_release_credits", "")).strip() or "0")
++    except Exception:
++        rel_price = 0
++
++    return run_price, rel_price
+@@
+ def _find_price(module_prices, module_id):
+-    raise KeyError(f"Missing active module price for module {module_id}")
++    # First try the prices that were already loaded (legacy path or cached values).
++    found = _find_price_in_rows(module_prices or [], module_id)
++    if found is not None:
++        return found
++
++    # Fallback: authoritative platform config. This is NOT "maintenance";
++    # it is reading the platform-maintained pricing config for spend estimation.
++    repo_rows = _load_repo_module_prices_csv()
++    found = _find_price_in_rows(repo_rows, module_id)
++    if found is not None:
++        print(f"[ORCH][WARN] module_prices missing for {module_id} in runtime-loaded table; used repo pricing config instead.")
++        return found
++
++    mid = _normalize_module_id(module_id)
++    raise KeyError(
++        f"Missing active module price for module {mid}. "
++        f"Run Maintenance to backfill platform/billing/module_prices.csv with defaults for all modules."
++    )
