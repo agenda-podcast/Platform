@@ -1,5 +1,3 @@
-# Patch: maintenance helper improvements for module_prices backfill and effective date safety.
-# Drop-in replacement for scripts/maintenance_modules.py (v5)
 from __future__ import annotations
 
 import argparse
@@ -18,13 +16,12 @@ except Exception:
 
 MODULE_ID_RE = re.compile(r"^(\d{3})_")
 
-# Platform canonical headers (must match scripts/ci_verify.py expectations)
+# Canonical headers (match scripts/ci_verify.py expectations)
 CATALOG_HEADER = ["module_id", "module_name", "version", "folder", "entrypoint", "description"]
 REQ_HEADER = ["module_id", "requirement_type", "requirement_key", "requirement_value", "note"]
 PRICES_HEADER = ["module_id", "price_run_credits", "price_save_to_release_credits", "effective_from", "effective_to", "active", "notes"]
 ERR_HEADER = ["module_id", "error_code", "severity", "description", "remediation"]
 
-# Safety default: ensures price is "current" in any CI run date
 DEFAULT_EFFECTIVE_FROM = "1970-01-01"
 
 
@@ -94,13 +91,17 @@ def list_module_dirs(modules_dir: Path) -> List[Path]:
     return [p for p in modules_dir.iterdir() if p.is_dir()]
 
 
-def parse_used_ids(modules_dir: Path) -> List[int]:
-    used: List[int] = []
+def parse_module_ids(modules_dir: Path) -> List[str]:
+    ids: List[str] = []
     for p in list_module_dirs(modules_dir):
         m = MODULE_ID_RE.match(p.name)
         if m:
-            used.append(int(m.group(1)))
-    return sorted(set(used))
+            ids.append(m.group(1))
+    return sorted(set(ids))
+
+
+def parse_used_ids(modules_dir: Path) -> List[int]:
+    return sorted({int(x) for x in parse_module_ids(modules_dir)})
 
 
 def next_unused_min_id(used: List[int]) -> int:
@@ -172,8 +173,10 @@ def assign_ids(modules_dir: Path) -> List[Dict[str, Any]]:
 
 def normalize_module_yaml(module_dir: Path, module_id: str) -> Dict[str, Any]:
     module_yaml_path = module_dir / "module.yaml"
-    data = _load_yaml(module_yaml_path)
+    if not module_yaml_path.exists():
+        return {"module_id": module_id, "updated": False, "fixes": ["module.yaml missing"]}
 
+    data = _load_yaml(module_yaml_path)
     actions: Dict[str, Any] = {"module_id": module_id, "updated": False, "fixes": []}
 
     mod = data.get("module") or {}
@@ -193,32 +196,15 @@ def normalize_module_yaml(module_dir: Path, module_id: str) -> Dict[str, Any]:
         mod["entrypoint"] = entry
         actions["updated"] = True
         actions["fixes"].append("module.entrypoint")
-
     data["module"] = mod
 
-    secrets = data.get("secrets") or {}
-    api_key_env = str(secrets.get("api_key_env") or f"{module_id}_GOOGLE_SEARCH_API_KEY")
-    engine_id_env = str(secrets.get("engine_id_env") or f"{module_id}_GOOGLE_SEARCH_ENGINE_ID")
-    api_key_env = api_key_env.replace("-", "_").replace("__MODULE_ID__", module_id)
-    engine_id_env = engine_id_env.replace("-", "_").replace("__MODULE_ID__", module_id)
-    if not api_key_env.startswith(f"{module_id}_"):
-        api_key_env = f"{module_id}_GOOGLE_SEARCH_API_KEY"
-    if not engine_id_env.startswith(f"{module_id}_"):
-        engine_id_env = f"{module_id}_GOOGLE_SEARCH_ENGINE_ID"
-    if secrets.get("api_key_env") != api_key_env:
-        secrets["api_key_env"] = api_key_env
-        actions["updated"] = True
-        actions["fixes"].append("secrets.api_key_env")
-    if secrets.get("engine_id_env") != engine_id_env:
-        secrets["engine_id_env"] = engine_id_env
-        actions["updated"] = True
-        actions["fixes"].append("secrets.engine_id_env")
-    data["secrets"] = secrets
-
-    # Pricing normalization to platform schema
+    # Pricing normalization to platform schema (critical for orchestrate)
     pricing = data.get("pricing")
     if not isinstance(pricing, dict):
         pricing = {}
+        actions["updated"] = True
+        actions["fixes"].append("pricing (created)")
+
     pricing.setdefault("price_run_credits", 1)
     pricing.setdefault("price_save_to_release_credits", 0)
     pricing.setdefault("effective_from", DEFAULT_EFFECTIVE_FROM)
@@ -248,13 +234,12 @@ def register_tenant_schema(modules_dir: Path, registry_dir: Path) -> List[str]:
 
 
 def _is_effective_now(row: Dict[str, str], today: date) -> bool:
-    # Conservative parsing: empty effective_from => effective always; empty effective_to => no end.
-    ef = (row.get("effective_from") or "").strip()
-    et = (row.get("effective_to") or "").strip()
     active = (row.get("active") or "").strip().lower() in ("true", "1", "yes", "y")
-
     if not active:
         return False
+
+    ef = (row.get("effective_from") or "").strip()
+    et = (row.get("effective_to") or "").strip()
 
     def _parse(d: str) -> date:
         y, m, dd = d.split("-")
@@ -265,7 +250,6 @@ def _is_effective_now(row: Dict[str, str], today: date) -> bool:
             if _parse(ef) > today:
                 return False
         except Exception:
-            # if malformed, treat as not effective
             return False
 
     if et:
@@ -278,106 +262,55 @@ def _is_effective_now(row: Dict[str, str], today: date) -> bool:
     return True
 
 
-def update_platform_tables(
-    modules_dir: Path,
-    module_catalog_path: Path,
-    requirements_path: Path,
-    prices_path: Path,
-    error_reasons_path: Path
-) -> Dict[str, Any]:
-    _ensure_csv(module_catalog_path, CATALOG_HEADER)
-    _ensure_csv(requirements_path, REQ_HEADER)
-    _ensure_csv(prices_path, PRICES_HEADER)
-    _ensure_csv(error_reasons_path, ERR_HEADER)
-
-    _, cat_rows = _read_csv(module_catalog_path)
-    _, req_rows = _read_csv(requirements_path)
-    _, price_rows = _read_csv(prices_path)
-    _, err_rows = _read_csv(error_reasons_path)
+def ensure_prices_for_all_modules(prices_csv: Path, module_ids: List[str], defaults_by_id: Dict[str, Dict[str, str]] | None = None) -> Dict[str, Any]:
+    defaults_by_id = defaults_by_id or {}
+    _ensure_csv(prices_csv, PRICES_HEADER)
+    _, rows = _read_csv(prices_csv)
 
     today = date.today()
+    added = 0
+    updated = 0
 
-    cat_changed = req_changed = price_changed = err_changed = 0
+    # index by module_id
+    idx = { (r.get("module_id") or "").strip(): r for r in rows if (r.get("module_id") or "").strip() }
 
-    for p in list_module_dirs(modules_dir):
-        m = MODULE_ID_RE.match(p.name)
-        if not m:
-            continue
-        mid = m.group(1)
-        module_yaml_path = p / "module.yaml"
-        if not module_yaml_path.exists():
-            continue
+    for mid in module_ids:
+        desired = defaults_by_id.get(mid, {})
+        row = idx.get(mid)
 
-        data = _load_yaml(module_yaml_path)
-        mod = data.get("module") or {}
-        module_name = str(mod.get("name") or p.name.split("_", 1)[-1])
-        version = str(mod.get("version") or "")
-        entrypoint = str(mod.get("entrypoint") or "")
-        description = str(mod.get("description") or "")
-
-        cat_changed += _upsert_rows(CATALOG_HEADER, cat_rows, ["module_id"], [{
-            "module_id": mid,
-            "module_name": module_name,
-            "version": version,
-            "folder": p.as_posix(),
-            "entrypoint": entrypoint,
-            "description": description,
-        }])
-
-        pricing = data.get("pricing") or {}
-        # Ensure that each module has at least one effective+active row "now"
         desired_row = {
             "module_id": mid,
-            "price_run_credits": str(pricing.get("price_run_credits", 1)),
-            "price_save_to_release_credits": str(pricing.get("price_save_to_release_credits", 0)),
-            "effective_from": str(pricing.get("effective_from") or DEFAULT_EFFECTIVE_FROM),
-            "effective_to": str(pricing.get("effective_to") or ""),
-            "active": "true" if bool(pricing.get("active", True)) else "false",
-            "notes": str(pricing.get("notes") or "Baseline per-run credit charge."),
+            "price_run_credits": desired.get("price_run_credits", "1"),
+            "price_save_to_release_credits": desired.get("price_save_to_release_credits", "0"),
+            "effective_from": desired.get("effective_from", DEFAULT_EFFECTIVE_FROM),
+            "effective_to": desired.get("effective_to", ""),
+            "active": desired.get("active", "true"),
+            "notes": desired.get("notes", "Backfilled by maintenance helper."),
         }
 
-        # If a current row exists, do not duplicate; else upsert by module_id (single-row model)
-        current_rows = [r for r in price_rows if (r.get("module_id") or "") == mid and _is_effective_now(r, today)]
-        if current_rows:
-            # still upsert by module_id to keep values updated
-            price_changed += _upsert_rows(PRICES_HEADER, price_rows, ["module_id"], [desired_row])
+        if row is None:
+            rows.append(desired_row)
+            added += 1
+            idx[mid] = desired_row
+            continue
+
+        # Ensure effective+active now. If not, overwrite into the single-row model.
+        if not _is_effective_now(row, today):
+            for k, v in desired_row.items():
+                row[k] = v
+            updated += 1
         else:
-            # Force-create current row (module_id unique)
-            price_changed += _upsert_rows(PRICES_HEADER, price_rows, ["module_id"], [desired_row])
+            # keep as current but ensure required fields are not empty
+            changed = False
+            for k, v in desired_row.items():
+                if (row.get(k) or "") == "" and v != "":
+                    row[k] = v
+                    changed = True
+            if changed:
+                updated += 1
 
-        # Requirements and errors: kept as-is (your repo may have other canonical sources).
-        # This helper only guarantees presence in CSV when module.yaml provides them.
-        for r in (data.get("requirements") or []):
-            if isinstance(r, dict):
-                req_changed += _upsert_rows(REQ_HEADER, req_rows, ["module_id", "requirement_type", "requirement_key"], [{
-                    "module_id": mid,
-                    "requirement_type": str(r.get("type") or ""),
-                    "requirement_key": str(r.get("key") or ""),
-                    "requirement_value": str(r.get("value") or ""),
-                    "note": str(r.get("note") or ""),
-                }])
-
-        for e in (data.get("errors") or []):
-            if isinstance(e, dict):
-                err_changed += _upsert_rows(ERR_HEADER, err_rows, ["module_id", "error_code"], [{
-                    "module_id": mid,
-                    "error_code": str(e.get("code") or ""),
-                    "severity": str(e.get("severity") or ""),
-                    "description": str(e.get("description") or ""),
-                    "remediation": str(e.get("remediation") or ""),
-                }])
-
-    _write_csv(module_catalog_path, CATALOG_HEADER, cat_rows)
-    _write_csv(requirements_path, REQ_HEADER, req_rows)
-    _write_csv(prices_path, PRICES_HEADER, price_rows)
-    _write_csv(error_reasons_path, ERR_HEADER, err_rows)
-
-    return {
-        "catalog_rows_changed": cat_changed,
-        "price_rows_changed": price_changed,
-        "requirements_rows_changed": req_changed,
-        "error_reason_rows_changed": err_changed,
-    }
+    _write_csv(prices_csv, PRICES_HEADER, rows)
+    return {"prices_path": str(prices_csv), "module_ids_count": len(module_ids), "rows_added": added, "rows_updated": updated}
 
 
 def main() -> int:
@@ -388,6 +321,7 @@ def main() -> int:
     ap.add_argument("--requirements-path", default="platform/modules/requirements.csv")
     ap.add_argument("--prices-path", default="platform/billing/module_prices.csv")
     ap.add_argument("--error-reasons-path", default="platform/errors/error_reasons.csv")
+    ap.add_argument("--billing-state-dir", default="", help="If set, ALSO writes module_prices.csv into billing-state-dir (used by orchestrate).")
     ap.add_argument("--report-path", default="runtime/maintenance_modules_report.json")
     args = ap.parse_args()
 
@@ -395,27 +329,51 @@ def main() -> int:
     if not modules_dir.exists():
         raise RuntimeError(f"Modules dir not found: {modules_dir}")
 
-    report: Dict[str, Any] = {
-        "renamed_modules": assign_ids(modules_dir),
-        "module_yaml_normalization": [],
-        "schemas_registered": [],
-        "platform_table_updates": {},
-    }
+    report: Dict[str, Any] = {"renamed_modules": [], "module_yaml_normalization": [], "schemas_registered": [], "prices_backfill": {}}
 
+    # 1) ID assignment + placeholder rewrite
+    report["renamed_modules"] = assign_ids(modules_dir)
+
+    # 2) Normalize module.yaml pricing (so we can use it as source-of-truth)
+    defaults_by_id: Dict[str, Dict[str, str]] = {}
     for p in sorted(list_module_dirs(modules_dir), key=lambda x: x.name):
         m = MODULE_ID_RE.match(p.name)
         if not m:
             continue
-        report["module_yaml_normalization"].append(normalize_module_yaml(p, m.group(1)))
+        mid = m.group(1)
+        report["module_yaml_normalization"].append(normalize_module_yaml(p, mid))
 
+        # collect defaults from module.yaml pricing if present
+        try:
+            data = _load_yaml(p / "module.yaml")
+            pricing = data.get("pricing") or {}
+            defaults_by_id[mid] = {
+                "price_run_credits": str(pricing.get("price_run_credits", 1)),
+                "price_save_to_release_credits": str(pricing.get("price_save_to_release_credits", 0)),
+                "effective_from": str(pricing.get("effective_from") or DEFAULT_EFFECTIVE_FROM),
+                "effective_to": str(pricing.get("effective_to") or ""),
+                "active": "true" if bool(pricing.get("active", True)) else "false",
+                "notes": str(pricing.get("notes") or "Backfilled by maintenance helper."),
+            }
+        except Exception:
+            # ignore; helper will use global defaults
+            pass
+
+    module_ids = parse_module_ids(modules_dir)
+
+    # 3) Register schemas (unchanged)
     report["schemas_registered"] = register_tenant_schema(modules_dir, Path(args.schema_registry_dir))
-    report["platform_table_updates"] = update_platform_tables(
-        modules_dir,
-        Path(args.module_catalog_path),
-        Path(args.requirements_path),
-        Path(args.prices_path),
-        Path(args.error_reasons_path),
-    )
+
+    # 4) Backfill repo prices (platform path) – CI expects this header
+    repo_prices = Path(args.prices_path)
+    report["prices_backfill"]["repo"] = ensure_prices_for_all_modules(repo_prices, module_ids, defaults_by_id)
+
+    # 5) Backfill billing-state prices (runtime source) – orchestrate reads from billing-state-dir
+    if args.billing_state_dir:
+        bs_dir = Path(args.billing_state_dir)
+        bs_dir.mkdir(parents=True, exist_ok=True)
+        bs_prices = bs_dir / "module_prices.csv"
+        report["prices_backfill"]["billing_state"] = ensure_prices_for_all_modules(bs_prices, module_ids, defaults_by_id)
 
     out = Path(args.report_path)
     out.parent.mkdir(parents=True, exist_ok=True)

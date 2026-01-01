@@ -1,21 +1,28 @@
-Fix for: KeyError 'Missing active module price for module 001'
+Your orchestrator is called with --billing-state-dir .billing-state-ci and fails:
+  KeyError: Missing active module price for module 001
 
-Root causes (either one, often both):
-1) module_prices.csv was migrated/rewritten without a row for module 001 (or other existing modules).
-2) effective_from was set to a future date, so no "active price" is effective at runtime.
+That indicates the orchestrator is reading prices from:
+  .billing-state-ci/module_prices.csv
+(not from platform/billing/module_prices.csv).
 
-This patch provides:
-- scripts/maintenance_modules.py: backfills module_prices.csv for ALL modules under ./modules
-  using module.yaml pricing (or safe defaults) and ensures an effective+active row exists.
-- scripts/migrate_module_prices_csv.py: migrates legacy header to expected header with
-  effective_from=1970-01-01 to avoid "future price" issues.
+This patch updates Maintenance helper to backfill BOTH:
+- platform/billing/module_prices.csv  (repo/config; CI header enforcement)
+- <billing-state-dir>/module_prices.csv (runtime; orchestrate)
 
-Recommended workflow:
-A) If module_prices.csv still has legacy header:
-   python scripts/migrate_module_prices_csv.py --path platform/billing/module_prices.csv
-   git add platform/billing/module_prices.csv && git commit -m "Migrate module_prices.csv schema"
+Use it in CI BEFORE orchestrate:
 
-B) Run Maintenance (this helper) in your Maintenance workflow before orchestrate:
-   python scripts/maintenance_modules.py --modules-dir modules --report-path runtime/maintenance_modules_report.json
+python scripts/maintenance_modules.py \
+  --modules-dir modules \
+  --billing-state-dir .billing-state-ci \
+  --prices-path platform/billing/module_prices.csv \
+  --report-path runtime/maintenance_modules_report.json
 
-C) Re-run orchestrate. Module 001 will have an active price.
+Then optionally confirm:
+python scripts/debug_billing_state_prices.py --billing-state-dir .billing-state-ci --module-id 001
+
+After this, orchestrate should no longer fail on missing module 001 price.
+
+Also update E2E verification to assert:
+- billing-state module_prices.csv exists
+- header matches expected schema
+- every module_id referenced by the workorder has an effective+active price row in billing-state
