@@ -357,26 +357,53 @@ Rule:
 
 ---
 
-# 8) Billing-state CSV schemas + examples
+# 8) Billing CSV schemas + examples
 
-All files below are assets under the GitHub Release tag `billing-state`.
-
-## 8.1 `module_prices.csv`
+## 8.1 `platform/billing/module_prices.csv` (repo-managed)
 
 Header:
 ```csv
-module_id,price_run_credits,price_save_to_release_credits,effective_from,effective_to,active
+module_id,price_run_credits,price_save_to_release_credits,effective_from,effective_to,active,notes
 ```
 
 Example rows:
 ```csv
-001,5,2,2025-01-01,,true
-005,10,3,2025-01-01,,true
-007,20,5,2025-01-01,,true
-009,2,0,2025-01-01,,true
+001,5,2,2025-01-01,,true,Seed pricing
+002,5,2,2025-01-01,,true,Seed pricing
 ```
 
-## 8.2 `tenants_credits.csv`
+## 8.2 `platform/billing/promotions.csv` (repo-managed)
+
+Header:
+```csv
+promo_id,code,type,value_credits,max_uses_per_tenant,valid_from,valid_to,active,rules_json,notes
+```
+
+Example rows:
+```csv
+PROMO-001,WELCOME10,PROMO_CODE,10,1,2025-01-01,,true,{},One-time welcome discount
+```
+
+## 8.3 `platform/billing/topup_instructions.csv` (repo-managed)
+
+Header:
+```csv
+topup_method_id,channel,status,currency,min_amount,fee_notes,processing_time,admin_action_required,reference_format,instructions
+```
+
+Example rows:
+```csv
+bank_manual_usd,manual_bank_transfer,active,USD,100,"Bank fees may apply","1-2 business days",true,"<TENANT_ID>-<DATE>-<SEQ>","Admin verifies transfer then runs admin-topup workflow."
+```
+
+---
+
+# 9) Billing-state CSV schemas + examples (Release-managed SoT)
+
+All files below are assets under the GitHub Release tag `billing-state-v1`.
+
+## 9.1 `tenants_credits.csv`
+
 
 Header:
 ```csv
@@ -390,7 +417,7 @@ tenant-002,15,2025-12-31T12:00:00Z,active
 tenant-003,0,2025-12-31T12:00:00Z,suspended
 ```
 
-## 8.3 `transactions.csv`
+## 9.2 `transactions.csv`
 
 Header:
 ```csv
@@ -403,7 +430,7 @@ tx-20251231-0001,tenant-001,wo-2025-12-31-001,SPEND,33,2025-12-31T12:05:00Z,"{""
 tx-20251231-0002,tenant-001,wo-2025-12-31-001,REFUND,-10,2025-12-31T12:25:00Z,"{""failed_gross"":12,""deals_total"":2,""refundable_net"":10}"
 ```
 
-## 8.4 `transaction_items.csv`
+## 9.3 `transaction_items.csv`
 
 Header:
 ```csv
@@ -421,7 +448,7 @@ ti-0006,tx-20251231-0002,tenant-001,wo-2025-12-31-001,mr-002,refund:module:005,M
 ti-0007,tx-20251231-0002,tenant-001,wo-2025-12-31-001,,refund_calculation_note,REFUND_NOTE,0,,"failed_gross=12, deals_total=2 => refundable_net=10"
 ```
 
-## 8.5 `workorders_log.csv`
+## 9.4 `workorders_log.csv`
 
 Header:
 ```csv
@@ -433,7 +460,7 @@ Example row:
 wo-2025-12-31-001,tenant-001,PARTIALLY_COMPLETED,,2025-12-31T12:05:00Z,2025-12-31T12:25:00Z,123456789,PARTIAL_ALLOWED,"[""001"",""005"",""007""]","{""notes"":""Example run""}"
 ```
 
-## 8.6 `module_runs_log.csv`
+## 9.5 `module_runs_log.csv`
 
 Header:
 ```csv
@@ -447,20 +474,7 @@ mr-002,wo-2025-12-31-001,tenant-001,005,FAILED,105005002,2025-12-31T12:09:00Z,20
 mr-003,wo-2025-12-31-001,tenant-001,007,FAILED,112007001,2025-12-31T12:13:00Z,2025-12-31T12:13:01Z,cache,,v1|tenant=tenant-001|module=007|type=outputs|hash=abcd1234,,,,"{""note"":""cache hit => skipped""}"
 ```
 
-## 8.7 `promotions.csv`
-
-Header:
-```csv
-promo_id,code,type,value_credits,max_uses_per_tenant,valid_from,valid_to,active,rules_json
-```
-
-Example rows:
-```csv
-promo-001,WELCOME10,PROMO_CODE,2,1,2025-01-01,2026-01-01,true,"{}"
-deal-007,SUMMERDEAL,DEAL,5,10,2025-06-01,2025-09-01,false,"{}"
-```
-
-## 8.8 `promotion_redemptions.csv`
+## 9.6 `promotion_redemptions.csv`
 
 Header:
 ```csv
@@ -473,7 +487,7 @@ pr-0001,tenant-001,promo-001,wo-2025-12-31-001,APPLIED,2,2025-12-31T12:05:00Z,"A
 pr-0002,tenant-001,promo-001,wo-2025-12-31-001,REFUNDED,2,2025-12-31T12:25:00Z,"Promo fully refunded per apply-order allocation."
 ```
 
-## 8.9 `cache_index.csv`
+## 9.7 `cache_index.csv`
 
 Header:
 ```csv
@@ -491,7 +505,7 @@ Orphan registration (required):
 
 ---
 
-## 9) `config/global_reasons.yml` example
+## 10) `config/global_reasons.yml` example
 
 **Path:** `config/global_reasons.yml`
 

@@ -212,27 +212,61 @@ Admin may set `false`; automation must never flip admin choices.
 
 ---
 
-## 6) Billing State (Release: `billing-state`): Files and Schemas
+## 6) Billing Configuration (Repository-managed)
 
-Billing files are assets overwritten on each update. A manifest (`state_manifest.json`) should be uploaded last to indicate a complete update.
+Billing *configuration* is admin-managed and committed to the repo under:
 
-### 6.1 Credits and pricing
+`platform/billing/`
 
-#### `module_prices.csv`
-- `module_id`
+These files are used for *spend estimation* and promo eligibility.
+
+### 6.1 Base prices
+
+#### `platform/billing/module_prices.csv`
+- `module_id` (3-digit string)
 - `price_run_credits` (int)
 - `price_save_to_release_credits` (int)
 - `effective_from` (optional)
 - `effective_to` (optional)
 - `active` (bool)
+- `notes` (optional)
 
+### 6.2 Promotions
+
+#### `platform/billing/promotions.csv`
+- `promo_id`
+- `code`
+- `type`
+- `value_credits` (int magnitude)
+- `max_uses_per_tenant` (optional int)
+- `valid_from` (optional)
+- `valid_to` (optional)
+- `active` (bool)
+- `rules_json` (optional)
+- `notes` (optional)
+
+### 6.3 Top-up instructions
+
+#### `platform/billing/topup_instructions.csv`
+Operational instructions for how admins (and later automation) perform top-ups.
+
+---
+
+## 7) Billing State (Release-managed, source of truth)
+
+Billing *state* is the accounting source of truth and is stored as Release assets (e.g., `billing-state-v1`).
+These files must not be edited manually; they are updated by GitHub Actions.
+
+A manifest (`state_manifest.json`) should be uploaded last to indicate a complete update.
+
+### 7.1 Tenant credits
 #### `tenants_credits.csv`
 - `tenant_id`
 - `credits_available` (int)
 - `updated_at`
 - `status` (active|suspended)
 
-### 6.2 Ledger
+### 7.2 Ledger
 
 #### `transactions.csv`
 - `transaction_id`
@@ -260,7 +294,7 @@ Rules:
 - promos/deals are negative line items
 - refunds are REFUND transactions; itemization is allowed
 
-### 6.3 Minimal operational logs (Option B)
+### 7.3 Minimal operational logs (Option B)
 
 #### `workorders_log.csv`
 - `work_order_id`
@@ -290,17 +324,9 @@ Rules:
 - `release_manifest_name` (nullable)
 - `metadata_json` (optional)
 
-### 6.4 Promotions
+### 7.4 Promotion redemption events
 
-#### `promotions.csv`
-- `promo_id`
-- `code`
-- `type` (PROMO_CODE|DEAL)
-- `value_credits` (int magnitude)
-- `max_uses_per_tenant` (optional)
-- `valid_from`, `valid_to`
-- `active` (bool)
-- `rules_json` (optional)
+Promo definitions are repo-managed (`platform/billing/promotions.csv`). Usage events and auditability remain release-managed.
 
 #### `promotion_redemptions.csv`
 - `event_id`
@@ -308,14 +334,11 @@ Rules:
 - `promo_id`
 - `work_order_id`
 - `event_type` (APPLIED|REFUNDED)
-- `amount_credits` (int magnitude)
+- `amount_credits` (int; discount amount is stored as a negative line item, but redemptions keep the signed amount)
 - `created_at`
 - `note` (optional)
 
-Promo refund allocation rule:
-- apply order within the work order
-
-### 6.5 Cache governance
+### 7.5 Cache governance
 
 #### `cache_index.csv`
 - `cache_key`

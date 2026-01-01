@@ -156,13 +156,40 @@ def _new_id(prefix: str) -> str:
 
 def _apply_promotions(
     promotions_catalog: List[Dict[str, str]],
+    promotion_redemptions: List[Dict[str, str]],
+    tenant_id: str,
     requested_promotions: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """Return list of promo line items (negative amount).
 
-    This is intentionally conservative: it only applies active promos by exact code match.
+    Promo definitions are repo-managed (platform/billing/promotions.csv).
+    Redemption events (APPLIED/REFUNDED) are accounting state in billing-state.
+
+    This scaffold applies promos conservatively:
+    - exact code match
+    - promo must be active
+    - enforces max_uses_per_tenant if provided
+
+    NOTE: date windows and rules_json are intentionally not enforced in this placeholder.
     """
     by_code = {str(p.get("code", "")).upper(): p for p in promotions_catalog}
+
+    # Count net redemptions per tenant+promo_id (APPLIED minus REFUNDED)
+    net_used = {}
+    for e in promotion_redemptions:
+        if str(e.get("tenant_id", "")).strip() != tenant_id:
+            continue
+        pid = str(e.get("promo_id", "")).strip()
+        if not pid:
+            continue
+        et = str(e.get("event_type", "")).strip().upper()
+        delta = 0
+        if et == "APPLIED":
+            delta = 1
+        elif et == "REFUNDED":
+            delta = -1
+        net_used[pid] = net_used.get(pid, 0) + delta
+
     out: List[Dict[str, Any]] = []
     for req in requested_promotions or []:
         code = str(req.get("code", "")).upper().strip()
@@ -173,15 +200,29 @@ def _apply_promotions(
             continue
         if str(p.get("active", "false")).lower() != "true":
             continue
+
+        promo_id = str(p.get("promo_id", "")).strip()
         value = int(str(p.get("value_credits", "0")) or 0)
-        if value <= 0:
+        if value <= 0 or not promo_id:
             continue
+
+        max_uses_raw = str(p.get("max_uses_per_tenant", "")).strip()
+        if max_uses_raw:
+            try:
+                max_uses = int(max_uses_raw)
+            except Exception:
+                max_uses = 0
+            if max_uses > 0:
+                if net_used.get(promo_id, 0) >= max_uses:
+                    continue
+
         out.append({
             "code": code,
-            "promo_id": str(p.get("promo_id", "")),
+            "promo_id": promo_id,
             "type": str(p.get("type", "PROMO_CODE")),
             "amount_credits": -abs(value),
         })
+
     return out
 
 
@@ -189,9 +230,12 @@ def estimate_spend(
     module_prices: List[Dict[str, str]],
     workorder: Dict[str, Any],
     promotions_catalog: List[Dict[str, str]],
+    promotion_redemptions: List[Dict[str, str]],
 ) -> Tuple[int, List[Dict[str, Any]]]:
     modules = workorder.get("modules", []) or []
-    promo_items = _apply_promotions(promotions_catalog, workorder.get("promotions", []) or [])
+
+    tenant_id = str(workorder.get("tenant_id", "")).strip()
+    promo_items = _apply_promotions(promotions_catalog, promotion_redemptions, tenant_id, workorder.get("promotions", []) or [])
 
     total = 0
     line_items: List[Dict[str, Any]] = []
@@ -206,8 +250,16 @@ def estimate_spend(
             line_items.append({"name": f"upload:{mid}", "category": "UPLOAD", "amount": rel_price, "module_id": mid})
 
     for p in promo_items:
-        total += int(p["amount_credits"])
-        line_items.append({"name": f"promo:{p['code']}", "category": "PROMO", "amount": int(p["amount_credits"]), "module_id": ""})
+        amt = int(p["amount_credits"])
+        total += amt
+        line_items.append({
+            "name": f"promo:{p['code']}",
+            "category": "PROMO",
+            "amount": amt,
+            "module_id": "",
+            "promo_id": p["promo_id"],
+            "promo_code": p["code"],
+        })
 
     # Total spend may not be negative; clamp.
     total = max(0, total)
@@ -250,6 +302,33 @@ def _append_transaction_items(transaction_items: List[Dict[str, str]], tx_id: st
             "reason_code": str(it.get("reason_code", "")) or "",
             "note": str(it.get("note", "")) or "",
         })
+
+def _append_promotion_redemptions(
+    promotion_redemptions: list[dict[str, str]],
+    tenant_id: str,
+    work_order_id: str,
+    spend_items: list[dict[str, object]],
+) -> None:
+    """Append APPLIED promotion redemption events for promo spend items."""
+    for it in spend_items:
+        if str(it.get("category")) != "PROMO":
+            continue
+        promo_id = str(it.get("promo_id", "") or "").strip()
+        promo_code = str(it.get("promo_code", "") or "").strip()
+        if not promo_id:
+            continue
+        amount = int(it.get("amount", 0) or 0)
+        promotion_redemptions.append({
+            "event_id": _new_id("pr"),
+            "tenant_id": tenant_id,
+            "promo_id": promo_id,
+            "work_order_id": work_order_id,
+            "event_type": "APPLIED",
+            "amount_credits": str(amount),
+            "created_at": utcnow_iso(),
+            "note": promo_code,
+        })
+
 
 # -------------------------
 # Module execution
@@ -527,14 +606,17 @@ def orchestrate_workorder(cfg: OrchestratorConfig, ms: MaintenanceState, billing
     work_order_id = str(workorder.get("work_order_id"))
 
     started_at = utcnow_iso()
-    # Load billing tables
-    module_prices = billing.load_table("module_prices.csv")
+    # Load billing tables (accounting SoT)
     tenants_credits = billing.load_table("tenants_credits.csv")
     transactions = billing.load_table("transactions.csv")
     transaction_items = billing.load_table("transaction_items.csv")
     workorders_log = billing.load_table("workorders_log.csv")
     module_runs_log = billing.load_table("module_runs_log.csv")
-    promotions_catalog = billing.load_table("promotions.csv")
+    promotion_redemptions = billing.load_table("promotion_redemptions.csv")
+    # Load billing configuration from the repository (admin-managed)
+    billing_cfg = cfg.repo_root / "platform" / "billing"
+    module_prices = read_csv(billing_cfg / "module_prices.csv")
+    promotions_catalog = read_csv(billing_cfg / "promotions.csv")
 
     # Tenant status check
     trow = _tenant_credit_row(tenants_credits, tenant_id)
@@ -560,7 +642,7 @@ def orchestrate_workorder(cfg: OrchestratorConfig, ms: MaintenanceState, billing
         return
 
     # Estimate + credit check
-    est_total, spend_items = estimate_spend(module_prices, workorder, promotions_catalog)
+    est_total, spend_items = estimate_spend(module_prices, workorder, promotions_catalog, promotion_redemptions)
     available = int(str(trow.get("credits_available", "0")) or 0)
     if available < est_total:
         rc = _reason_code(ms, "GLOBAL", "000", "not_enough_credits")
@@ -576,9 +658,20 @@ def orchestrate_workorder(cfg: OrchestratorConfig, ms: MaintenanceState, billing
         module_run_id_map[m] = _new_id(f"mr-{tenant_id}-{work_order_id}-{m}")
 
     spend_tx_id = _append_transaction(transactions, tenant_id, work_order_id, "SPEND", est_total, {"workorder_path": workorder.get("_path", "")})
-    _append_transaction_items(transaction_items, spend_tx_id, tenant_id, work_order_id,
-                             [{"name": it["name"], "category": it["category"], "amount": it["amount"], "module_id": it.get("module_id",""), "reason_code": "", "note": ""} for it in spend_items],
-                             module_run_id_map)
+
+    tx_items = []
+    for it in spend_items:
+        item = {"name": it.get("name"), "category": it.get("category"), "amount": it.get("amount"), "module_id": it.get("module_id", ""), "reason_code": "", "note": ""}
+        if str(it.get("category")) == "PROMO":
+            item["note"] = str(it.get("promo_code", ""))
+            item["promo_id"] = it.get("promo_id")
+            item["promo_code"] = it.get("promo_code")
+        tx_items.append(item)
+
+    _append_transaction_items(transaction_items, spend_tx_id, tenant_id, work_order_id, tx_items, module_run_id_map)
+
+    # Record promo redemption events (accounting state)
+    _append_promotion_redemptions(promotion_redemptions, tenant_id, work_order_id, spend_items)
 
     # Update credits
     trow["credits_available"] = str(available - est_total)
@@ -690,6 +783,7 @@ def orchestrate_workorder(cfg: OrchestratorConfig, ms: MaintenanceState, billing
     billing.save_table("transactions.csv", transactions, ["transaction_id","tenant_id","work_order_id","type","total_amount_credits","created_at","metadata_json"])
     billing.save_table("transaction_items.csv", transaction_items, ["transaction_item_id","transaction_id","tenant_id","work_order_id","module_run_id","name","category","amount_credits","reason_code","note"])
     billing.save_table("tenants_credits.csv", tenants_credits, ["tenant_id","credits_available","updated_at","status"])
+    billing.save_table("promotion_redemptions.csv", promotion_redemptions, ["event_id","tenant_id","promo_id","work_order_id","event_type","amount_credits","created_at","note"])
     billing.save_table("workorders_log.csv", workorders_log, ["work_order_id","tenant_id","status","reason_code","started_at","finished_at","github_run_id","workorder_mode","requested_modules","metadata_json"])
     billing.save_table("module_runs_log.csv", module_runs_log, ["module_run_id","work_order_id","tenant_id","module_id","status","reason_code","started_at","finished_at","reuse_output_type","reuse_reference","cache_key_used","published_release_tag","release_manifest_name","metadata_json"])
 

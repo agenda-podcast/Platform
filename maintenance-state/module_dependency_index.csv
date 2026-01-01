@@ -1,3 +1,3 @@
 module_id,depends_on_module_ids,notes
 001,[],
-002,"[""001""]",Placeholder dependency: 002 requires 001 output.
+002,"[""001""]",

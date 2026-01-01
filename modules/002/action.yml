@@ -43,11 +43,5 @@ runs:
       run: |
         python -m platform.cli module-exec \
           --module-id "002" \
-          --module-path "${{ github.action_path }}" \
-          --tenant-id "${{ inputs.tenant_id }}" \
-          --work-order-id "${{ inputs.work_order_id }}" \
-          --module-run-id "${{ inputs.module_run_id }}" \
           --params-json '${{ inputs.params_json }}' \
-          --runtime-dir "${{ inputs.runtime_dir }}" \
-          --outputs-dir "${{ inputs.outputs_dir }}" \
-          --github-action-outputs
+          --outputs-dir "${{ inputs.outputs_dir }}"

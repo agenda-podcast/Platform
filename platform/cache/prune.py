@@ -28,7 +28,7 @@ def _parse_iso_z(s: str) -> datetime:
 
 def run_cache_prune(billing_state_dir: Path, dry_run: bool = True) -> CachePruneResult:
     billing = BillingState(billing_state_dir)
-    billing.validate_minimal()
+    billing.validate_minimal(required_files=["cache_index.csv"])
 
     cache_index = read_csv(billing.path("cache_index.csv"))
 
