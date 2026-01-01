@@ -1,28 +1,31 @@
-This patch fixes the persistent runtime error:
+You are still getting:
+  KeyError: 'Missing active module price for module 001'
 
-  KeyError: Missing active module price for module 001
+That means platform/orchestration/orchestrator.py still has the old _find_price() implementation.
 
-Root cause:
-- Orchestrator is currently loading module_prices from runtime/billing-state artifacts.
-- Your policy now makes pricing a platform-maintained config at:
+This bundle provides a deterministic patcher script that rewrites the *top-level* function:
+
+  def _find_price(...)
+
+inside:
+  platform/orchestration/orchestrator.py
+
+to a version that:
+- first tries the runtime-loaded price table (module_prices param)
+- then falls back to the authoritative config:
     platform/billing/module_prices.csv
-- When billing-state lacks prices, spend estimation fails.
+- normalizes numeric module ids to 3 digits (001)
+- selects an effective+active row
 
-What this patch does:
-- Keeps existing behavior for already-loaded module_prices.
-- Adds a strict fallback in _find_price() to load authoritative pricing from:
-    platform/billing/module_prices.csv
-- Normalizes module_id to 3-digit format (001) to avoid lookup mismatches.
-- Selects the best effective+active row (latest effective_from).
+Run once locally or in a Maintenance workflow step, then commit the changed orchestrator.py.
 
-How to apply:
-1) Apply patch file:
-   patches/orchestrator_repo_prices_fallback.patch
-   to platform/orchestration/orchestrator.py
+Usage:
+  python scripts/patch_orchestrator_find_price.py --backup
 
-2) Ensure Maintenance backfills module_prices.csv:
-   python scripts/maintenance_prices.py --modules-dir modules --module-prices-path platform/billing/module_prices.csv --billing-config-path platform/billing/billing_config.yaml
+After patching, re-run:
+  python -m platform.cli orchestrate --runtime-dir runtime --billing-state-dir .billing-state-ci
 
-Notes:
-- This does NOT make orchestrator "do maintenance". It only reads the authoritative platform pricing config for spend estimation.
-- After this change, orchestrate will no longer depend on billing-state containing module_prices.csv.
+Expected behavior:
+- No KeyError for module 001 if platform/billing/module_prices.csv contains an effective+active row for 001.
+- If runtime table is missing, you will see:
+    [ORCH][WARN] ... used repo pricing config instead.
