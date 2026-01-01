@@ -1,0 +1,14 @@
+This bundle aligns with your requirement:
+
+- Maintenance is the ONLY place where module_prices coverage is enforced.
+- Orchestrator should calculate spend using platform/billing/module_prices.csv (source-of-truth), not billing-state.
+- Maintenance must NOT generate new runtime reports or new billing_state_seed artifacts.
+- Defaults are configurable via platform/billing/billing_config.yaml:
+    billing_defaults.default_price_run_credits
+    billing_defaults.default_price_save_to_release_credits
+
+What you need to update in your repo:
+1) Add platform/billing/billing_config.yaml (or merge these keys into your existing config).
+2) Add scripts/maintenance_prices.py and call it from Maintenance workflow before commit/push.
+3) Update orchestrator module price loader to read platform/billing/module_prices.csv directly (see patches/orchestrator_module_prices.patch).
+4) Update ci_verify PRE phase to verify coverage: every module folder ID has an effective+active price row (see patches/ci_verify_prices.patch).

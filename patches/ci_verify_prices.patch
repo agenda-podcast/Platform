@@ -1,0 +1,8 @@
+*** a/scripts/ci_verify.py
+--- b/scripts/ci_verify.py
+@@
+ def verify_pre(...):
+     ...
++    # Verify module_prices coverage for all module folders.
++    # For each modules/<MID>_* folder, ensure module_prices.csv has an active/effective row for MID.
++    verify_module_prices_coverage(repo_root, modules_dir, Path("platform/billing/module_prices.csv"))

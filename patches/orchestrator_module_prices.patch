@@ -1,0 +1,8 @@
+*** a/platform/orchestration/orchestrator.py
+--- b/platform/orchestration/orchestrator.py
+@@
+-    module_prices = billing.load_module_prices(billing_state_dir)
++    # Pricing is a platform-maintained config artifact.
++    # Source of truth: platform/billing/module_prices.csv (committed/updated by Maintenance).
++    # billing_state_dir remains for runtime ledgers, not pricing config.
++    module_prices = billing.load_module_prices_from_repo(repo_root=cfg.repo_root if hasattr(cfg, "repo_root") else Path("."))
