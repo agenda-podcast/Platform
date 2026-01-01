@@ -71,6 +71,7 @@ jobs:
 
       - name: Reconcile payments into billing-state (repo → Release)
         run: |
+          python -m platform.cli validate-payments
           python -m platform.cli reconcile-payments --billing-state-dir .billing-state
 
       - name: Upload updated billing-state (if changed)

@@ -9,13 +9,17 @@ from .maintenance.builder import run_maintenance
 from .orchestration.orchestrator import run_orchestrator
 from .cache.prune import run_cache_prune
 from .orchestration.module_exec import execute_module_runner
+
 from .billing.state import BillingState
 from .billing.topup import TopupRequest, apply_admin_topup
-from .billing.payments import reconcile_repo_payments_into_billing_state
+from .billing.payments import (
+    reconcile_repo_payments_into_billing_state,
+    validate_repo_payments,
+)
 
 
 def _repo_root() -> Path:
-    # Assume this file is at repo_root/platform/cli.py
+    # This file is at: <repo_root>/platform/cli.py
     return Path(__file__).resolve().parents[1]
 
 
@@ -29,56 +33,120 @@ def cmd_orchestrate(args: argparse.Namespace) -> int:
     runtime_dir = Path(args.runtime_dir).resolve()
     billing_state_dir = Path(args.billing_state_dir).resolve()
     enable_releases = bool(args.enable_github_releases)
+
     runtime_dir.mkdir(parents=True, exist_ok=True)
     billing_state_dir.mkdir(parents=True, exist_ok=True)
-    run_orchestrator(repo_root=repo_root, billing_state_dir=billing_state_dir, runtime_dir=runtime_dir, enable_github_releases=enable_releases)
+
+    run_orchestrator(
+        repo_root=repo_root,
+        billing_state_dir=billing_state_dir,
+        runtime_dir=runtime_dir,
+        enable_github_releases=enable_releases,
+    )
     return 0
 
 
 def cmd_module_exec(args: argparse.Namespace) -> int:
     repo_root = _repo_root()
     module_id = args.module_id
+
     # Allow module_path override for GitHub composite actions; defaults to repo/modules/<id>.
-    module_path = Path(getattr(args, 'module_path', '') or '')
+    module_path = Path(getattr(args, "module_path", "") or "")
     if not str(module_path):
-        module_path = repo_root / 'modules' / module_id
+        module_path = repo_root / "modules" / module_id
+
     params = json.loads(args.params_json)
     outputs_dir = Path(args.outputs_dir).resolve()
     out = execute_module_runner(module_path, params, outputs_dir)
+
     # Composite action compatibility: optionally set GitHub step outputs.
-    if bool(getattr(args, 'github_action_outputs', False)):
-        out_path = os.environ.get('GITHUB_OUTPUT')
+    if bool(getattr(args, "github_action_outputs", False)):
+        out_path = os.environ.get("GITHUB_OUTPUT")
         if out_path:
-            with open(out_path, 'a', encoding='utf-8') as f:
-                f.write(f"status=COMPLETED\n")
-                f.write(f"reason_code=\n")
-                f.write(f"cache_key=\n")
-                f.write(f"manifest_item_json=\n")
+            with open(out_path, "a", encoding="utf-8") as f:
+                f.write("status=COMPLETED\n")
+                f.write("reason_code=\n")
+                f.write("cache_key=\n")
+                f.write("manifest_item_json=\n")
+
     print(json.dumps(out))
     return 0
 
 
-def cmd_reconcile_payments(args) -> int:
+def cmd_validate_payments(args: argparse.Namespace) -> int:
+    repo_root = _repo_root()
+    report = validate_repo_payments(repo_root)
+
+    # Human-readable summary (helpful in Actions logs)
+    print(
+        "payments.csv validation OK: "
+        f"payments_seen={report.payments_seen}, eligible_seen={report.eligible_seen}, warnings={len(report.warnings)}"
+    )
+    for w in report.warnings:
+        print(f"WARNING: {w}")
+
+    # Structured output for automation
+    print(
+        json.dumps(
+            {
+                "payments_seen": report.payments_seen,
+                "eligible_seen": report.eligible_seen,
+                "warnings": report.warnings,
+            }
+        )
+    )
+    return 0
+
+
+def cmd_reconcile_payments(args: argparse.Namespace) -> int:
     repo_root = _repo_root()
     billing = BillingState(Path(args.billing_state_dir))
-    applied_count, applied_tx_ids = reconcile_repo_payments_into_billing_state(repo_root, billing)
-    if applied_count:
-        # marker for workflows
+
+    res = reconcile_repo_payments_into_billing_state(repo_root, billing)
+
+    if res.payments_applied:
+        # Marker for workflows that conditionally upload updated Release assets.
         marker = Path(args.billing_state_dir) / ".billing_changed"
-        marker.write_text(str(applied_count), encoding="utf-8")
-    print(json.dumps({"applied_count": applied_count, "applied_transaction_ids": applied_tx_ids}))
+        marker.write_text(str(res.payments_applied), encoding="utf-8")
+
+    # Human-readable summary (helpful in Actions logs)
+    print(
+        "payments reconciliation complete: "
+        f"payments_seen={res.payments_seen}, eligible={res.payments_eligible}, "
+        f"applied={res.payments_applied}, skipped_already_applied={res.payments_skipped_already_applied}"
+    )
+    if res.applied_transaction_ids:
+        print("applied_transaction_ids:")
+        for tx in res.applied_transaction_ids:
+            print(f"- {tx}")
+
+    # Structured output for automation
+    print(
+        json.dumps(
+            {
+                "payments_seen": res.payments_seen,
+                "payments_eligible": res.payments_eligible,
+                "payments_applied": res.payments_applied,
+                "payments_skipped_already_applied": res.payments_skipped_already_applied,
+                "applied_transaction_ids": res.applied_transaction_ids,
+            }
+        )
+    )
     return 0
+
 
 def cmd_admin_topup(args: argparse.Namespace) -> int:
     repo_root = _repo_root()
     billing_state_dir = Path(args.billing_state_dir).resolve()
     billing_state_dir.mkdir(parents=True, exist_ok=True)
     billing = BillingState(billing_state_dir)
-    billing.validate_minimal(required_files=[
-        "tenants_credits.csv",
-        "transactions.csv",
-        "transaction_items.csv",
-    ])
+    billing.validate_minimal(
+        required_files=[
+            "tenants_credits.csv",
+            "transactions.csv",
+            "transaction_items.csv",
+        ]
+    )
 
     req = TopupRequest(
         tenant_id=str(args.tenant_id),
@@ -95,7 +163,15 @@ def cmd_admin_topup(args: argparse.Namespace) -> int:
 
 def cmd_cache_prune(args: argparse.Namespace) -> int:
     res = run_cache_prune(Path(args.billing_state_dir).resolve(), dry_run=bool(args.dry_run))
-    print(json.dumps({"updated_rows": res.updated_rows, "deleted_caches": res.deleted_caches, "registered_orphans": res.registered_orphans}))
+    print(
+        json.dumps(
+            {
+                "updated_rows": res.updated_rows,
+                "deleted_caches": res.deleted_caches,
+                "registered_orphans": res.registered_orphans,
+            }
+        )
+    )
     return 0
 
 
@@ -120,7 +196,6 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--work-order-id", default="")
     sp.add_argument("--module-run-id", default="")
     sp.add_argument("--runtime-dir", default="")
-    # Optional: for GitHub composite actions or custom layouts.
     sp.add_argument("--module-path", default="")
     sp.add_argument("--github-action-outputs", action="store_true")
     sp.set_defaults(func=cmd_module_exec)
@@ -138,11 +213,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--note", default="")
     sp.add_argument("--billing-state-dir", default=".billing-state")
     sp.set_defaults(func=cmd_admin_topup)
+
+    sp = sub.add_parser("validate-payments", help="Validate repo payments.csv before reconciliation")
+    sp.set_defaults(func=cmd_validate_payments)
+
     sp = sub.add_parser("reconcile-payments", help="Reconcile repo-recorded payments into billing-state")
     sp.add_argument("--billing-state-dir", default=".billing-state")
     sp.set_defaults(func=cmd_reconcile_payments)
-
-
 
     return p
 
