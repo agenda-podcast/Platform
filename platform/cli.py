@@ -11,6 +11,7 @@ from .cache.prune import run_cache_prune
 from .orchestration.module_exec import execute_module_runner
 from .billing.state import BillingState
 from .billing.topup import TopupRequest, apply_admin_topup
+from .billing.payments import reconcile_repo_payments_into_billing_state
 
 
 def _repo_root() -> Path:
@@ -56,6 +57,17 @@ def cmd_module_exec(args: argparse.Namespace) -> int:
     print(json.dumps(out))
     return 0
 
+
+def cmd_reconcile_payments(args) -> int:
+    repo_root = _repo_root()
+    billing = BillingState(Path(args.billing_state_dir))
+    applied_count, applied_tx_ids = reconcile_repo_payments_into_billing_state(repo_root, billing)
+    if applied_count:
+        # marker for workflows
+        marker = Path(args.billing_state_dir) / ".billing_changed"
+        marker.write_text(str(applied_count), encoding="utf-8")
+    print(json.dumps({"applied_count": applied_count, "applied_transaction_ids": applied_tx_ids}))
+    return 0
 
 def cmd_admin_topup(args: argparse.Namespace) -> int:
     repo_root = _repo_root()
@@ -126,6 +138,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--note", default="")
     sp.add_argument("--billing-state-dir", default=".billing-state")
     sp.set_defaults(func=cmd_admin_topup)
+sp = sub.add_parser("reconcile-payments", help="Reconcile repo-recorded payments into billing-state")
+sp.add_argument("--billing-state-dir", default=".billing-state")
+sp.set_defaults(func=cmd_reconcile_payments)
+
+
 
     return p
 
