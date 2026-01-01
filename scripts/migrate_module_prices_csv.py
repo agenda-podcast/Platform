@@ -1,8 +1,8 @@
+# Patch: safer migration (effective_from set to 1970-01-01 to avoid "future price" failures)
 from __future__ import annotations
 
 import argparse
 import csv
-from datetime import date
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -24,7 +24,7 @@ LEGACY_HEADER = [
     "note",
 ]
 
-DEFAULT_EFFECTIVE_FROM = "2026-01-01"  # set a stable baseline; adjust if you need historical accuracy
+DEFAULT_EFFECTIVE_FROM = "1970-01-01"
 
 
 def read_csv(path: Path) -> Tuple[List[str], List[Dict[str, str]]]:
@@ -43,21 +43,16 @@ def write_csv(path: Path, header: List[str], rows: List[Dict[str, str]]) -> None
 
 def migrate_legacy_rows(rows: List[Dict[str, str]]) -> List[Dict[str, str]]:
     out: List[Dict[str, str]] = []
-
     for r in rows:
         module_id = (r.get("module_id") or "").strip()
         if not module_id:
-            # skip invalid row
             continue
 
         price_credits = (r.get("price_credits") or "").strip()
-        # If legacy had non-integer, keep as-is; CI can enforce later if needed.
-        price_run_credits = price_credits if price_credits else "0"
-
-        # Put legacy pricing semantics into notes for traceability
         unit = (r.get("price_unit") or "").strip()
         scope = (r.get("price_scope") or "").strip()
         note = (r.get("note") or "").strip()
+
         notes = "; ".join([x for x in [
             note,
             f"legacy_unit={unit}" if unit else "",
@@ -67,21 +62,19 @@ def migrate_legacy_rows(rows: List[Dict[str, str]]) -> List[Dict[str, str]]:
 
         out.append({
             "module_id": module_id,
-            "price_run_credits": price_run_credits,
+            "price_run_credits": price_credits if price_credits else "0",
             "price_save_to_release_credits": "0",
             "effective_from": DEFAULT_EFFECTIVE_FROM,
             "effective_to": "",
             "active": "true",
-            "notes": notes
+            "notes": notes,
         })
-
     return out
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Migrate platform/billing/module_prices.csv from legacy schema to platform schema.")
+    ap = argparse.ArgumentParser(description="Migrate module_prices.csv legacy schema -> platform schema.")
     ap.add_argument("--path", default="platform/billing/module_prices.csv")
-    ap.add_argument("--inplace", action="store_true", help="Rewrite file in-place (default).")
     ap.add_argument("--out", default="", help="Optional output path (if set, does not overwrite input).")
     args = ap.parse_args()
 
@@ -90,20 +83,13 @@ def main() -> int:
         raise SystemExit(f"File not found: {path}")
 
     header, rows = read_csv(path)
-
     if header == EXPECTED_HEADER:
         print("No migration needed: header already matches expected schema.")
         return 0
-
     if header != LEGACY_HEADER:
-        raise SystemExit(
-            "Cannot migrate: header does not match legacy schema.\n"
-            f"Expected legacy: {LEGACY_HEADER}\n"
-            f"Got:           {header}"
-        )
+        raise SystemExit(f"Cannot migrate: unexpected header. expected legacy={LEGACY_HEADER} got={header}")
 
     new_rows = migrate_legacy_rows(rows)
-
     out_path = Path(args.out) if args.out else path
     write_csv(out_path, EXPECTED_HEADER, new_rows)
     print(f"Migrated {len(new_rows)} row(s). Wrote: {out_path}")
