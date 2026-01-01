@@ -24,6 +24,7 @@ import json
 import os
 import re
 import shutil
+import hashlib
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -216,6 +217,79 @@ def _normalize_module_yaml(module_dir: Path, module_id: str, log: ChangeLog, che
         _write_yaml(my, y, log, check)
 
 
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _files_identical(a: Path, b: Path) -> bool:
+    try:
+        if a.stat().st_size != b.stat().st_size:
+            return False
+        return _sha256_file(a) == _sha256_file(b)
+    except Exception:
+        return False
+
+
+def _merge_dirs(src: Path, dst: Path, log: ChangeLog, check: bool) -> None:
+    """Merge src directory into dst.
+
+    Rules:
+    - If a file exists in both and contents are identical -> keep dst, delete src copy.
+    - If a file exists in both but differs -> raise (manual intervention required).
+    - Directories are merged recursively.
+    - After merge, src is removed if empty.
+
+    This makes Maintenance idempotent when both legacy and canonical folders coexist
+    (e.g., modules/001 and modules/000001).
+    """
+    if not src.exists() or not src.is_dir():
+        return
+    dst.mkdir(parents=True, exist_ok=True)
+
+    for item in sorted(src.iterdir()):
+        target = dst / item.name
+
+        if item.is_dir():
+            if target.exists() and not target.is_dir():
+                raise RuntimeError(f"Cannot merge {item} into {target}: target is not a directory")
+            log.note(f"MERGE dir {item} -> {target}")
+            _merge_dirs(item, target, log, check)
+            # attempt to remove src dir if empty
+            if not check:
+                try:
+                    if item.exists() and item.is_dir() and not any(item.iterdir()):
+                        item.rmdir()
+                except Exception:
+                    pass
+            continue
+
+        # files
+        if target.exists():
+            if target.is_dir():
+                raise RuntimeError(f"Cannot merge file {item} into {target}: target is a directory")
+            if _files_identical(item, target):
+                log.note(f"DROP duplicate file {item} (identical to {target})")
+                if not check:
+                    item.unlink()
+                continue
+            raise RuntimeError(f"Cannot merge {item} into {target}: file differs")
+
+        log.note(f"MOVE {item} -> {target}")
+        if not check:
+            shutil.move(str(item), str(target))
+
+    if not check:
+        try:
+            if src.exists() and src.is_dir() and not any(src.iterdir()):
+                src.rmdir()
+        except Exception:
+            pass
+
+
 def canonicalize_module_folders(modules_dir: Path, log: ChangeLog, check: bool) -> List[str]:
     """Ensure every module folder name is a 6-digit module_id.
 
@@ -236,28 +310,35 @@ def canonicalize_module_folders(modules_dir: Path, log: ChangeLog, check: bool) 
             if not mid:
                 continue
             dst = modules_dir / mid
-            if dst.exists() and dst.resolve() != p.resolve():
-                raise RuntimeError(f"Cannot rename {p} -> {dst}: destination exists")
             if p.name != mid:
-                log.note(f"RENAME module folder {p.name} -> {mid}")
-                if not check:
-                    if dst.exists():
-                        # same path
-                        pass
-                    else:
+                if dst.exists() and dst.resolve() != p.resolve():
+                    # Both legacy and canonical exist; merge to make maintenance idempotent.
+                    log.note(f"MERGE module folder {p.name} -> {mid} (destination exists)")
+                    _merge_dirs(p, dst, log, check)
+                    if not check and p.exists() and p.is_dir() and not any(p.iterdir()):
+                        p.rmdir()
+                    p = dst
+                else:
+                    log.note(f"RENAME module folder {p.name} -> {mid}")
+                    if not check:
                         p.rename(dst)
-                p = dst
+                    p = dst
 
         # pure numeric legacy folders like "001"
         mid2 = _normalize_module_id(p.name)
         if mid2 and p.name != mid2:
             dst = modules_dir / mid2
             if dst.exists() and dst.resolve() != p.resolve():
-                raise RuntimeError(f"Cannot rename {p} -> {dst}: destination exists")
-            log.note(f"RENAME module folder {p.name} -> {mid2}")
-            if not check:
-                p.rename(dst)
-            p = dst
+                log.note(f"MERGE module folder {p.name} -> {mid2} (destination exists)")
+                _merge_dirs(p, dst, log, check)
+                if not check and p.exists() and p.is_dir() and not any(p.iterdir()):
+                    p.rmdir()
+                p = dst
+            else:
+                log.note(f"RENAME module folder {p.name} -> {mid2}")
+                if not check:
+                    p.rename(dst)
+                p = dst
 
         if MODULE_ID_RE.match(p.name):
             used.append(p.name)
@@ -329,11 +410,17 @@ def canonicalize_tenant_folders(tenants_dir: Path, log: ChangeLog, check: bool) 
         if tid and name != tid:
             dst = tenants_dir / tid
             if dst.exists() and dst.resolve() != p.resolve():
-                raise RuntimeError(f"Cannot rename {p} -> {dst}: destination exists")
-            log.note(f"RENAME tenant folder {name} -> {tid}")
-            if not check:
-                p.rename(dst)
-            p = dst
+                # Both legacy and canonical exist; merge and drop duplicates.
+                log.note(f"MERGE tenant folder {name} -> {tid} (destination exists)")
+                _merge_dirs(p, dst, log, check)
+                if not check and p.exists() and p.is_dir() and not any(p.iterdir()):
+                    p.rmdir()
+                p = dst
+            else:
+                log.note(f"RENAME tenant folder {name} -> {tid}")
+                if not check:
+                    p.rename(dst)
+                p = dst
             name = tid
 
         if TENANT_ID_RE.match(name):
