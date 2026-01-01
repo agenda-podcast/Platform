@@ -158,7 +158,7 @@ def _verify_maintenance_state(repo_root: Path) -> None:
 
 def _verify_billing_state_dir(billing_state_dir: Path) -> None:
     expected_headers = {
-        "tenants_credits.csv": ["tenant_id", "credits_available", "updated_at"],
+        "tenants_credits.csv": ["tenant_id", "credits_available", "updated_at", "status"],
         "transactions.csv": ["transaction_id", "tenant_id", "type", "status", "created_at", "note"],
         "transaction_items.csv": [
             "transaction_item_id",
