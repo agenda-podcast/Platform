@@ -1,8 +1,0 @@
-DERIVED_NOTES (module 002)
-TOPIC: Example Topic
-LANGUAGE: en
-FRESHNESS_DAYS: 3
-
-- Derived from module 001 output (source_text.txt).
-- Validates dependency ordering via maintenance dependency index.
-- Demonstrates downstream artifact generation as a separate module.

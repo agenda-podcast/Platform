@@ -6,7 +6,7 @@ on:
       module_id:
         description: "3-digit module ID"
         required: true
-        default: "001"
+        default: "000001"
       params_json:
         description: "JSON of module params"
         required: true

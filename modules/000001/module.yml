@@ -1,0 +1,32 @@
+module_id: "000001"
+version: "0.1.0"
+
+description: "Placeholder module that generates a deterministic text artifact and a release manifest item."
+
+supports_downloadable_artifacts: true
+produces_manifest: true
+
+depends_on: []
+
+cache:
+  enabled: true
+  retention_default: "1w"
+  key_inputs:
+    - topic
+    - language
+    - freshness_days
+
+inputs:
+  - name: topic
+    required: true
+    format: "text/plain"
+  - name: language
+    required: true
+    format: "text/plain"
+  - name: freshness_days
+    required: true
+    format: "text/plain"
+
+outputs:
+  - name: source_text
+    format: "text/plain"

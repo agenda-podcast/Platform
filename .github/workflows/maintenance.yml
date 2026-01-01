@@ -1,6 +1,8 @@
 name: Maintenance
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
   schedule:
     - cron: "17 3 * * *"
@@ -14,6 +16,7 @@ concurrency:
 
 jobs:
   maintenance:
+    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -34,26 +37,32 @@ jobs:
             pip install -r requirements.txt
           fi
 
-      - name: Maintenance - backfill module prices
+      - name: Maintenance - repository servicing (authoritative)
         run: |
           set -euxo pipefail
-          python scripts/maintenance_prices.py             --modules-dir modules             --module-prices-path platform/billing/module_prices.csv             --billing-defaults-path platform/billing/billing_defaults.csv
+          python scripts/maintenance_repo.py
 
-      - name: Verify module prices coverage (repo config)
+      - name: Maintenance - compile maintenance-state
         run: |
           set -euxo pipefail
-          python scripts/ci_verify_module_prices.py             --modules-dir modules             --prices-path platform/billing/module_prices.csv
+          python -m platform.cli maintenance
+
+      - name: Verify repo is fully serviced
+        run: |
+          set -euxo pipefail
+          python scripts/maintenance_repo.py --check
 
       - name: Commit maintenance outputs
         run: |
           set -euxo pipefail
-          files=()
-          [ -f platform/billing/module_prices.csv ] && files+=(platform/billing/module_prices.csv)
-          [ -f platform/billing/billing_defaults.csv ] && files+=(platform/billing/billing_defaults.csv)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No maintenance outputs found to commit."
-            exit 0
-          fi
-          git add "${files[@]}"
-          git commit -m "Maintenance: backfill module prices" || echo "No changes"
+          git add \
+            modules \
+            maintenance-state \
+            platform/billing/module_prices.csv \
+            platform/modules/modules.csv \
+            platform/modules/requirements.csv \
+            platform/errors/error_reasons.csv \
+            platform/schemas/work_order_modules || true
+
+          git commit -m "Maintenance: service repo state" || echo "No changes"
           git push

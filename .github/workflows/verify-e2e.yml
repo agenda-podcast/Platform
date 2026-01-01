@@ -1,15 +1,13 @@
 name: Verify E2E Platform
 
 on:
-  push:
-    branches: ["**"]
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
+  workflow_run:
+    workflows: ["Maintenance"]
+    types: [completed]
   workflow_dispatch:
 
 concurrency:
-  group: verify-e2e-${{ github.ref }}
+  group: verify-e2e-${{ github.event.workflow_run.head_branch || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -18,12 +16,17 @@ permissions:
 
 jobs:
   verify:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # For workflow_run we want the current tip of the branch after Maintenance may have pushed updates.
+          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -34,6 +37,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+
+      - name: Verify repository servicing is up-to-date
+        run: |
+          set -euxo pipefail
+          python scripts/maintenance_repo.py --check
 
       - name: Verify GitHub CLI present
         run: gh --version

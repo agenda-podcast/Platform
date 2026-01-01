@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import Dict, List
 
 
+MODULE_ID_RE = __import__("re").compile(r"^\d{6}$")
+
+
 def _die(msg: str) -> None:
     print(f"[CI_VERIFY][FAIL] {msg}", file=sys.stderr)
     raise SystemExit(2)
@@ -133,7 +136,94 @@ def _verify_platform_billing(repo_root: Path) -> None:
         if mid and (len(mid) != 3 or not mid.isdigit()):
             _die(f"platform/billing/module_prices.csv invalid module_id at line {i}: {mid!r}")
 
+    # Coverage: every module folder must have at least one effective active price row.
+    module_ids = _collect_module_ids(repo_root / "modules")
+    by_mid = {}
+    for r in rows:
+        by_mid.setdefault(r.get("module_id", ""), []).append(r)
+
+    from datetime import date
+
+    today = date.today()
+
+    def _parse_date(s: str):
+        s = (s or "").strip()
+        if not s:
+            return None
+        try:
+            y, m, d = s.split("-")
+            return date(int(y), int(m), int(d))
+        except Exception:
+            return None
+
+    def _effective_now(r: Dict[str, str]) -> bool:
+        if str(r.get("active", "")).strip().lower() not in ("true", "1", "yes", "y"):
+            return False
+        ef = _parse_date(r.get("effective_from", ""))
+        et = _parse_date(r.get("effective_to", ""))
+        if ef and ef > today:
+            return False
+        if et and et < today:
+            return False
+        return True
+
+    missing = []
+    for mid in module_ids:
+        if not any(_effective_now(r) for r in by_mid.get(mid, [])):
+            missing.append(mid)
+    if missing:
+        _die(f"platform/billing/module_prices.csv missing effective active price rows for modules: {', '.join(missing)}")
+
     _ok("Repo billing config: headers + basic validation OK")
+
+
+def _collect_module_ids(modules_dir: Path) -> List[str]:
+    if not modules_dir.exists():
+        _die("Missing modules/ folder")
+    ids: List[str] = []
+    bad: List[str] = []
+    for p in sorted(modules_dir.iterdir()):
+        if not p.is_dir():
+            continue
+        name = p.name.strip()
+        if MODULE_ID_RE.match(name):
+            ids.append(name)
+        else:
+            bad.append(name)
+    if bad:
+        _die(
+            "Modules folder contains non-canonical module directories (Maintenance must rename them to 6-digit IDs): "
+            + ", ".join(bad)
+        )
+    return ids
+
+
+def _verify_platform_registries(repo_root: Path) -> None:
+    module_ids = _collect_module_ids(repo_root / "modules")
+
+    modules_csv = repo_root / "platform" / "modules" / "modules.csv"
+    req_csv = repo_root / "platform" / "modules" / "requirements.csv"
+    err_csv = repo_root / "platform" / "errors" / "error_reasons.csv"
+
+    _assert_exact_header(modules_csv, ["module_id", "module_name", "version", "folder", "entrypoint", "description"])
+    _assert_exact_header(req_csv, ["module_id", "requirement_type", "requirement_key", "requirement_value", "note"])
+    _assert_exact_header(err_csv, ["module_id", "error_code", "severity", "description", "remediation"])
+
+    reg_rows = _read_csv_rows(modules_csv)
+    reg_ids = {r.get("module_id", "") for r in reg_rows if r.get("module_id")}
+    missing = [m for m in module_ids if m not in reg_ids]
+    if missing:
+        _die(f"platform/modules/modules.csv missing module rows for: {', '.join(missing)}")
+
+    # Schemas: if a module declares tenant_params.schema.json, ensure it is synced into platform/schemas.
+    schemas_dir = repo_root / "platform" / "schemas" / "work_order_modules"
+    for mid in module_ids:
+        src = repo_root / "modules" / mid / "tenant_params.schema.json"
+        dst = schemas_dir / f"{mid}.schema.json"
+        if src.exists() and not dst.exists():
+            _die(f"Missing synced tenant schema: {dst} (source exists at {src})")
+
+    _ok("Platform registries: modules/requirements/errors + schemas coverage OK")
 
 
 def _verify_maintenance_state(repo_root: Path) -> None:
@@ -195,21 +285,21 @@ def _verify_billing_state_dir(billing_state_dir: Path) -> None:
 
 
 def _verify_runtime_outputs(runtime_dir: Path) -> None:
-    wo = runtime_dir / "workorders" / "tenant-001" / "wo-2025-12-31-001"
-    m1 = wo / "module-001" / "source_text.txt"
-    m2 = wo / "module-002" / "derived_notes.txt"
+    wo = runtime_dir / "workorders" / "0000000001" / "wo-2025-12-31-001"
+    m1 = wo / "module-000001" / "source_text.txt"
+    m2 = wo / "module-000002" / "derived_notes.txt"
 
     if not m1.exists():
-        _die(f"Missing runtime output from module 001: {m1}")
+        _die(f"Missing runtime output from module 000001: {m1}")
     if not m2.exists():
-        _die(f"Missing runtime output from module 002: {m2}")
+        _die(f"Missing runtime output from module 000002: {m2}")
 
     if m1.stat().st_size < 10:
-        _die(f"module 001 output unexpectedly small: {m1} ({m1.stat().st_size} bytes)")
+        _die(f"module 000001 output unexpectedly small: {m1} ({m1.stat().st_size} bytes)")
     if m2.stat().st_size < 10:
-        _die(f"module 002 output unexpectedly small: {m2} ({m2.stat().st_size} bytes)")
+        _die(f"module 000002 output unexpectedly small: {m2} ({m2.stat().st_size} bytes)")
 
-    _ok("Runtime outputs: module-001/source_text.txt and module-002/derived_notes.txt present and non-trivial")
+    _ok("Runtime outputs: module-000001/source_text.txt and module-000002/derived_notes.txt present and non-trivial")
 
 
 def _verify_dependency_index(repo_root: Path) -> None:
@@ -217,14 +307,14 @@ def _verify_dependency_index(repo_root: Path) -> None:
     rows = _read_csv_rows(dep)
     seen_002 = False
     for r in rows:
-        if r.get("module_id") == "002":
+        if r.get("module_id") == "000002":
             seen_002 = True
             depends = r.get("depends_on_module_ids", "")
-            if "001" not in depends:
-                _die("module_dependency_index.csv: module 002 must depend on 001")
+            if "000001" not in depends:
+                _die("module_dependency_index.csv: module 000002 must depend on 000001")
     if not seen_002:
-        _die("module_dependency_index.csv: missing module 002 row")
-    _ok("Dependency index: module 002 depends on 001")
+        _die("module_dependency_index.csv: missing module 000002 row")
+    _ok("Dependency index: module 000002 depends on 000001")
 
 
 def main() -> int:
@@ -239,6 +329,7 @@ def main() -> int:
     runtime_dir = Path(args.runtime_dir).resolve()
 
     _verify_platform_billing(repo_root)
+    _verify_platform_registries(repo_root)
     _verify_maintenance_state(repo_root)
     _verify_dependency_index(repo_root)
 

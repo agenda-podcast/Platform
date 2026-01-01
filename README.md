@@ -1,5 +1,5 @@
 You are still seeing:
-  KeyError: Missing active module price for module 001
+  KeyError: Missing active module price for module 000001
 
 This means the orchestrator still cannot find an effective+active row for module_id == "001"
 in the *prices list it loaded*.
@@ -20,7 +20,7 @@ This patch adds:
 - scripts/debug_find_module_prices.py
   - Recursively finds all module_prices.csv under billing-state-dir and reports:
     - header status
-    - whether module 001 exists
+    - whether module 000001 exists
     - whether it is effective+active
     - warns if ID is present but not zero-padded.
 

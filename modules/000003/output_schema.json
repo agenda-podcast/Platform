@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:platform:module:003:outputs",
+  "title": "003 Google Search Pages - Outputs",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "results.jsonl": {
+      "type": "string",
+      "description": "JSON Lines file. Each line is a single normalized search result object (schema in results_line_schema)."
+    },
+    "report.json": {
+      "type": "string",
+      "description": "Summary report for the run (schema in report_schema)."
+    },
+    "results_line_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "module_id",
+        "query_index",
+        "query",
+        "title",
+        "snippet",
+        "url",
+        "canonical_url",
+        "raw_item"
+      ],
+      "properties": {
+        "module_id": { "type": "string", "const": "000003" },
+        "query_index": { "type": "integer", "minimum": 1 },
+        "query": { "type": "string" },
+        "title": { "type": ["string", "null"] },
+        "snippet": { "type": ["string", "null"] },
+        "url": { "type": ["string", "null"] },
+        "canonical_url": { "type": "string" },
+        "display_link": { "type": ["string", "null"] },
+        "formatted_url": { "type": ["string", "null"] },
+        "mime": { "type": ["string", "null"] },
+        "cache_id": { "type": ["string", "null"] },
+        "search_information": { "type": "object" },
+        "raw_item": { "type": "object" }
+      }
+    },
+    "report_schema": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["module_id", "queries_count", "max_items_per_query", "total_written", "per_query"],
+      "properties": {
+        "module_id": { "type": "string", "const": "000003" },
+        "queries_count": { "type": "integer" },
+        "max_items_per_query": { "type": "integer" },
+        "total_written": { "type": "integer" },
+        "per_query": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["query_index", "query", "requested", "written"],
+            "properties": {
+              "query_index": { "type": "integer" },
+              "query": { "type": "string" },
+              "requested": { "type": "integer" },
+              "written": { "type": "integer" },
+              "fetched_items_total": { "type": "integer" },
+              "pages_requested": { "type": "integer" },
+              "last_error": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    }
+  }
+}

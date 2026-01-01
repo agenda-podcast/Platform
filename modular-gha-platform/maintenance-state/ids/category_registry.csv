@@ -1,6 +1,0 @@
-category_id,category_name,category_description,active
-01,Acquisition,"News/web search, RSS ingestion, scraping, source collection.",true
-12,Caching,"Cache management, TTL, cache validation, cache prune.",true
-14,Validation,"Schema validation, parameter checks, runtime invariants.",true
-15,Access Control,"Tenant isolation, cross-tenant permissions.",true
-16,Billing,"Credits, pricing, spends, refunds, promo application.",true

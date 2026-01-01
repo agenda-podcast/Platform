@@ -1,4 +1,0 @@
-topup_method_id,channel,status,currency,min_amount,fee_notes,processing_time,admin_action_required,reference_format,instructions
-bank_manual_usd,manual_bank_transfer,active,USD,100,"Bank fees may apply","1-2 business days",true,"<TENANT_ID>-<DATE>-<SEQ>","Admin verifies incoming transfer, then runs Admin Top-Up workflow with tenant_id, amount_credits, and reference."
-zelle_usd,zelle,active,USD,50,"Zelle transfer fees vary","minutes-hours",true,"<TENANT_ID>-<DATE>-ZELLE",""
-stripe_card_usd,stripe_card,planned,USD,10,"Processing fees apply","instant",false,"pi_<id>","Planned: automatic via Stripe webhooks."

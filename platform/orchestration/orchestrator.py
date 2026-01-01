@@ -407,7 +407,7 @@ def _execute_module(
             try:
                 rc = _reason_code(ms, "MODULE", module_id, "artifacts_not_eligible")
             except KeyError:
-                rc = _reason_code(ms, "GLOBAL", "000", "internal_error")
+                rc = _reason_code(ms, "GLOBAL", "000000", "internal_error")
             return ModuleExecResult(status="FAILED", reason_code=rc)
 
     # Validate required params from module.yml
@@ -443,7 +443,7 @@ def _execute_module(
             return ModuleExecResult(status="FAILED", reason_code=rc)
         # Access control: source tenant is assumed encoded in tag or provided; for scaffold, deny cross-tenant.
         if (tenant_id, tenant_id) not in ms.tenant_relationships:
-            rc = _reason_code(ms, "GLOBAL", "000", "unauthorized_release_access")
+            rc = _reason_code(ms, "GLOBAL", "000000", "unauthorized_release_access")
             return ModuleExecResult(status="FAILED", reason_code=rc)
 
     if reuse == "assets":
@@ -621,7 +621,7 @@ def orchestrate_workorder(cfg: OrchestratorConfig, ms: MaintenanceState, billing
     # Tenant status check
     trow = _tenant_credit_row(tenants_credits, tenant_id)
     if str(trow.get("status", "active")).lower() != "active":
-        rc = _reason_code(ms, "GLOBAL", "000", "tenant_suspended")
+        rc = _reason_code(ms, "GLOBAL", "000000", "tenant_suspended")
         _write_workorder_log(workorders_log, workorder, "FAILED", rc, started_at, utcnow_iso(), [])
         billing.save_table("workorders_log.csv", workorders_log, list(workorders_log[0].keys()) if workorders_log else [
             "work_order_id","tenant_id","status","reason_code","started_at","finished_at","github_run_id","workorder_mode","requested_modules","metadata_json"
@@ -634,7 +634,7 @@ def orchestrate_workorder(cfg: OrchestratorConfig, ms: MaintenanceState, billing
     try:
         ordered = topo_sort(requested_module_ids, ms.dependency_index)
     except Exception:
-        rc = _reason_code(ms, "GLOBAL", "000", "workorder_invalid")
+        rc = _reason_code(ms, "GLOBAL", "000000", "workorder_invalid")
         _write_workorder_log(workorders_log, workorder, "FAILED", rc, started_at, utcnow_iso(), requested_module_ids)
         billing.save_table("workorders_log.csv", workorders_log, list(workorders_log[0].keys()) if workorders_log else [
             "work_order_id","tenant_id","status","reason_code","started_at","finished_at","github_run_id","workorder_mode","requested_modules","metadata_json"
@@ -645,7 +645,7 @@ def orchestrate_workorder(cfg: OrchestratorConfig, ms: MaintenanceState, billing
     est_total, spend_items = estimate_spend(module_prices, workorder, promotions_catalog, promotion_redemptions)
     available = int(str(trow.get("credits_available", "0")) or 0)
     if available < est_total:
-        rc = _reason_code(ms, "GLOBAL", "000", "not_enough_credits")
+        rc = _reason_code(ms, "GLOBAL", "000000", "not_enough_credits")
         _write_workorder_log(workorders_log, workorder, "FAILED", rc, started_at, utcnow_iso(), ordered)
         billing.save_table("workorders_log.csv", workorders_log, list(workorders_log[0].keys()) if workorders_log else [
             "work_order_id","tenant_id","status","reason_code","started_at","finished_at","github_run_id","workorder_mode","requested_modules","metadata_json"
@@ -774,7 +774,7 @@ def orchestrate_workorder(cfg: OrchestratorConfig, ms: MaintenanceState, billing
         wo_rc = ""
     else:
         wo_status = "FAILED"
-        wo_rc = module_results[-1][1].reason_code or _reason_code(ms, "GLOBAL", "000", "internal_error")
+        wo_rc = module_results[-1][1].reason_code or _reason_code(ms, "GLOBAL", "000000", "internal_error")
 
     finished_at = utcnow_iso()
     _write_workorder_log(workorders_log, workorder, wo_status, wo_rc, started_at, finished_at, ordered)

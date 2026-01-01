@@ -1,0 +1,53 @@
+name: "Module 000001"
+description: "Placeholder module composite action."
+
+inputs:
+  tenant_id:
+    required: true
+    description: "Tenant ID"
+  work_order_id:
+    required: true
+    description: "Work order ID"
+  module_run_id:
+    required: true
+    description: "Module run ID"
+  params_json:
+    required: true
+    description: "JSON string of resolved module params"
+  runtime_dir:
+    required: true
+    description: "Runtime workspace directory"
+  outputs_dir:
+    required: true
+    description: "Where module should write outputs"
+
+outputs:
+  status:
+    description: "COMPLETED|FAILED"
+    value: ${{ steps.exec.outputs.status }}
+  reason_code:
+    description: "Numeric reason code if FAILED"
+    value: ${{ steps.exec.outputs.reason_code }}
+  manifest_item_json:
+    description: "Manifest item JSON (single item)"
+    value: ${{ steps.exec.outputs.manifest_item_json }}
+  cache_key:
+    description: "Derived cache key"
+    value: ${{ steps.exec.outputs.cache_key }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: exec
+      shell: bash
+      run: |
+        python -m platform.cli module-exec \
+          --module-id "000001" \
+          --module-path "${{ github.action_path }}" \
+          --tenant-id "${{ inputs.tenant_id }}" \
+          --work-order-id "${{ inputs.work_order_id }}" \
+          --module-run-id "${{ inputs.module_run_id }}" \
+          --params-json '${{ inputs.params_json }}' \
+          --runtime-dir "${{ inputs.runtime_dir }}" \
+          --outputs-dir "${{ inputs.outputs_dir }}" \
+          --github-action-outputs

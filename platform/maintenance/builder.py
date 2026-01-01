@@ -136,6 +136,46 @@ def _ensure_reason_registry(ctx: MaintenanceContext, module_registry: List[Dict[
     path = ctx.ids_dir / "reason_registry.csv"
     rows = read_csv(path)
 
+    # Sanitize any pre-existing registry that may be malformed (e.g., missing columns, legacy module_id format,
+    # or accidental CSV column-shifts). If a row fails basic validation, we drop it and allow deterministic
+    # re-allocation.
+    valid_module_ids = {str(m.get("module_id", "")).strip() for m in module_registry if str(m.get("module_id", "")).strip()}
+    valid_module_ids.add("000000")
+    sanitized: List[Dict[str, str]] = []
+    for r in rows:
+        g = str(r.get("g", "")).strip()
+        cat = str(r.get("category_id", "")).strip()
+        mod = str(r.get("module_id", "")).strip()
+        rid = str(r.get("reason_id", "")).strip()
+        key = str(r.get("reason_key", "")).strip()
+        if g not in {"0", "1"}:
+            continue
+        try:
+            validate_category_id(cat)
+        except Exception:
+            continue
+        if mod not in valid_module_ids:
+            continue
+        try:
+            validate_reason_id(rid)
+        except Exception:
+            continue
+        if not key:
+            continue
+        active = str(r.get("active", "true")).strip().lower()
+        if active not in {"true", "false"}:
+            active = "true"
+        sanitized.append({
+            "g": g,
+            "category_id": cat,
+            "module_id": mod,
+            "reason_id": rid,
+            "reason_key": key,
+            "active": active,
+            "notes": str(r.get("notes", "") or ""),
+        })
+    rows = sanitized
+
     # Indexes
     by_scope_key: Dict[Tuple[str, str, str, str], Dict[str, str]] = {}
     for r in rows:
@@ -150,19 +190,19 @@ def _ensure_reason_registry(ctx: MaintenanceContext, module_registry: List[Dict[
     def used_reason_ids(g: str, cat: str, mod: str) -> List[str]:
         return [str(r.get("reason_id", "")).strip() for r in rows if str(r.get("g", "")).strip() == g and str(r.get("category_id", "")).strip() == cat and str(r.get("module_id", "")).strip() == mod]
 
-    # Global reasons (g=0, module_id=000)
+    # Global reasons (g=0, module_id=000000)
     global_reasons = _load_global_reasons(ctx)
     for reason_key, meta in sorted(global_reasons.items()):
         cat = meta.get("category_id") or "16"
         validate_category_id(cat)
-        scope_key = ("0", cat, "000", reason_key)
+        scope_key = ("0", cat, "000000", reason_key)
         if scope_key in by_scope_key:
             continue
-        rid = _allocate_lowest_unused(used_reason_ids("0", cat, "000"))
+        rid = _allocate_lowest_unused(used_reason_ids("0", cat, "000000"))
         rows.append({
             "g": "0",
             "category_id": cat,
-            "module_id": "000",
+            "module_id": "000000",
             "reason_id": rid,
             "reason_key": reason_key,
             "active": "true",

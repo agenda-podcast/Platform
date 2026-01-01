@@ -1,16 +1,22 @@
 g,category_id,module_id,reason_id,reason_key,active,notes
-0,14,000,001,workorder_invalid,true,Work order YAML invalid.
-0,15,000,001,unauthorized_release_access,true,Cross-tenant access denied.
-0,16,000,001,not_enough_credits,true,Global billing check failed.
-0,16,000,002,tenant_suspended,true,Tenant suspended.
-0,16,000,003,internal_error,true,Unexpected internal error.
-1,01,001,001,missing_required_input,true,Module 001 param/input validation.
-1,01,001,002,bad_input_format,true,Module 001 param/input validation.
-1,01,001,003,external_api_error,true,Placeholder upstream error.
-1,01,002,001,bad_input_format,true,
-1,01,002,002,external_api_error,true,
-1,01,002,003,missing_required_input,true,
-1,12,001,001,skipped_cache,true,Cache hit => run skipped and logged as FAILED for refund logic.
-1,12,002,001,skipped_cache,true,
-1,14,001,001,artifacts_not_eligible,true,Artifacts purchased but not eligible per policy/support.
-1,14,002,001,artifacts_not_eligible,true,
+0,14,000000,001,workorder_invalid,true,
+0,15,000000,001,unauthorized_release_access,true,
+0,16,000000,001,internal_error,true,
+0,16,000000,002,not_enough_credits,true,
+0,16,000000,003,tenant_suspended,true,
+1,01,000001,001,bad_input_format,true,
+1,01,000001,002,external_api_error,true,
+1,01,000001,003,missing_required_input,true,
+1,01,000002,001,bad_input_format,true,
+1,01,000002,002,external_api_error,true,
+1,01,000002,003,missing_required_input,true,
+1,12,000001,001,skipped_cache,true,
+1,12,000002,001,skipped_cache,true,
+1,12,000003,001,skipped_cache,true,
+1,14,000001,001,artifacts_not_eligible,true,
+1,14,000002,001,artifacts_not_eligible,true,
+1,14,000003,001,bad_input_format,true,
+1,14,000003,002,external_api_error,true,
+1,14,000003,003,missing_required_input,true,
+1,14,000003,004,missing_secret,true,
+1,14,000003,005,output_write_failed,true,

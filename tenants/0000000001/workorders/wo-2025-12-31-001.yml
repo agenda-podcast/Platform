@@ -1,0 +1,24 @@
+work_order_id: wo-2025-12-31-001
+enabled: true
+mode: PARTIAL_ALLOWED
+metadata:
+  title: Seed example work order
+  created_at: '2025-12-31T12:00:00Z'
+  notes: Runs placeholder modules 001 then 002.
+modules:
+  - module_id: '000001'
+    params:
+      topic: Example Topic
+      language: en
+      freshness_days: 3
+    reuse_output_type: new
+    purchase_release_artifacts: true
+  - module_id: '000002'
+    params:
+      topic: Example Topic
+      language: en
+      freshness_days: 3
+      summary_style: bullets
+    reuse_output_type: new
+    purchase_release_artifacts: true
+promotions: []

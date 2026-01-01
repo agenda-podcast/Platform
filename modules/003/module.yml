@@ -1,0 +1,5 @@
+module_id: "003"
+name: "google_search_pages"
+version: "0.1.0"
+description: "Google Custom Search (web pages only): fetch up to 100 results per query, up to 5 queries per run."
+depends_on: []

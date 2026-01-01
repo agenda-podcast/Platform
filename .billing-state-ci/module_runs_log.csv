@@ -1,0 +1,5 @@
+module_run_id,work_order_id,tenant_id,module_id,status,reason_code,started_at,finished_at,reuse_output_type,reuse_reference,cache_key_used,published_release_tag,release_manifest_name,metadata_json
+mr-0000000001-wo-2025-12-31-001-000001-20260101-210049-local,wo-2025-12-31-001,0000000001,000001,COMPLETED,,2026-01-01T21:00:49Z,2026-01-01T21:00:49Z,new,,v1|tenant=0000000001|module=000001|type=outputs|hash=71cc89,,,{}
+mr-0000000001-wo-2025-12-31-001-000002-20260101-210049-local,wo-2025-12-31-001,0000000001,000002,COMPLETED,,2026-01-01T21:00:49Z,2026-01-01T21:00:49Z,new,,v1|tenant=0000000001|module=000002|type=outputs|hash=394638,,,{}
+mr-0000000001-wo-2025-12-31-001-000001-20260101-214318-local,wo-2025-12-31-001,0000000001,000001,COMPLETED,,2026-01-01T21:43:18Z,2026-01-01T21:43:18Z,new,,v1|tenant=0000000001|module=000001|type=outputs|hash=71cc89,,,{}
+mr-0000000001-wo-2025-12-31-001-000002-20260101-214318-local,wo-2025-12-31-001,0000000001,000002,COMPLETED,,2026-01-01T21:43:18Z,2026-01-01T21:43:18Z,new,,v1|tenant=0000000001|module=000002|type=outputs|hash=394638,,,{}
