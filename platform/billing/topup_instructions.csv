@@ -1,4 +1,5 @@
 topup_method_id,channel,status,currency,min_amount,fee_notes,processing_time,admin_action_required,reference_format,instructions
-bank_manual_usd,manual_bank_transfer,active,USD,100,"Bank fees may apply","1-2 business days",true,"<TENANT_ID>-<DATE>-<SEQ>","Admin verifies incoming transfer, then runs Admin Top-Up workflow with tenant_id, amount_credits, and reference."
-zelle_usd,zelle,active,USD,50,"Zelle transfer fees vary","minutes-hours",true,"<TENANT_ID>-<DATE>-ZELLE",""
-stripe_card_usd,stripe_card,planned,USD,10,"Processing fees apply","instant",false,"pi_<id>","Planned: automatic via Stripe webhooks."
+manual_bank_transfer,manual_bank_transfer,active,USD,1,"Bank/wire fees may apply.","1-3 business days",true,"<tenant_id>-<payment_id>","Send a bank transfer per your standard procedure. Include the reference format exactly so the payment can be reconciled."
+bank_manual_usd,manual_bank_transfer,active,USD,100,"Bank fees may apply; processing time varies by bank.","1-3 business days",true,"<TENANT_ID>-<DATE>-BANK","Use Admin Top-Up workflow with tenant_id, amount_credits, and reference."
+zelle_usd,zelle,active,USD,50,"Zelle transfer fees vary by bank.","minutes-hours",true,"<TENANT_ID>-<DATE>-ZELLE","Send Zelle transfer and include the reference in the memo if possible."
+stripe_card_usd,stripe_card,planned,USD,10,"Processing fees apply (future).","instant",false,"pi_<id>","Planned: automatic via Stripe webhooks."
