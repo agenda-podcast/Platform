@@ -17,6 +17,10 @@ def _die(msg: str) -> None:
     raise SystemExit(2)
 
 
+def _warn(msg: str) -> None:
+    print(f"[CI_VERIFY][WARN] {msg}")
+
+
 def _ok(msg: str) -> None:
     print(f"[CI_VERIFY][OK] {msg}")
 
@@ -213,19 +217,17 @@ def _iter_files_recursive(root: Path) -> List[Path]:
 
 
 def _mid_variants(mid6: str) -> List[str]:
-    """Return variants for matching legacy folder naming (3-digit / non-padded)."""
     if not MODULE_ID_RE.match(mid6):
         return [mid6]
     n = int(mid6)
-    mid3 = f"{n:03d}"
-    return [mid6, mid3, str(n)]
+    return [mid6, f"{n:03d}", str(n)]
 
 
 def _find_module_output_dir(wo_dir: Path, module_id_6: str, module_run_id: str) -> Optional[Path]:
     variants = _mid_variants(module_id_6)
-    direct_candidates: List[Path] = []
+    direct: List[Path] = []
     for v in variants:
-        direct_candidates.extend([
+        direct.extend([
             wo_dir / f"module-{v}",
             wo_dir / f"module_{v}",
             wo_dir / v,
@@ -234,17 +236,15 @@ def _find_module_output_dir(wo_dir: Path, module_id_6: str, module_run_id: str) 
             wo_dir / "modules" / v,
             wo_dir / "modules" / f"module-{v}",
         ])
-    for p in direct_candidates:
+    for p in direct:
         if p.exists() and p.is_dir():
             return p
 
-    # Prefer direct children match
     children = [p for p in wo_dir.iterdir() if p.is_dir()]
     for p in children:
         if any(v in p.name for v in variants) or (module_run_id and module_run_id in p.name):
             return p
 
-    # Last resort: recursive within this workorder dir only
     for p in wo_dir.rglob("*"):
         if p.is_dir() and (any(v in p.name for v in variants) or (module_run_id and module_run_id in p.name)):
             return p
@@ -258,6 +258,21 @@ def _dump_wo_dirs(wo_dir: Path) -> str:
     return ", ".join(names) if names else "<no subdirs>"
 
 
+def _is_reuse(r: Dict[str, str]) -> bool:
+    rot = (r.get("reuse_output_type") or "").strip().upper()
+    if rot and rot not in ("NONE", "NO", "NEW", "GENERATED"):
+        return True
+    if (r.get("reuse_reference") or "").strip():
+        return True
+    if (r.get("cache_key_used") or "").strip():
+        return True
+    if (r.get("published_release_tag") or "").strip():
+        return True
+    if (r.get("release_manifest_name") or "").strip():
+        return True
+    return False
+
+
 def _verify_runtime_outputs(runtime_dir: Path, billing_state_dir: Path) -> None:
     wo_root = runtime_dir / "workorders"
     if not wo_root.exists():
@@ -268,7 +283,6 @@ def _verify_runtime_outputs(runtime_dir: Path, billing_state_dir: Path) -> None:
     if not runs_all:
         _die(f"module_runs_log.csv has no rows in {runs_path} (orchestrate did not record runs)")
 
-    # Pick target tenant/workorder from billing-state (source of truth).
     target = None
     for r in runs_all:
         tid = r.get("tenant_id", "")
@@ -277,15 +291,14 @@ def _verify_runtime_outputs(runtime_dir: Path, billing_state_dir: Path) -> None:
             target = (tid, wid)
             break
     if not target:
-        _die("Could not determine (tenant_id, work_order_id) from module_runs_log.csv" )
+        _die("Could not determine (tenant_id, work_order_id) from module_runs_log.csv")
     tenant_id, work_order_id = target
 
     wo_dir = wo_root / tenant_id / work_order_id
     if not wo_dir.exists():
-        # Print top-level diagnostics
         tenants = sorted([p.name for p in wo_root.iterdir() if p.is_dir()])[:20]
         _die(
-            f"Runtime workorder folder not found: {wo_dir}. " 
+            f"Runtime workorder folder not found: {wo_dir}. "
             f"Available tenants under runtime/workorders (first 20): {tenants}"
         )
 
@@ -305,23 +318,34 @@ def _verify_runtime_outputs(runtime_dir: Path, billing_state_dir: Path) -> None:
         if status == "COMPLETED":
             out_dir = _find_module_output_dir(wo_dir, mid, mr_id)
             if out_dir is None:
+                if _is_reuse(r):
+                    _warn(
+                        f"Completed module {mid} has no runtime output dir under {wo_dir} but reuse markers present "
+                        f"(reuse_output_type={r.get('reuse_output_type')!r}, reuse_reference={r.get('reuse_reference')!r}, "
+                        f"cache_key_used={r.get('cache_key_used')!r}, release_tag={r.get('published_release_tag')!r})."
+                    )
+                    continue
+
                 subdirs = _dump_wo_dirs(wo_dir)
                 _die(
                     "Missing runtime output folder for completed module "
                     f"{mid}: expected under {wo_dir} (tried common patterns, legacy variants, and id search). "
-                    f"Workorder subdirs: {subdirs}"
+                    f"Workorder subdirs: {subdirs}. "
+                    f"If orchestrator reuses outputs, it must populate reuse_* or cache_key_used fields."
                 )
+
             files = _iter_files_recursive(out_dir)
             if not files:
                 _die(f"Runtime output folder for module {mid} is empty: {out_dir}")
             nonempty = [p for p in files if p.stat().st_size > 0]
             if not nonempty:
                 _die(f"Runtime output folder for module {mid} contains only empty files: {out_dir}")
+
         else:
             if not reason:
                 _die(f"module_runs_log.csv: non-COMPLETED run must include reason_code (module {mid}, status {status!r})")
 
-    _ok("Runtime outputs: validated against billing-state module_runs_log.csv (targeted + legacy variants)")
+    _ok("Runtime outputs: validated against module_runs_log.csv (reuse-aware + flexible folder naming)")
 
 
 def main() -> int:
