@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] Normalize IDs for matching + deterministic merge on duplicates
+
+This patch introduces canonical ID normalization to prevent failures when
+leading zeros are stripped by CSV tooling.
+
+Key points:
+- Normalize digits-only IDs so "000001" == "1".
+- Apply normalization at ingestion, lookup, and write-back.
+- Deterministically merge duplicates that collapse under normalization.
+
+---
+
+diff --git a/platform/common/id_normalize.py b/platform/common/id_normalize.py
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/platform/common/id_normalize.py
+@@
++<SEE PROVIDED FILE>
+
+diff --git a/platform/orchestration/orchestrator.py b/platform/orchestration/orchestrator.py
+index XXXXXXX..YYYYYYY 100644
+--- a/platform/orchestration/orchestrator.py
++++ b/platform/orchestration/orchestrator.py
+@@
+-from ...
++from platform.common.id_normalize import normalize_id, dedupe_rows_by_normalized_id
+@@
+ def _tenant_credit_row(tenants_credits, tenant_id):
+-    for r in tenants_credits:
+-        if str(r.get("tenant_id","")) == str(tenant_id):
+-            return r
++    tid = normalize_id(tenant_id)
++    # Ensure the table itself is normalized+deduped once (do this at ingestion where possible)
++    # tenants_credits = dedupe_rows_by_normalized_id(tenants_credits, "tenant_id", prefer="latest").rows
++    for r in tenants_credits:
++        if normalize_id(r.get("tenant_id", "")) == tid:
++            r["tenant_id"] = tid
++            return r
+     raise KeyError(f"Tenant not found in tenants_credits.csv: {tenant_id}")
+@@
+ def orchestrate_workorder(cfg, ms, billing, wo):
+-    tenant_id = wo.tenant_id
++    tenant_id = normalize_id(wo.tenant_id)
+     ...
+-    trow = _tenant_credit_row(tenants_credits, tenant_id)
++    trow = _tenant_credit_row(tenants_credits, tenant_id)
+     ...
+
+diff --git a/platform/billing/<your_loader>.py b/platform/billing/<your_loader>.py
+index XXXXXXX..YYYYYYY 100644
+--- a/platform/billing/<your_loader>.py
++++ b/platform/billing/<your_loader>.py
+@@
+-from ...
++from platform.common.id_normalize import normalize_row_ids, dedupe_rows_by_normalized_id
+@@
+ def load_tenants_credits(path):
+     rows = read_csv_dicts(path)
+-    return rows
++    rows = [normalize_row_ids(r, ["tenant_id"]) for r in rows]
++    rows = dedupe_rows_by_normalized_id(rows, "tenant_id", prefer="latest", timestamp_fields=("updated_at","modified_at","created_at")).rows
++    return rows
+@@
+ def load_transactions(path):
+     rows = read_csv_dicts(path)
+-    return rows
++    return [normalize_row_ids(r, ["transaction_id","tenant_id","work_order_id"]) for r in rows]
+
