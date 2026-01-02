@@ -49,6 +49,12 @@ jobs:
           set -euxo pipefail
           python scripts/maintenance_repo.py --check
 
+      - name: Configure git identity
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
       - name: Commit maintenance outputs (if any)
         run: |
           set -euxo pipefail
