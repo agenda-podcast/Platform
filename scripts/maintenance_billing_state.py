@@ -21,6 +21,7 @@ import re
 from typing import Dict, List
 
 TENANT_ID_RE = re.compile(r"^\d{10}$")
+TENANT_ANY_DIGITS_RE = re.compile(r"^\d+$")
 
 HEADER = ["tenant_id", "credits_available", "updated_at", "status"]
 
@@ -41,6 +42,8 @@ def list_repo_tenants(tenants_dir: Path) -> List[str]:
 
 
 def read_rows(path: Path) -> Dict[str, Dict[str, str]]:
+    # NOTE: Excel/CSV editors may coerce 0000000001 -> 1. We canonicalize to
+    # 10 digits and deterministically merge duplicates.
     rows: Dict[str, Dict[str, str]] = {}
     if not path.exists():
         return rows
@@ -48,9 +51,48 @@ def read_rows(path: Path) -> Dict[str, Dict[str, str]]:
         reader = csv.DictReader(f)
         # tolerate empty or missing header; will be rewritten below
         for r in reader:
-            tid = (r.get("tenant_id") or "").strip()
-            if tid:
-                rows[tid] = {k: (v or "").strip() for k, v in r.items()}
+            raw = (r.get("tenant_id") or "").strip()
+            if not raw:
+                continue
+
+            tid = raw
+            if TENANT_ANY_DIGITS_RE.match(raw):
+                # Canonicalize to 10 digits (1 -> 0000000001)
+                n = int(raw)
+                if 0 < n < 10_000_000_000:
+                    tid = f"{n:010d}"
+
+            row = {k: (v or "").strip() for k, v in r.items()}
+            row["tenant_id"] = tid
+
+            # Deterministic merge if duplicates appear.
+            if tid not in rows:
+                rows[tid] = row
+                continue
+
+            prev = rows[tid]
+            # Prefer ACTIVE status
+            def _rank_status(x: str) -> int:
+                return 1 if (x or "").strip().upper() == "ACTIVE" else 0
+
+            def _credits(x: str) -> int:
+                try:
+                    return int((x or "0").strip() or 0)
+                except Exception:
+                    return 0
+
+            cand_score = (
+                _rank_status(row.get("status", "")),
+                _credits(row.get("credits_available", "0")),
+                (row.get("updated_at") or ""),
+            )
+            prev_score = (
+                _rank_status(prev.get("status", "")),
+                _credits(prev.get("credits_available", "0")),
+                (prev.get("updated_at") or ""),
+            )
+            if cand_score >= prev_score:
+                rows[tid] = row
     return rows
 
 

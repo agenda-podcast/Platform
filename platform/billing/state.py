@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 from ..utils.csvio import read_csv, write_csv
 from ..utils.hashing import sha256_file
 from ..utils.time import utcnow_iso
+from ..common.id_codec import canon_module_id, canon_reason_code, canon_tenant_id
 
 
 # Billing-state assets are the accounting source of truth and live in GitHub Release assets.
@@ -48,7 +49,27 @@ class BillingState:
         return read_csv(self.path(name))
 
     def save_table(self, name: str, rows: List[Dict[str, str]], headers: List[str]) -> None:
-        write_csv(self.path(name), rows, headers)
+        # Canonicalize IDs at the write boundary.
+        #
+        # Rationale: billing-state is the accounting SoT. If any upstream tool
+        # (Excel, CSV editors, older workflows) drops leading zeros, we want to
+        # repair it deterministically when we persist state.
+        canon_rows: List[Dict[str, str]] = []
+        for r0 in rows:
+            r = dict(r0)
+            # tenant_id-like columns
+            for k in ("tenant_id", "owning_tenant_id", "source_tenant_id", "target_tenant_id"):
+                if k in r and r.get(k) not in (None, ""):
+                    r[k] = canon_tenant_id(r.get(k))
+            # module_id columns
+            if "module_id" in r and r.get("module_id") not in (None, ""):
+                r["module_id"] = canon_module_id(r.get("module_id"))
+            # reason_code columns
+            if "reason_code" in r and r.get("reason_code") not in (None, ""):
+                r["reason_code"] = canon_reason_code(r.get("reason_code"))
+            canon_rows.append(r)
+
+        write_csv(self.path(name), canon_rows, headers)
 
     def write_state_manifest(self, names: Optional[List[str]] = None) -> Path:
         """Write a manifest containing sha256 of selected assets.
