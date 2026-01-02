@@ -133,8 +133,8 @@ def _verify_platform_billing(repo_root: Path) -> None:
     rows = _read_csv_rows(module_prices)
     for i, r in enumerate(rows, start=2):
         mid = r.get("module_id", "")
-        if mid and (len(mid) != 3 or not mid.isdigit()):
-            _die(f"platform/billing/module_prices.csv invalid module_id at line {i}: {mid!r}")
+        if mid and not MODULE_ID_RE.match(mid):
+            _die(f"platform/billing/module_prices.csv invalid module_id at line {i}: {mid!r} (expected 6 digits)")
 
     # Coverage: every module folder must have at least one effective active price row.
     module_ids = _collect_module_ids(repo_root / "modules")
