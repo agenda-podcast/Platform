@@ -7,6 +7,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from ..utils.csvio import read_csv, require_headers
 from .state import BillingState
 from .topup import TopupRequest, apply_admin_topup
+from ..common.id_codec import canon_tenant_id, id_key
 
 
 PAYMENTS_CSV_HEADERS: List[str] = [
@@ -97,7 +98,7 @@ def load_repo_payments(repo_root: Path) -> List[PaymentRecord]:
             continue
 
         payment_id = str(r.get("payment_id", "")).strip()
-        tenant_id = str(r.get("tenant_id", "")).strip()
+        tenant_id = canon_tenant_id(r.get("tenant_id", ""))
         topup_method_id = str(r.get("topup_method_id", "")).strip()
         amount_credits = _coerce_int(str(r.get("amount_credits", "")), context=f"payment_id={payment_id or '<missing>'}/amount_credits")
         reference = str(r.get("reference", "")).strip()
@@ -151,7 +152,7 @@ def validate_repo_payments(repo_root: Path) -> PaymentsValidationReport:
             continue
 
         payment_id = str(r.get("payment_id", "")).strip()
-        tenant_id = str(r.get("tenant_id", "")).strip()
+        tenant_id = canon_tenant_id(r.get("tenant_id", ""))
         topup_method_id = str(r.get("topup_method_id", "")).strip()
         amount_raw = str(r.get("amount_credits", "")).strip()
         reference = str(r.get("reference", "")).strip()
@@ -197,16 +198,16 @@ def validate_repo_payments(repo_root: Path) -> PaymentsValidationReport:
         if is_eligible:
             eligible += 1
             # Duplicate detection key among eligible payments
-            key = (tenant_id, reference, amount, received_at)
+            key = (id_key(tenant_id), reference, amount, received_at)
             eligible_key_to_payment_ids.setdefault(key, []).append(payment_id)
 
     # Duplicate eligible payments guardrail
     for key, pids in eligible_key_to_payment_ids.items():
         if len(pids) > 1:
-            tenant_id, reference, amount, received_at = key
+            tenant_key, reference, amount, received_at = key
             errors.append(
                 "Eligible payments duplicate detected: "
-                f"tenant_id={tenant_id!r}, reference={reference!r}, amount_credits={amount!r}, received_at={received_at!r}; payment_ids={pids}"
+                f"tenant_id_key={tenant_key!r}, reference={reference!r}, amount_credits={amount!r}, received_at={received_at!r}; payment_ids={pids}"
             )
 
     if errors:
@@ -277,7 +278,7 @@ def reconcile_repo_payments_into_billing_state(repo_root: Path, billing: Billing
             repo_root=repo_root,
             billing=billing,
             req=TopupRequest(
-                tenant_id=p.tenant_id,
+                tenant_id=canon_tenant_id(p.tenant_id),
                 amount_credits=p.amount_credits,
                 topup_method_id=p.topup_method_id,
                 reference=p.payment_id,

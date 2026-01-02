@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 from ..utils.csvio import read_csv
 from ..utils.time import utcnow_iso
 from .state import BillingState
-from ..common.id_normalize import canonicalize_tenant_id
+from ..common.id_codec import canon_tenant_id, dedupe_tenants_credits, id_key
 
 
 @dataclass(frozen=True)
@@ -41,7 +41,7 @@ def apply_admin_topup(repo_root: Path, billing: BillingState, req: TopupRequest)
     Returns transaction_id.
     """
 
-    tenant_id = canonicalize_tenant_id(req.tenant_id.strip())
+    tenant_id = canon_tenant_id(req.tenant_id)
     if not tenant_id:
         raise ValueError("tenant_id is required")
 
@@ -61,28 +61,20 @@ def apply_admin_topup(repo_root: Path, billing: BillingState, req: TopupRequest)
 
     # Load billing-state tables
     tenants_credits = billing.load_table("tenants_credits.csv")
+    # Repair drift + merge duplicates before mutation.
+    tenants_credits, _dropped = dedupe_tenants_credits(tenants_credits)
     transactions = billing.load_table("transactions.csv")
     transaction_items = billing.load_table("transaction_items.csv")
 
-    # Ensure tenant row (canonicalized). If multiple rows exist due to Excel stripping
-    # leading zeros, prefer the active row with the highest balance.
+    # Ensure tenant row
     trow = None
-    best_score = None
+    want = id_key(tenant_id)
     for r in tenants_credits:
-        rid = canonicalize_tenant_id(str(r.get("tenant_id", "")).strip())
-        if not rid or rid != tenant_id:
-            continue
-        r["tenant_id"] = tenant_id
-        try:
-            credits = int(str(r.get("credits_available", "0")) or 0)
-        except Exception:
-            credits = 0
-        active = 1 if str(r.get("status", "active")).lower() == "active" else 0
-        updated = str(r.get("updated_at", ""))
-        score = (active, credits, updated)
-        if best_score is None or score > best_score:
-            best_score = score
+        if id_key(r.get("tenant_id", "")) == want:
             trow = r
+            # Canonicalize storage
+            r["tenant_id"] = tenant_id
+            break
     if trow is None:
         trow = {"tenant_id": tenant_id, "credits_available": "0", "updated_at": utcnow_iso(), "status": "active"}
         tenants_credits.append(trow)

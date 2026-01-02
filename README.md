@@ -1,30 +1,73 @@
-ID Normalization Patch Pack
+# Platform (Modular Orchestration + Billing-State)
 
-What you get
-- platform/common/id_normalize.py
-  Canonical ID normalization + deterministic dedupe helper.
+This repository is a reference implementation of:
 
-- platform/billing/normalize_billing_state.py
-  One-time (or CI) canonicalizer for .billing-state CSVs.
+- **Tenant-scoped work orders** (YAML) that request **modules** to run
+- An **orchestrator** that plans dependencies, checks credits, runs modules, and writes ledgers
+- A GitHub Releases-friendly **billing-state** directory that is the accounting system of record
+- A repo-managed **maintenance-state** directory that provides controlled catalogs (reason codes, dependencies, policies)
 
-- docs/ID_NORMALIZATION.md
-  Design notes and application checklist.
+## Repository layout
 
-- patches/0001-id-normalization-deterministic-merge.patch
-  A guided diff showing the minimal call-site changes required (placeholders
-  where repo-specific loader names differ).
+```text
+platform/               Core library + CLI
+  billing/              Billing workflows (pricing, promotions, payments, top-ups)
+  orchestration/        Workorder discovery, planning, execution, billing mutations
+  common/               Shared utilities (incl. ID canonicalization)
 
-How to integrate (high level)
-1) Copy `platform/common/id_normalize.py` into your repo.
-2) In ALL loaders for files that contain IDs (billing-state, maintenance-state,
-   workorders, module index), normalize relevant columns at ingestion.
-3) For tables keyed by a single ID (e.g., tenants_credits), run deterministic
-   dedupe after normalization.
-4) In orchestrator / matching code, normalize both sides (or assume ingestion
-   normalized and only normalize inputs).
-5) Add E2E verification that tenant_id=1 matches workorder tenant_id=0000000001.
+modules/                Module definitions (each module in its own folder)
+tenants/                Tenant folders + workorders
 
-Notes
-- This pack cannot auto-apply directly because your repo paths and loader
-  function names may differ; use the guided patch to update the correct
-  call sites.
+maintenance-state/      Repo-managed catalogs (reason codes, policies, dependency index, etc.)
+billing-state-seed/     Seed accounting state used to bootstrap a billing-state directory
+
+scripts/                CI helpers (verification) and repo maintenance utilities
+config/                 Repository configuration
+.github/workflows/      CI workflows
+```
+
+## Quick start
+
+1) Bootstrap a local billing-state directory:
+
+```bash
+mkdir -p .billing-state
+cp billing-state-seed/* .billing-state/
+```
+
+2) Run orchestration:
+
+```bash
+python -m platform.cli orchestrate --runtime-dir runtime --billing-state-dir .billing-state
+```
+
+3) (Optional) Publish purchased artifacts to GitHub Releases:
+
+```bash
+python -m platform.cli orchestrate --runtime-dir runtime --billing-state-dir .billing-state --enable-github-releases
+```
+
+## ID matching policy (critical)
+
+This repo uses fixed-width numeric IDs (e.g., `tenant_id=0000000001`, `module_id=000003`).
+Some tools (notably Excel) may coerce these into numbers and drop leading zeros.
+
+To prevent ledger corruption and failed joins, the platform implements a strict policy:
+
+- **Matching** uses a numeric *join key*: digits-only values are compared by numeric value
+  (i.e., leading zeros are ignored).
+- **Storage** writes canonical fixed-width IDs whenever the platform mutates accounting state.
+
+Implementation lives in `platform/common/id_codec.py` and is applied across:
+- orchestration credit checks and ledger writes
+- payment reconciliation / manual top-ups
+- dependency planning and reason-code lookups
+
+## CI / verification
+
+GitHub Actions runs end-to-end verification via `scripts/ci_verify.py`.
+If you change schemas, outputs, or workflow behavior, extend verification accordingly.
+
+---
+
+License: see `LICENSE`.
