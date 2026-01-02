@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 from ..utils.csvio import read_csv
 from ..utils.time import utcnow_iso
 from .state import BillingState
+from ..common.id_canonical import normalize_tenant_id
 
 
 @dataclass(frozen=True)
@@ -66,7 +67,7 @@ def apply_admin_topup(repo_root: Path, billing: BillingState, req: TopupRequest)
     # Ensure tenant row
     trow = None
     for r in tenants_credits:
-        if str(r.get("tenant_id", "")).strip() == tenant_id:
+        if normalize_tenant_id(r.get("tenant_id", "")) == tenant_id:
             trow = r
             break
     if trow is None:

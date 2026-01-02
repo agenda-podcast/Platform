@@ -5,13 +5,14 @@ from pathlib import Path
 from typing import Dict, List, Set
 
 from ..utils.csvio import read_csv
+from ..common.id_canonical import normalize_module_id
 
 
 def load_dependency_index(path: Path) -> Dict[str, List[str]]:
     rows = read_csv(path)
     out: Dict[str, List[str]] = {}
     for r in rows:
-        mid = str(r.get("module_id", "")).strip()
+        mid = normalize_module_id(r.get("module_id", ""))
         if not mid:
             continue
         deps_raw = str(r.get("depends_on_module_ids", "[]")).strip() or "[]"
