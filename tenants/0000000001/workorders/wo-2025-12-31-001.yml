@@ -9,4 +9,30 @@ modules:
 - module_id: '000003'
   reuse_output_type: cache
   purchase_release_artifacts: true
+  inputs:
+    queries:
+    - CHANGE_ME
+    max_items_per_query: 100
+    safe: active
+    date_restrict: null
+    hl: null
+    lr: null
+    gl: null
+    cr: null
+    exact_terms: null
+    exclude_terms: null
+    or_terms: null
+    hq: null
+    file_type: null
+    filter_duplicates: true
+    rights: null
+    site_search: null
+    site_search_filter: null
+    link_site: null
+    low_range: null
+    high_range: null
+    sort: null
+    dedupe:
+      enabled: true
+      strip_tracking_params: true
 promotions: []
