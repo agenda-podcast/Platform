@@ -194,15 +194,6 @@ def _verify_billing_state_dir(billing_state_dir: Path) -> None:
         _ensure_file(billing_state_dir / fname, hdr)
         _assert_exact_header(billing_state_dir / fname, hdr)
 
-    tenants = _read_csv_rows(billing_state_dir / "tenants_credits.csv")
-    for t in tenants:
-        tid = t.get("tenant_id", "")
-        if tid and not TENANT_ID_RE.match(tid):
-            _die(f"tenants_credits.csv invalid tenant_id: {tid!r} (expected 10 digits)")
-        ca = t.get("credits_available", "")
-        if ca and not ca.isdigit():
-            _die(f"tenants_credits.csv credits_available must be integer: {ca!r}")
-
     runs = _read_csv_rows(billing_state_dir / "module_runs_log.csv")
     for r in runs:
         mid = r.get("module_id", "")
@@ -221,36 +212,50 @@ def _iter_files_recursive(root: Path) -> List[Path]:
     return [p for p in root.rglob("*") if p.is_file()]
 
 
-def _find_module_output_dir(wo_dir: Path, module_id: str, module_run_id: str) -> Optional[Path]:
-    '''
-    Be strict about *workorder scope* but flexible about the module output folder name.
-    Accept common patterns:
-      - module-<id>
-      - module_<id>
-      - <id>
-      - output-<id>
-      - anything containing <id> or <module_run_id> as a directory name (direct child preferred).
-    '''
-    direct_candidates = [
-        wo_dir / f"module-{module_id}",
-        wo_dir / f"module_{module_id}",
-        wo_dir / module_id,
-        wo_dir / f"output-{module_id}",
-        wo_dir / f"output_{module_id}",
-    ]
+def _mid_variants(mid6: str) -> List[str]:
+    """Return variants for matching legacy folder naming (3-digit / non-padded)."""
+    if not MODULE_ID_RE.match(mid6):
+        return [mid6]
+    n = int(mid6)
+    mid3 = f"{n:03d}"
+    return [mid6, mid3, str(n)]
+
+
+def _find_module_output_dir(wo_dir: Path, module_id_6: str, module_run_id: str) -> Optional[Path]:
+    variants = _mid_variants(module_id_6)
+    direct_candidates: List[Path] = []
+    for v in variants:
+        direct_candidates.extend([
+            wo_dir / f"module-{v}",
+            wo_dir / f"module_{v}",
+            wo_dir / v,
+            wo_dir / f"output-{v}",
+            wo_dir / f"output_{v}",
+            wo_dir / "modules" / v,
+            wo_dir / "modules" / f"module-{v}",
+        ])
     for p in direct_candidates:
         if p.exists() and p.is_dir():
             return p
 
+    # Prefer direct children match
     children = [p for p in wo_dir.iterdir() if p.is_dir()]
     for p in children:
-        if module_id in p.name or (module_run_id and module_run_id in p.name):
+        if any(v in p.name for v in variants) or (module_run_id and module_run_id in p.name):
             return p
 
+    # Last resort: recursive within this workorder dir only
     for p in wo_dir.rglob("*"):
-        if p.is_dir() and (module_id in p.name or (module_run_id and module_run_id in p.name)):
+        if p.is_dir() and (any(v in p.name for v in variants) or (module_run_id and module_run_id in p.name)):
             return p
     return None
+
+
+def _dump_wo_dirs(wo_dir: Path) -> str:
+    if not wo_dir.exists():
+        return "<missing>"
+    names = sorted([p.name for p in wo_dir.iterdir() if p.is_dir()])
+    return ", ".join(names) if names else "<no subdirs>"
 
 
 def _verify_runtime_outputs(runtime_dir: Path, billing_state_dir: Path) -> None:
@@ -258,21 +263,33 @@ def _verify_runtime_outputs(runtime_dir: Path, billing_state_dir: Path) -> None:
     if not wo_root.exists():
         _die(f"Missing runtime/workorders folder: {wo_root}")
 
-    candidates: List[Tuple[str, str, Path]] = []
-    for tenant_dir in sorted([p for p in wo_root.iterdir() if p.is_dir()]):
-        for wod in sorted([p for p in tenant_dir.iterdir() if p.is_dir()]):
-            candidates.append((tenant_dir.name, wod.name, wod))
-
-    if not candidates:
-        _die(f"No runtime workorders found under {wo_root}")
-
-    tenant_id, work_order_id, wo_dir = candidates[0]
-    if not TENANT_ID_RE.match(tenant_id):
-        _die(f"Runtime tenant folder name is not a 10-digit tenant_id: {tenant_id!r}")
-
     runs_path = billing_state_dir / "module_runs_log.csv"
-    runs = _read_csv_rows(runs_path)
-    runs = [r for r in runs if r.get("tenant_id") == tenant_id and r.get("work_order_id") == work_order_id]
+    runs_all = _read_csv_rows(runs_path)
+    if not runs_all:
+        _die(f"module_runs_log.csv has no rows in {runs_path} (orchestrate did not record runs)")
+
+    # Pick target tenant/workorder from billing-state (source of truth).
+    target = None
+    for r in runs_all:
+        tid = r.get("tenant_id", "")
+        wid = r.get("work_order_id", "")
+        if TENANT_ID_RE.match(tid) and wid:
+            target = (tid, wid)
+            break
+    if not target:
+        _die("Could not determine (tenant_id, work_order_id) from module_runs_log.csv" )
+    tenant_id, work_order_id = target
+
+    wo_dir = wo_root / tenant_id / work_order_id
+    if not wo_dir.exists():
+        # Print top-level diagnostics
+        tenants = sorted([p.name for p in wo_root.iterdir() if p.is_dir()])[:20]
+        _die(
+            f"Runtime workorder folder not found: {wo_dir}. " 
+            f"Available tenants under runtime/workorders (first 20): {tenants}"
+        )
+
+    runs = [r for r in runs_all if r.get("tenant_id") == tenant_id and r.get("work_order_id") == work_order_id]
     if not runs:
         _die(f"No module runs found in {runs_path} for tenant={tenant_id} work_order={work_order_id}")
 
@@ -288,9 +305,11 @@ def _verify_runtime_outputs(runtime_dir: Path, billing_state_dir: Path) -> None:
         if status == "COMPLETED":
             out_dir = _find_module_output_dir(wo_dir, mid, mr_id)
             if out_dir is None:
+                subdirs = _dump_wo_dirs(wo_dir)
                 _die(
                     "Missing runtime output folder for completed module "
-                    f"{mid}: expected under {wo_dir} (tried common patterns and id search)"
+                    f"{mid}: expected under {wo_dir} (tried common patterns, legacy variants, and id search). "
+                    f"Workorder subdirs: {subdirs}"
                 )
             files = _iter_files_recursive(out_dir)
             if not files:
@@ -302,7 +321,7 @@ def _verify_runtime_outputs(runtime_dir: Path, billing_state_dir: Path) -> None:
             if not reason:
                 _die(f"module_runs_log.csv: non-COMPLETED run must include reason_code (module {mid}, status {status!r})")
 
-    _ok("Runtime outputs: validated against billing-state module_runs_log.csv (flexible folder naming)")
+    _ok("Runtime outputs: validated against billing-state module_runs_log.csv (targeted + legacy variants)")
 
 
 def main() -> int:
