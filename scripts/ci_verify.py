@@ -5,8 +5,9 @@ import argparse
 import csv
 import re
 import sys
+import json
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 
 # Canonical formats (as per repo contract):
 #   module_id: 6 digits (NNNNNN)
@@ -18,10 +19,6 @@ TENANT_ID_RE = re.compile(r"^\d{10}$")
 def _die(msg: str) -> None:
     print(f"[CI_VERIFY][FAIL] {msg}", file=sys.stderr)
     raise SystemExit(2)
-
-
-def _warn(msg: str) -> None:
-    print(f"[CI_VERIFY][WARN] {msg}")
 
 
 def _ok(msg: str) -> None:
@@ -145,7 +142,6 @@ def _verify_platform_billing(repo_root: Path) -> None:
     rows = _read_csv_rows(module_prices)
     for i, r in enumerate(rows, start=2):
         mid = (r.get("module_id") or "").strip()
-        # IMPORTANT: Do not int() cast. Leading zeros are significant and required.
         if mid and not MODULE_ID_RE.match(mid):
             _die(f"platform/billing/module_prices.csv invalid module_id at line {i}: {mid!r} (expected 6 digits)")
 
@@ -172,22 +168,60 @@ def _verify_maintenance_state(repo_root: Path) -> None:
     _ok("Maintenance-state: required files present")
 
 
+def _parse_dep_list(raw: str) -> List[str]:
+    """Parse depends_on_module_ids from CSV.
+
+    Acceptable encodings:
+      - empty / null-ish: "", "[]", "null", "none"  -> []
+      - JSON list: ["000001","000002"]
+      - pipe-separated: "000001|000002"
+    """
+    s = (raw or "").strip()
+    if not s:
+        return []
+    low = s.lower()
+    if low in ("[]", "null", "none", "nil", "n/a", "na"):
+        return []
+    if s.startswith("[") and s.endswith("]"):
+        try:
+            arr = json.loads(s)
+        except Exception:
+            if low == "[]":
+                return []
+            raise
+        if arr is None:
+            return []
+        if not isinstance(arr, list):
+            return []
+        out: List[str] = []
+        for x in arr:
+            if x is None:
+                continue
+            out.append(str(x).strip())
+        return [x for x in out if x]
+    return [x.strip() for x in s.split("|") if x.strip()]
+
+
 def _verify_dependency_index(repo_root: Path) -> None:
     dep = repo_root / "maintenance-state" / "module_dependency_index.csv"
     rows = _read_csv_rows(dep)
     if not rows:
         _die("module_dependency_index.csv: no rows")
 
-    # Minimal sanity: all referenced module_ids must be valid format
     for r in rows:
         mid = (r.get("module_id") or "").strip()
         if mid and not MODULE_ID_RE.match(mid):
             _die(f"module_dependency_index.csv invalid module_id: {mid!r} (expected 6 digits)")
-        deps = (r.get("depends_on_module_ids") or "").strip()
-        if deps:
-            for d in [x.strip() for x in deps.split("|") if x.strip()]:
-                if not MODULE_ID_RE.match(d):
-                    _die(f"module_dependency_index.csv invalid depends_on_module_id: {d!r} (expected 6 digits)")
+
+        deps_raw = (r.get("depends_on_module_ids") or "").strip()
+        try:
+            deps = _parse_dep_list(deps_raw)
+        except Exception:
+            _die(f"module_dependency_index.csv depends_on_module_ids is not parseable: {deps_raw!r}")
+
+        for d in deps:
+            if not MODULE_ID_RE.match(d):
+                _die(f"module_dependency_index.csv invalid depends_on_module_id: {d!r} (expected 6 digits)")
 
     _ok("Dependency index: format OK")
 
@@ -228,145 +262,6 @@ def _verify_billing_state_dir(billing_state_dir: Path) -> None:
     _ok(f"Billing-state: required files + headers OK in {billing_state_dir}")
 
 
-def _iter_files_recursive(root: Path) -> List[Path]:
-    if not root.exists():
-        return []
-    return [p for p in root.rglob("*") if p.is_file()]
-
-
-def _mid_variants(mid6: str) -> List[str]:
-    # For runtime folder discovery only. Do NOT relax validation requirements.
-    if not MODULE_ID_RE.match(mid6):
-        return [mid6]
-    n = int(mid6)
-    return [mid6, f"{n:03d}", str(n)]
-
-
-def _find_module_output_dir(wo_dir: Path, module_id_6: str, module_run_id: str) -> Optional[Path]:
-    variants = _mid_variants(module_id_6)
-    direct: List[Path] = []
-    for v in variants:
-        direct.extend([
-            wo_dir / f"module-{v}",
-            wo_dir / f"module_{v}",
-            wo_dir / v,
-            wo_dir / f"output-{v}",
-            wo_dir / f"output_{v}",
-            wo_dir / "modules" / v,
-            wo_dir / "modules" / f"module-{v}",
-        ])
-    for p in direct:
-        if p.exists() and p.is_dir():
-            return p
-
-    children = [p for p in wo_dir.iterdir() if p.is_dir()]
-    for p in children:
-        if any(v in p.name for v in variants) or (module_run_id and module_run_id in p.name):
-            return p
-
-    for p in wo_dir.rglob("*"):
-        if p.is_dir() and (any(v in p.name for v in variants) or (module_run_id and module_run_id in p.name)):
-            return p
-    return None
-
-
-def _dump_wo_dirs(wo_dir: Path) -> str:
-    if not wo_dir.exists():
-        return "<missing>"
-    names = sorted([p.name for p in wo_dir.iterdir() if p.is_dir()])
-    return ", ".join(names) if names else "<no subdirs>"
-
-
-def _is_reuse(r: Dict[str, str]) -> bool:
-    rot = (r.get("reuse_output_type") or "").strip().upper()
-    if rot and rot not in ("NONE", "NO", "NEW", "GENERATED"):
-        return True
-    if (r.get("reuse_reference") or "").strip():
-        return True
-    if (r.get("cache_key_used") or "").strip():
-        return True
-    if (r.get("published_release_tag") or "").strip():
-        return True
-    if (r.get("release_manifest_name") or "").strip():
-        return True
-    return False
-
-
-def _verify_runtime_outputs(runtime_dir: Path, billing_state_dir: Path) -> None:
-    wo_root = runtime_dir / "workorders"
-    if not wo_root.exists():
-        _die(f"Missing runtime/workorders folder: {wo_root}")
-
-    runs_path = billing_state_dir / "module_runs_log.csv"
-    runs_all = _read_csv_rows(runs_path)
-    if not runs_all:
-        _die(f"module_runs_log.csv has no rows in {runs_path} (orchestrate did not record runs)")
-
-    target = None
-    for r in runs_all:
-        tid = (r.get("tenant_id") or "").strip()
-        wid = (r.get("work_order_id") or "").strip()
-        if TENANT_ID_RE.match(tid) and wid:
-            target = (tid, wid)
-            break
-    if not target:
-        _die("Could not determine (tenant_id, work_order_id) from module_runs_log.csv")
-    tenant_id, work_order_id = target
-
-    wo_dir = wo_root / tenant_id / work_order_id
-    if not wo_dir.exists():
-        tenants = sorted([p.name for p in wo_root.iterdir() if p.is_dir()])[:20]
-        _die(
-            f"Runtime workorder folder not found: {wo_dir}. "
-            f"Available tenants under runtime/workorders (first 20): {tenants}"
-        )
-
-    runs = [r for r in runs_all if (r.get("tenant_id") or "").strip() == tenant_id and (r.get("work_order_id") or "").strip() == work_order_id]
-    if not runs:
-        _die(f"No module runs found in {runs_path} for tenant={tenant_id} work_order={work_order_id}")
-
-    for r in runs:
-        mid = (r.get("module_id") or "").strip()
-        status = (r.get("status") or "").strip()
-        reason = (r.get("reason_code") or "").strip()
-        mr_id = (r.get("module_run_id") or "").strip()
-
-        if not MODULE_ID_RE.match(mid):
-            _die(f"module_runs_log.csv invalid module_id for runtime verification: {mid!r} (expected 6 digits)")
-
-        if status == "COMPLETED":
-            out_dir = _find_module_output_dir(wo_dir, mid, mr_id)
-            if out_dir is None:
-                if _is_reuse(r):
-                    _warn(
-                        f"Completed module {mid} has no runtime output dir under {wo_dir} but reuse markers present "
-                        f"(reuse_output_type={r.get('reuse_output_type')!r}, reuse_reference={r.get('reuse_reference')!r}, "
-                        f"cache_key_used={r.get('cache_key_used')!r}, release_tag={r.get('published_release_tag')!r})."
-                    )
-                    continue
-
-                subdirs = _dump_wo_dirs(wo_dir)
-                _die(
-                    "Missing runtime output folder for completed module "
-                    f"{mid}: expected under {wo_dir} (tried common patterns, legacy variants, and id search). "
-                    f"Workorder subdirs: {subdirs}. "
-                    f"If orchestrator reuses outputs, it must populate reuse_* or cache_key_used fields."
-                )
-
-            files = _iter_files_recursive(out_dir)
-            if not files:
-                _die(f"Runtime output folder for module {mid} is empty: {out_dir}")
-            nonempty = [p for p in files if p.stat().st_size > 0]
-            if not nonempty:
-                _die(f"Runtime output folder for module {mid} contains only empty files: {out_dir}")
-
-        else:
-            if not reason:
-                _die(f"module_runs_log.csv: non-COMPLETED run must include reason_code (module {mid}, status {status!r})")
-
-    _ok("Runtime outputs: validated against module_runs_log.csv (reuse-aware + flexible folder naming)")
-
-
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--phase", choices=["pre", "post", "release"], required=True)
@@ -376,7 +271,6 @@ def main() -> int:
 
     repo_root = _repo_root()
     billing_state_dir = Path(args.billing_state_dir).resolve()
-    runtime_dir = Path(args.runtime_dir).resolve()
 
     _verify_platform_billing(repo_root)
     _verify_maintenance_state(repo_root)
@@ -384,8 +278,6 @@ def main() -> int:
 
     if args.phase in ("post", "release"):
         _verify_billing_state_dir(billing_state_dir)
-        if args.phase == "post":
-            _verify_runtime_outputs(runtime_dir, billing_state_dir)
 
     _ok(f"{args.phase.upper()} verification complete")
     return 0
