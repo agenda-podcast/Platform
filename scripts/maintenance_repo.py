@@ -13,9 +13,6 @@ This script is the single source of truth for *repository servicing* work:
    - platform/errors/error_reasons.csv
    - platform/schemas/work_order_modules/<module_id>.schema.json
 
-6) Ensure billing-state tenant credit ledgers contain rows for every tenant folder
-   (credits may be 0).
-
 Orchestration must NOT mutate these tables.
 """
 
@@ -52,11 +49,11 @@ PRICES_HEADER = [
     "notes",
 ]
 
+TENANTS_CREDITS_HEADER = ["tenant_id", "credits_available", "updated_at", "status"]
+
 MODULES_REG_HEADER = ["module_id", "module_name", "version", "folder", "entrypoint", "description"]
 REQS_REG_HEADER = ["module_id", "requirement_type", "requirement_key", "requirement_value", "note"]
 ERRORS_REG_HEADER = ["module_id", "error_code", "severity", "description", "remediation"]
-
-TENANTS_CREDITS_HEADER = ["tenant_id", "credits_available", "updated_at", "status"]
 
 
 @dataclass
@@ -111,6 +108,68 @@ def _csv_escape(s: str) -> str:
     if any(c in s for c in [",", "\n", "\r", '"']):
         return '"' + s.replace('"', '""') + '"'
     return s
+
+
+def ensure_tenants_credits_seed(
+    seed_csv: Path,
+    tenant_ids: List[str],
+    log: ChangeLog,
+    check: bool,
+) -> None:
+    """Ensure billing-state seed contains rows for all canonical tenants.
+
+    This is a repository servicing task so that orchestrator bootstrap from seed
+    (or initial release creation) never fails due to a missing tenant row.
+
+    We **only add** missing tenants (balance 0). We do not remove extra rows.
+    """
+    if not tenant_ids:
+        return
+
+    header, rows = _read_csv(seed_csv)
+    if header and header != TENANTS_CREDITS_HEADER:
+        # Keep this strict because billing-state is accounting SoT.
+        raise RuntimeError(
+            f"tenants_credits.csv header mismatch at {seed_csv}: expected {TENANTS_CREDITS_HEADER}, got {header}"
+        )
+
+    by_id: Dict[str, Dict[str, str]] = {}
+    for r in rows:
+        tid = str(r.get("tenant_id", "")).strip()
+        if tid:
+            by_id[tid] = {k: str(v or "").strip() for k, v in r.items()}
+
+    changed = False
+    # Deterministic timestamp for seed rows to avoid churn.
+    ts = "2000-01-01T00:00:00Z"
+
+    for tid in tenant_ids:
+        if tid not in by_id:
+            by_id[tid] = {
+                "tenant_id": tid,
+                "credits_available": "0",
+                "updated_at": ts,
+                "status": "ACTIVE",
+            }
+            changed = True
+        else:
+            r = by_id[tid]
+            if (r.get("credits_available") or "").strip() == "":
+                r["credits_available"] = "0"
+                changed = True
+            if (r.get("status") or "").strip() == "":
+                r["status"] = "ACTIVE"
+                changed = True
+            if (r.get("updated_at") or "").strip() == "":
+                r["updated_at"] = ts
+                changed = True
+
+    if not seed_csv.exists():
+        changed = True
+
+    if changed:
+        out_rows = [by_id[k] for k in sorted(by_id.keys())]
+        _write_csv(seed_csv, TENANTS_CREDITS_HEADER, out_rows, log, check)
 
 
 def _read_yaml(path: Path) -> Dict[str, Any]:
@@ -420,79 +479,6 @@ def canonicalize_tenant_folders(tenants_dir: Path, log: ChangeLog, check: bool) 
     return sorted(set(tenant_ids))
 
 
-TENANTS_CREDITS_HEADER = ["tenant_id", "credits_available", "updated_at", "status"]
-
-
-def ensure_tenants_credits_ledgers(repo_root: Path, tenant_ids: List[str], log: ChangeLog, check: bool) -> None:
-    """Ensure every tenant has a row in tenants_credits.csv (credits may be 0).
-
-    Orchestration expects the billing-state ledger to include the tenant; if missing, it hard-fails.
-
-    We update ledgers in-place for directories that already exist in the repository workspace:
-      - .billing-state/ (if present)
-      - .billing-state-ci/ (if present)
-      - billing-state-seed/ (if present)
-
-    Notes:
-      - We do NOT create new directories.
-      - We WILL create tenants_credits.csv inside an existing ledger directory if missing.
-      - updated_at uses a stable placeholder timestamp for deterministic diffs.
-    """
-
-    if not tenant_ids:
-        return
-
-    ledger_dirs = [repo_root / ".billing-state", repo_root / ".billing-state-ci", repo_root / "billing-state-seed"]
-    stable_updated_at = "2000-01-01T00:00:00Z"
-
-    for ld in ledger_dirs:
-        if not ld.exists() or not ld.is_dir():
-            continue
-        path = ld / "tenants_credits.csv"
-
-        header, rows = _read_csv(path)
-        if not header:
-            header = TENANTS_CREDITS_HEADER.copy()
-        if header != TENANTS_CREDITS_HEADER:
-            # Keep strict schema: rewrite to canonical header if file exists with drift.
-            log.note(f"NORMALIZE tenants_credits header in {path}")
-            header = TENANTS_CREDITS_HEADER.copy()
-
-        # Index existing rows by canonical tenant_id.
-        by_tid: Dict[str, Dict[str, str]] = {}
-        for r in rows:
-            raw = str(r.get("tenant_id", "")).strip()
-            tid = _normalize_tenant_id(raw)
-            if not tid:
-                continue
-            # Prefer the first row, but keep the highest credits if duplicates exist.
-            if tid in by_tid:
-                try:
-                    cur = int((by_tid[tid].get("credits_available") or "0").strip() or "0")
-                    nxt = int((r.get("credits_available") or "0").strip() or "0")
-                    if nxt > cur:
-                        by_tid[tid] = r
-                except Exception:
-                    pass
-            else:
-                by_tid[tid] = r
-
-        out_rows: List[Dict[str, str]] = []
-        for tid in sorted(tenant_ids):
-            r = dict(by_tid.get(tid, {}))
-            r["tenant_id"] = tid
-            if not str(r.get("credits_available", "")).strip():
-                r["credits_available"] = "0"
-            if not str(r.get("updated_at", "")).strip():
-                r["updated_at"] = stable_updated_at
-            if not str(r.get("status", "")).strip():
-                r["status"] = "active"
-            out_rows.append(r)
-
-        # Rewrite only if differs.
-        _write_csv(path, TENANTS_CREDITS_HEADER, out_rows, log, check)
-
-
 def ensure_module_prices(prices_path: Path, billing_cfg_path: Path, module_ids: List[str], log: ChangeLog, check: bool) -> None:
     defaults = _read_yaml(billing_cfg_path)
     bdef = defaults.get("billing_defaults", {}) if isinstance(defaults, dict) else {}
@@ -656,8 +642,12 @@ def main() -> int:
     module_ids = canonicalize_module_folders(modules_dir, log, check=args.check)
     tenant_ids = canonicalize_tenant_folders(tenants_dir, log, check=args.check)
 
-    # Keep tenant credit ledgers in sync with canonical tenant folders.
-    ensure_tenants_credits_ledgers(repo_root, tenant_ids, log, check=args.check)
+    # Ensure repo seed billing-state contains a row for every canonical tenant.
+    # This prevents orchestrator bootstrap failures when a tenant exists in repo
+    # but is missing from tenants_credits.csv.
+    seed_tc = repo_root / "billing-state-seed" / "tenants_credits.csv"
+    if seed_tc.parent.exists():
+        ensure_tenants_credits_seed(seed_tc, tenant_ids, log, check=args.check)
 
     ensure_module_prices(
         prices_path=repo_root / "platform" / "billing" / "module_prices.csv",

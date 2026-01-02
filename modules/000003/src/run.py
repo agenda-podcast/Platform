@@ -12,7 +12,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import requests
 
 
-MODULE_ID = "003"
+MODULE_ID = "000003"
 
 
 TRACKING_PARAMS_PREFIXES = (

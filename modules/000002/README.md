@@ -1,4 +1,4 @@
-# Module 002 (Placeholder)
+# Module 000002 (Placeholder)
 
 ## Purpose
 This module validates downstream transforms and dependency ordering:

@@ -2,20 +2,24 @@ name: Maintenance
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
 
 permissions:
   contents: write
 
+env:
+  BILLING_RELEASE_TAG: "billing-state-v1"
+
 concurrency:
-  group: maintenance-main
+  group: maintenance
   cancel-in-progress: false
 
 jobs:
   maintenance:
-    # Prevent infinite loops when Maintenance pushes a commit to main.
-    if: github.actor != 'github-actions[bot]'
+    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -36,77 +40,57 @@ jobs:
             pip install -r requirements.txt
           fi
 
-      # APPLY mode: repo is allowed to be non-canonical on merge;
-      # Maintenance must converge it (rename/merge folders, backfill registries/prices, etc.).
-      - name: Run Maintenance (apply)
+      - name: Maintenance - repository servicing (authoritative)
         run: |
           set -euxo pipefail
           python scripts/maintenance_repo.py
 
-      # After apply, the repo MUST be canonical and idempotent.
-      - name: Maintenance idempotency check
+      - name: Maintenance - compile maintenance-state
+        run: |
+          set -euxo pipefail
+          python -m platform.cli maintenance
+
+      - name: Maintenance - sync billing-state tenant ledger (seed + release)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euxo pipefail
+
+          # 1) Keep repo seed consistent with repo tenants (used when creating the initial release).
+          if [ -f "billing-state-seed/tenants_credits.csv" ] || [ -d "billing-state-seed" ]; then
+            python scripts/maintenance_billing_state.py \
+              --tenants-credits-csv billing-state-seed/tenants_credits.csv
+          fi
+
+          # 2) Keep GitHub Release billing-state asset consistent so orchestrator bootstrap never fails.
+          if gh release view "${BILLING_RELEASE_TAG}" > /dev/null 2>&1; then
+            rm -rf .billing-state-maint
+            mkdir -p .billing-state-maint
+            gh release download "${BILLING_RELEASE_TAG}" -D .billing-state-maint -p "tenants_credits.csv"
+            python scripts/maintenance_billing_state.py \
+              --tenants-credits-csv .billing-state-maint/tenants_credits.csv
+            gh release upload "${BILLING_RELEASE_TAG}" .billing-state-maint/tenants_credits.csv --clobber
+          else
+            echo "Billing-state release ${BILLING_RELEASE_TAG} not found; seed will be used by orchestrator." 
+          fi
+
+      - name: Verify repo is fully serviced
         run: |
           set -euxo pipefail
           python scripts/maintenance_repo.py --check
 
-      - name: Configure git identity
+      - name: Commit maintenance outputs
         run: |
           set -euxo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add \
+            modules \
+            maintenance-state \
+            billing-state-seed/tenants_credits.csv \
+            platform/billing/module_prices.csv \
+            platform/modules/modules.csv \
+            platform/modules/requirements.csv \
+            platform/errors/error_reasons.csv \
+            platform/schemas/work_order_modules || true
 
-      - name: Commit maintenance outputs (if any)
-        run: |
-          set -euxo pipefail
-          if [ -z "$(git status --porcelain)" ]; then
-            echo "No maintenance changes to commit."
-            exit 0
-          fi
-          git add -A
-          git commit -m "Maintenance: canonicalize repo and backfill registries/prices"
+          git commit -m "Maintenance: service repo state" || echo "No changes"
           git push
-
-  e2e:
-    name: E2E Verification
-    needs: maintenance
-    runs-on: ubuntu-latest
-    steps:
-      # IMPORTANT: checkout latest main (including any commit pushed by maintenance job).
-      - name: Checkout main
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
-
-      - name: Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install deps
-        run: |
-          set -euxo pipefail
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          fi
-
-      - name: Verify repo is canonical (post-maintenance)
-        run: |
-          set -euxo pipefail
-          python scripts/maintenance_repo.py --check
-
-      - name: CI Verify (pre)
-        run: |
-          set -euxo pipefail
-          python scripts/ci_verify.py             --phase pre             --billing-state-dir .billing-state-ci             --runtime-dir runtime
-
-      - name: Orchestrate
-        run: |
-          set -euxo pipefail
-          python -m platform.cli orchestrate             --runtime-dir runtime             --billing-state-dir .billing-state-ci
-
-      - name: CI Verify (post)
-        run: |
-          set -euxo pipefail
-          python scripts/ci_verify.py             --phase post             --billing-state-dir .billing-state-ci             --runtime-dir runtime

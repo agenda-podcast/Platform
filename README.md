@@ -33,15 +33,3 @@ If debug shows module_id is "1" (not "001"), then this patch will fix it by rewr
 Next (recommended):
 - Update scripts/ci_verify.py PRE phase to run maintenance_prices.py and to fail if no EFFECTIVE_ACTIVE price
   exists for any module id referenced by the workorder.
-
----
-
-## Maintenance Workflow (Authoritative)
-Repository servicing is performed by the Maintenance Workflow. It is responsible for:
-- canonical module and tenant ids
-- placeholder substitutions for newly added modules
-- platform registries and schemas regeneration
-- module prices backfill
-- tenant credit ledger integrity (each tenant must exist in tenants_credits.csv even if 0)
-
-See: `docs/MAINTENANCE_WORKFLOW.md`

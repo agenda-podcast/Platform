@@ -1,4 +1,4 @@
-name: "Module 001"
+name: "Module 000001"
 description: "Placeholder module composite action."
 
 inputs:
@@ -42,7 +42,7 @@ runs:
       shell: bash
       run: |
         python -m platform.cli module-exec \
-          --module-id "001" \
+          --module-id "000001" \
           --module-path "${{ github.action_path }}" \
           --tenant-id "${{ inputs.tenant_id }}" \
           --work-order-id "${{ inputs.work_order_id }}" \

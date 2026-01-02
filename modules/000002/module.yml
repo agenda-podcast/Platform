@@ -1,32 +1,36 @@
-module_id: '000002'
-version: 0.1.0
-description: Placeholder transform module that depends on 001, reads its output, and
-  emits derived notes.
+module_id: "000002"
+version: "0.1.0"
+
+description: "Placeholder transform module that depends on 001, reads its output, and emits derived notes."
+
 supports_downloadable_artifacts: true
 produces_manifest: true
-depends_on:
-- '000001'
+
+depends_on: ["000001"]
+
 cache:
   enabled: true
-  retention_default: 1w
+  retention_default: "1w"
   key_inputs:
-  - topic
-  - language
-  - freshness_days
-  - summary_style
+    - topic
+    - language
+    - freshness_days
+    - summary_style
+
 inputs:
-- name: topic
-  required: true
-  format: text/plain
-- name: language
-  required: true
-  format: text/plain
-- name: freshness_days
-  required: true
-  format: text/plain
-- name: summary_style
-  required: false
-  format: text/plain
+  - name: topic
+    required: true
+    format: "text/plain"
+  - name: language
+    required: true
+    format: "text/plain"
+  - name: freshness_days
+    required: true
+    format: "text/plain"
+  - name: summary_style
+    required: false
+    format: "text/plain"
+
 outputs:
-- name: derived_notes
-  format: text/plain
+  - name: derived_notes
+    format: "text/plain"

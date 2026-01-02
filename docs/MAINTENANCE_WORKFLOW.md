@@ -1,88 +1,66 @@
 # Maintenance Workflow
 
-## Goal
-The Maintenance Workflow is the platform’s authoritative repository servicing step. It runs after merges to keep the repository in a canonical state so that:
+This repository uses a mandatory **Maintenance** workflow to keep the platform's repo-managed
+registries and seeds consistent after every merge.
 
-- Orchestration can execute Work Orders deterministically without mutating registries, module folders, or billing artifacts.
-- Tenant configuration UI can be generated from deterministic JSON schemas.
-- Billing configuration and tenant ledgers remain consistent with the current set of tenants and modules.
+The key principle is separation of duties:
 
-## When it runs
-- Trigger: after every merge to the default branch (for example, `push` to `main`).
-- Ordering: Maintenance must complete before E2E Verification runs.
+- **Maintenance** owns repository servicing and consistency (canonical IDs, registries, defaults).
+- **Orchestrator** executes workorders only; it must assume the repo is already serviced.
 
-## Authoritative implementation
-Maintenance is implemented by the script:
+## What Maintenance does
 
-- `scripts/maintenance_repo.py`
+The workflow runs `scripts/maintenance_repo.py` (authoritative) and `platform.cli maintenance` to
+generate and validate platform-maintained artifacts.
 
-The workflow should call this script once per run and then commit any resulting repository changes.
+### 1) Canonicalize module folders (module IDs)
+**Goal:** Ensure every module folder name is a canonical 6-digit ID (`NNNNNN`).
 
-## Servicing jobs performed
-The script performs the following servicing jobs.
+**Why:** Module IDs are used as stable keys for registries, pricing, schemas, dependency graphs, and
+secrets prefixes.
 
-### 1) Canonicalize module folder naming
-Ensures every module folder in `modules/` is named using the canonical module id format:
+**Output:** Modules are renamed/merged into `modules/<NNNNNN>/` and internal references are updated.
 
-- `NNNNNN` (6 consequential digits)
+### 2) Canonicalize tenant folders (tenant IDs)
+**Goal:** Ensure every tenant folder name is a canonical 10-digit ID (`NNNNNNNNNN`).
 
-If a legacy module folder exists (for example, `001`), it is renamed/canonicalized.
+**Why:** Tenant IDs are accounting keys and must be stable across billing-state ledgers and runtime.
 
-### 2) Canonicalize tenant folder naming
-Ensures every tenant folder in `tenants/` is named using the canonical tenant id format:
+**Output:** Tenants are renamed/merged into `tenants/<NNNNNNNNNN>/` and `tenant.yml` is normalized.
 
-- `NNNNNNNNNN` (10 consequential digits)
+### 3) Backfill module pricing rows
+**Goal:** Ensure `platform/billing/module_prices.csv` contains an **effective active** price row for
+every module folder.
 
-Legacy tenant folders (for example, `tenant-001`) are normalized.
+**Why:** Spend estimation requires a price for each module. Prices are repo-managed configuration.
 
-### 3) Apply module id placeholder substitution
-For newly added modules that were created before they had a final module id, the script replaces placeholders inside module files so that:
+**Defaults:** Values come from `platform/billing/billing_config.yaml` (default run and artifact prices).
 
-- environment variable prefixes are the module id
-- internal names that must be unique are module-id-prefixed
+### 4) Regenerate platform registries
+**Goal:** Keep platform registries in sync with the actual modules present.
 
-### 4) Backfill module prices
-Ensures `platform/billing/module_prices.csv` contains at least one active, effective price row for every module folder present in `modules/`.
-
-Defaults are read from:
-
-- `platform/billing/billing_config.yaml`
-
-### 5) Regenerate platform registries and schemas
-Regenerates platform registries that the UI and operations tooling rely on:
-
+**Outputs:**
 - `platform/modules/modules.csv`
 - `platform/modules/requirements.csv`
 - `platform/errors/error_reasons.csv`
-- `platform/schemas/work_order_modules/<module_id>.schema.json` (synced from each module’s `tenant_params.schema.json` when present)
+- `platform/schemas/work_order_modules/<module_id>.schema.json`
 
-### 6) Ensure tenant credit ledgers include all tenants
-Ensures every canonical tenant folder has a row in `tenants_credits.csv` (even if the balance is 0). This prevents orchestration from failing with:
+### 5) Sync billing-state tenant ledger (seed + release)
+**Goal:** Ensure every repo tenant exists in the accounting ledger `tenants_credits.csv`, even if
+their balance is `0`.
 
-- `Tenant not found in tenants_credits.csv`
+**Why:** Orchestrator hard-fails if a tenant is missing from `tenants_credits.csv`.
 
-The script updates the file in-place for any of the following ledger directories that exist in the repository workspace:
+**Actions:**
+- Updates the repo seed: `billing-state-seed/tenants_credits.csv`.
+- If the GitHub Release `${BILLING_RELEASE_TAG}` exists, downloads its `tenants_credits.csv`,
+  backfills missing tenants, and re-uploads the corrected asset.
 
-- `.billing-state/`
-- `.billing-state-ci/`
-- `billing-state-seed/`
+## What Maintenance must NOT do
+- It must not execute workorders.
+- It must not produce runtime outputs.
+- It must not change billing-state accounting tables beyond the declared servicing goals.
 
-If a ledger directory exists but `tenants_credits.csv` is missing, it will be created inside that directory.
-
-## Validation behavior
-The script supports a validation-only mode:
-
-- `scripts/maintenance_repo.py --check`
-
-In `--check` mode, the script computes the required changes but does not write them. If changes would be made, it exits non-zero so the workflow can fail.
-
-## Responsibilities and non-responsibilities
-Maintenance is responsible for repository servicing. Orchestration must not:
-
-- rename module or tenant folders
-- update module prices
-- regenerate platform registries
-- patch work orders for UI editing
-- mutate billing-state ledgers except through normal run logging
-
-If a platform behavior requires any of the above, that logic must be implemented in Maintenance and validated by E2E Verification.
+## Verification contract
+After Maintenance finishes, `scripts/maintenance_repo.py --check` must report no changes.
+E2E verification should run **after** Maintenance so that validation reflects the serviced state.

@@ -1,4 +1,4 @@
-name: "Module 002"
+name: "Module 000002"
 description: "Placeholder module composite action."
 
 inputs:
@@ -42,6 +42,6 @@ runs:
       shell: bash
       run: |
         python -m platform.cli module-exec \
-          --module-id "002" \
+          --module-id "000002" \
           --params-json '${{ inputs.params_json }}' \
           --outputs-dir "${{ inputs.outputs_dir }}"

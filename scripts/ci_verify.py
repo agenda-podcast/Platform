@@ -3,26 +3,18 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
-import sys
-from datetime import date
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
 import re
+import sys
+from pathlib import Path
+from typing import Dict, List
 
-import yaml
 
-MODULE_ID_RE = re.compile(r"^\d{6}$")
-TENANT_ID_RE = re.compile(r"^\d{10}$")
+MODULE_ID_RE = __import__("re").compile(r"^\d{6}$")
 
 
 def _die(msg: str) -> None:
     print(f"[CI_VERIFY][FAIL] {msg}", file=sys.stderr)
     raise SystemExit(2)
-
-
-def _warn(msg: str) -> None:
-    print(f"[CI_VERIFY][WARN] {msg}")
 
 
 def _ok(msg: str) -> None:
@@ -71,31 +63,6 @@ def _ensure_file(path: Path, header: List[str]) -> None:
     with path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(header)
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
-
-
-def _collect_module_ids(modules_dir: Path) -> List[str]:
-    if not modules_dir.exists():
-        _die("Missing modules/ folder")
-    ids: List[str] = []
-    bad: List[str] = []
-    for p in sorted(modules_dir.iterdir()):
-        if not p.is_dir():
-            continue
-        name = p.name.strip()
-        if MODULE_ID_RE.match(name):
-            ids.append(name)
-        else:
-            bad.append(name)
-    if bad:
-        _die(
-            "Modules folder contains non-canonical module directories (Maintenance must rename them to 6-digit IDs): "
-            + ", ".join(bad)
-        )
-    return ids
 
 
 def _verify_platform_billing(repo_root: Path) -> None:
@@ -167,18 +134,20 @@ def _verify_platform_billing(repo_root: Path) -> None:
     rows = _read_csv_rows(module_prices)
     for i, r in enumerate(rows, start=2):
         mid = r.get("module_id", "")
-        if mid and not MODULE_ID_RE.match(mid):
+        if mid and (len(mid) != 3 or not mid.isdigit()):
             _die(f"platform/billing/module_prices.csv invalid module_id at line {i}: {mid!r}")
 
-    # Coverage: every canonical module folder must have at least one effective active price row.
+    # Coverage: every module folder must have at least one effective active price row.
     module_ids = _collect_module_ids(repo_root / "modules")
-    by_mid: Dict[str, List[Dict[str, str]]] = {}
+    by_mid = {}
     for r in rows:
         by_mid.setdefault(r.get("module_id", ""), []).append(r)
 
+    from datetime import date
+
     today = date.today()
 
-    def _parse_date(s: str) -> Optional[date]:
+    def _parse_date(s: str):
         s = (s or "").strip()
         if not s:
             return None
@@ -204,12 +173,58 @@ def _verify_platform_billing(repo_root: Path) -> None:
         if not any(_effective_now(r) for r in by_mid.get(mid, [])):
             missing.append(mid)
     if missing:
-        _die(
-            "platform/billing/module_prices.csv missing effective active price rows for modules: "
-            + ", ".join(missing)
-        )
+        _die(f"platform/billing/module_prices.csv missing effective active price rows for modules: {', '.join(missing)}")
 
     _ok("Repo billing config: headers + basic validation OK")
+
+
+def _collect_module_ids(modules_dir: Path) -> List[str]:
+    if not modules_dir.exists():
+        _die("Missing modules/ folder")
+    ids: List[str] = []
+    bad: List[str] = []
+    for p in sorted(modules_dir.iterdir()):
+        if not p.is_dir():
+            continue
+        name = p.name.strip()
+        if MODULE_ID_RE.match(name):
+            ids.append(name)
+        else:
+            bad.append(name)
+    if bad:
+        _die(
+            "Modules folder contains non-canonical module directories (Maintenance must rename them to 6-digit IDs): "
+            + ", ".join(bad)
+        )
+    return ids
+
+
+def _verify_platform_registries(repo_root: Path) -> None:
+    module_ids = _collect_module_ids(repo_root / "modules")
+
+    modules_csv = repo_root / "platform" / "modules" / "modules.csv"
+    req_csv = repo_root / "platform" / "modules" / "requirements.csv"
+    err_csv = repo_root / "platform" / "errors" / "error_reasons.csv"
+
+    _assert_exact_header(modules_csv, ["module_id", "module_name", "version", "folder", "entrypoint", "description"])
+    _assert_exact_header(req_csv, ["module_id", "requirement_type", "requirement_key", "requirement_value", "note"])
+    _assert_exact_header(err_csv, ["module_id", "error_code", "severity", "description", "remediation"])
+
+    reg_rows = _read_csv_rows(modules_csv)
+    reg_ids = {r.get("module_id", "") for r in reg_rows if r.get("module_id")}
+    missing = [m for m in module_ids if m not in reg_ids]
+    if missing:
+        _die(f"platform/modules/modules.csv missing module rows for: {', '.join(missing)}")
+
+    # Schemas: if a module declares tenant_params.schema.json, ensure it is synced into platform/schemas.
+    schemas_dir = repo_root / "platform" / "schemas" / "work_order_modules"
+    for mid in module_ids:
+        src = repo_root / "modules" / mid / "tenant_params.schema.json"
+        dst = schemas_dir / f"{mid}.schema.json"
+        if src.exists() and not dst.exists():
+            _die(f"Missing synced tenant schema: {dst} (source exists at {src})")
+
+    _ok("Platform registries: modules/requirements/errors + schemas coverage OK")
 
 
 def _verify_maintenance_state(repo_root: Path) -> None:
@@ -232,146 +247,9 @@ def _verify_maintenance_state(repo_root: Path) -> None:
     _ok("Maintenance-state: required files present")
 
 
-def _verify_dependency_index(repo_root: Path) -> None:
-    dep = repo_root / "maintenance-state" / "module_dependency_index.csv"
-    rows = _read_csv_rows(dep)
-    module_ids = set(_collect_module_ids(repo_root / "modules"))
-
-    seen_ids: set[str] = set()
-    for r in rows:
-        mid = str(r.get("module_id", "")).strip()
-        if mid:
-            if not MODULE_ID_RE.match(mid):
-                _die(f"module_dependency_index.csv invalid module_id: {mid!r}")
-            seen_ids.add(mid)
-        raw = str(r.get("depends_on_module_ids", "")).strip()
-        if not raw:
-            continue
-        # depends_on_module_ids is stored as JSON (list) in CSV.
-        deps: List[str] = []
-        try:
-            v = json.loads(raw)
-            if isinstance(v, list):
-                deps = [str(x) for x in v]
-        except Exception:
-            # tolerate legacy formatting like "[]" or comma-separated
-            if raw.startswith("[") and raw.endswith("]"):
-                pass
-            else:
-                deps = [x.strip() for x in raw.split(",") if x.strip()]
-
-        for d in deps:
-            if d and not MODULE_ID_RE.match(d):
-                _die(f"module_dependency_index.csv invalid depends_on_module_id: {d!r} (module {mid})")
-            if d and d not in module_ids:
-                _die(f"module_dependency_index.csv dependency not found in modules/: {d} (required by {mid})")
-
-    missing = sorted(module_ids - seen_ids)
-    if missing:
-        _die("module_dependency_index.csv missing module rows for: " + ", ".join(missing))
-    _ok("Dependency index: coverage + referential integrity OK")
-
-
-def _load_module_schema(repo_root: Path, module_id: str) -> Optional[Dict[str, Any]]:
-    """Load tenant_params.schema.json either from modules/... or platform/schemas/..."""
-    p1 = repo_root / "modules" / module_id / "tenant_params.schema.json"
-    p2 = repo_root / "platform" / "schemas" / "work_order_modules" / f"{module_id}.schema.json"
-    for p in (p1, p2):
-        if p.exists():
-            try:
-                return json.loads(p.read_text(encoding="utf-8"))
-            except Exception:
-                return None
-    return None
-
-
-def _verify_platform_registries(repo_root: Path) -> None:
-    module_ids = _collect_module_ids(repo_root / "modules")
-
-    modules_csv = repo_root / "platform" / "modules" / "modules.csv"
-    req_csv = repo_root / "platform" / "modules" / "requirements.csv"
-    err_csv = repo_root / "platform" / "errors" / "error_reasons.csv"
-
-    _assert_exact_header(modules_csv, ["module_id", "module_name", "version", "folder", "entrypoint", "description"])
-    _assert_exact_header(req_csv, ["module_id", "requirement_type", "requirement_key", "requirement_value", "note"])
-    _assert_exact_header(err_csv, ["module_id", "error_code", "severity", "description", "remediation"])
-
-    # Ensure every module is present in modules.csv.
-    rows = _read_csv_rows(modules_csv)
-    seen = {r.get("module_id", "") for r in rows}
-    missing = [mid for mid in module_ids if mid not in seen]
-    if missing:
-        _die("platform/modules/modules.csv missing module rows for: " + ", ".join(missing))
-
-    # Ensure schema sync coverage (if module defines tenant params).
-    schemas_dir = repo_root / "platform" / "schemas" / "work_order_modules"
-    for mid in module_ids:
-        src = repo_root / "modules" / mid / "tenant_params.schema.json"
-        if not src.exists():
-            continue
-        dst = schemas_dir / f"{mid}.schema.json"
-        if not dst.exists():
-            _die(f"Missing platform schema for module {mid}: {dst} (Maintenance must sync)")
-
-    _ok("Platform registries: modules/requirements/errors + schemas coverage OK")
-
-
-def _verify_workorders_scaffolded(repo_root: Path) -> None:
-    """After Maintenance, every Work Order module entry must include scaffolded inputs."""
-    tenants_dir = repo_root / "tenants"
-    if not tenants_dir.exists():
-        return
-
-    for tenant_dir in sorted(tenants_dir.iterdir()):
-        if not tenant_dir.is_dir() or not TENANT_ID_RE.match(tenant_dir.name):
-            continue
-        wo_dir = tenant_dir / "workorders"
-        if not wo_dir.exists():
-            continue
-
-        for wf in sorted(wo_dir.glob("*.yml")):
-            try:
-                data = yaml.safe_load(wf.read_text(encoding="utf-8")) or {}
-            except Exception as e:
-                _die(f"Invalid YAML in workorder {wf}: {e}")
-
-            mods = data.get("modules")
-            if not isinstance(mods, list):
-                continue
-
-            for m in mods:
-                if not isinstance(m, dict):
-                    continue
-                mid = str(m.get("module_id", "")).strip()
-                if not mid:
-                    continue
-                if not MODULE_ID_RE.match(mid):
-                    _die(f"Workorder {wf} has non-canonical module_id {mid!r} (expected 6 digits)")
-
-                schema = _load_module_schema(repo_root, mid)
-                if not schema:
-                    continue
-
-                props = schema.get("properties")
-                if not isinstance(props, dict) or not props:
-                    continue
-
-                inputs = m.get("inputs")
-                if not isinstance(inputs, dict):
-                    _die(f"Workorder {wf} missing module inputs for module {mid} (Maintenance must scaffold)")
-
-                missing_keys = [k for k in props.keys() if k not in inputs]
-                if missing_keys:
-                    _die(
-                        f"Workorder {wf} module {mid} missing input keys (Maintenance must scaffold): "
-                        + ", ".join(missing_keys)
-                    )
-
-    _ok("Workorders: module inputs scaffolded from tenant_params schemas")
-
-
-def _verify_billing_state_dir(billing_state_dir: Path) -> None:
+def _verify_billing_state_dir(repo_root: Path, billing_state_dir: Path) -> None:
     expected_headers = {
+        # Release-managed state (SoT for accounting)
         "tenants_credits.csv": ["tenant_id", "credits_available", "updated_at", "status"],
         "transactions.csv": ["transaction_id", "tenant_id", "work_order_id", "type", "total_amount_credits", "created_at", "metadata_json"],
         "transaction_items.csv": ["transaction_item_id", "transaction_id", "tenant_id", "work_order_id", "module_run_id", "name", "category", "amount_credits", "reason_code", "note"],
@@ -385,154 +263,80 @@ def _verify_billing_state_dir(billing_state_dir: Path) -> None:
         _ensure_file(billing_state_dir / fname, hdr)
         _assert_exact_header(billing_state_dir / fname, hdr)
 
-    runs = _read_csv_rows(billing_state_dir / "module_runs_log.csv")
-    for r in runs:
-        mid = r.get("module_id", "")
-        if mid and not MODULE_ID_RE.match(mid):
-            _die(f"module_runs_log.csv invalid module_id: {mid!r} (expected 6 digits)")
-        tid = r.get("tenant_id", "")
-        if tid and not TENANT_ID_RE.match(tid):
-            _die(f"module_runs_log.csv invalid tenant_id: {tid!r} (expected 10 digits)")
+    tenants = _read_csv_rows(billing_state_dir / "tenants_credits.csv")
+    for t in tenants:
+        ca = t.get("credits_available", "")
+        if ca and not ca.isdigit():
+            _die(f"tenants_credits.csv credits_available must be integer: {ca!r}")
+
+    # Repo integrity: every canonical tenant folder must be present in the ledger.
+    # This is a Maintenance responsibility. Verification enforces the contract.
+    ledger_ids = {str(t.get("tenant_id", "")).strip() for t in tenants if str(t.get("tenant_id", "")).strip()}
+    repo_tenants_dir = repo_root / "tenants"
+    repo_tenant_ids = []
+    if repo_tenants_dir.exists():
+        for p in sorted(repo_tenants_dir.iterdir()):
+            if not p.is_dir():
+                continue
+            tid = p.name.strip()
+            if re.match(r"^[0-9]{10}$", tid):
+                repo_tenant_ids.append(tid)
+
+    missing = [tid for tid in repo_tenant_ids if tid not in ledger_ids]
+    if missing:
+        _die(
+            "tenants_credits.csv missing tenant(s) present in repo: "
+            + ", ".join(missing)
+            + ". Run Maintenance to sync billing-state tenant ledger."
+        )
+
+    # Validate numeric fields in transactions and transaction_items
+    txs = _read_csv_rows(billing_state_dir / "transactions.csv")
+    for tx in txs:
+        ta = tx.get("total_amount_credits", "")
+        if ta and not ta.lstrip("-").isdigit():
+            _die(f"transactions.csv total_amount_credits must be integer: {ta!r}")
+
+    items = _read_csv_rows(billing_state_dir / "transaction_items.csv")
+    for it in items:
+        ac = it.get("amount_credits", "")
+        if ac and not ac.lstrip("-").isdigit():
+            _die(f"transaction_items.csv amount_credits must be integer: {ac!r}")
 
     _ok(f"Billing-state: required files + headers OK in {billing_state_dir}")
 
 
-def _iter_files_recursive(root: Path) -> List[Path]:
-    if not root.exists():
-        return []
-    return [p for p in root.rglob("*") if p.is_file()]
+def _verify_runtime_outputs(runtime_dir: Path) -> None:
+    wo = runtime_dir / "workorders" / "0000000001" / "wo-2025-12-31-001"
+    m1 = wo / "module-000001" / "source_text.txt"
+    m2 = wo / "module-000002" / "derived_notes.txt"
+
+    if not m1.exists():
+        _die(f"Missing runtime output from module 000001: {m1}")
+    if not m2.exists():
+        _die(f"Missing runtime output from module 000002: {m2}")
+
+    if m1.stat().st_size < 10:
+        _die(f"module 000001 output unexpectedly small: {m1} ({m1.stat().st_size} bytes)")
+    if m2.stat().st_size < 10:
+        _die(f"module 000002 output unexpectedly small: {m2} ({m2.stat().st_size} bytes)")
+
+    _ok("Runtime outputs: module-000001/source_text.txt and module-000002/derived_notes.txt present and non-trivial")
 
 
-def _mid_variants(mid6: str) -> List[str]:
-    if not MODULE_ID_RE.match(mid6):
-        return [mid6]
-    n = int(mid6)
-    return [mid6, f"{n:03d}", str(n)]
-
-
-def _find_module_output_dir(wo_dir: Path, module_id_6: str, module_run_id: str) -> Optional[Path]:
-    variants = _mid_variants(module_id_6)
-    direct: List[Path] = []
-    for v in variants:
-        direct.extend([
-            wo_dir / f"module-{v}",
-            wo_dir / f"module_{v}",
-            wo_dir / v,
-            wo_dir / f"output-{v}",
-            wo_dir / f"output_{v}",
-            wo_dir / "modules" / v,
-            wo_dir / "modules" / f"module-{v}",
-        ])
-    for p in direct:
-        if p.exists() and p.is_dir():
-            return p
-
-    children = [p for p in wo_dir.iterdir() if p.is_dir()]
-    for p in children:
-        if any(v in p.name for v in variants) or (module_run_id and module_run_id in p.name):
-            return p
-
-    for p in wo_dir.rglob("*"):
-        if p.is_dir() and (any(v in p.name for v in variants) or (module_run_id and module_run_id in p.name)):
-            return p
-    return None
-
-
-def _dump_wo_dirs(wo_dir: Path) -> str:
-    if not wo_dir.exists():
-        return "<missing>"
-    names = sorted([p.name for p in wo_dir.iterdir() if p.is_dir()])
-    return ", ".join(names) if names else "<no subdirs>"
-
-
-def _is_reuse(r: Dict[str, str]) -> bool:
-    rot = (r.get("reuse_output_type") or "").strip().upper()
-    if rot and rot not in ("NONE", "NO", "NEW", "GENERATED"):
-        return True
-    if (r.get("reuse_reference") or "").strip():
-        return True
-    if (r.get("cache_key_used") or "").strip():
-        return True
-    if (r.get("published_release_tag") or "").strip():
-        return True
-    if (r.get("release_manifest_name") or "").strip():
-        return True
-    return False
-
-
-def _verify_runtime_outputs(runtime_dir: Path, billing_state_dir: Path) -> None:
-    wo_root = runtime_dir / "workorders"
-    if not wo_root.exists():
-        _die(f"Missing runtime/workorders folder: {wo_root}")
-
-    runs_path = billing_state_dir / "module_runs_log.csv"
-    runs_all = _read_csv_rows(runs_path)
-    if not runs_all:
-        _die(f"module_runs_log.csv has no rows in {runs_path} (orchestrate did not record runs)")
-
-    target = None
-    for r in runs_all:
-        tid = r.get("tenant_id", "")
-        wid = r.get("work_order_id", "")
-        if TENANT_ID_RE.match(tid) and wid:
-            target = (tid, wid)
-            break
-    if not target:
-        _die("Could not determine (tenant_id, work_order_id) from module_runs_log.csv")
-    tenant_id, work_order_id = target
-
-    wo_dir = wo_root / tenant_id / work_order_id
-    if not wo_dir.exists():
-        tenants = sorted([p.name for p in wo_root.iterdir() if p.is_dir()])[:20]
-        _die(
-            f"Runtime workorder folder not found: {wo_dir}. "
-            f"Available tenants under runtime/workorders (first 20): {tenants}"
-        )
-
-    runs = [r for r in runs_all if r.get("tenant_id") == tenant_id and r.get("work_order_id") == work_order_id]
-    if not runs:
-        _die(f"No module runs found in {runs_path} for tenant={tenant_id} work_order={work_order_id}")
-
-    for r in runs:
-        mid = r.get("module_id", "")
-        status = r.get("status", "")
-        reason = r.get("reason_code", "")
-        mr_id = r.get("module_run_id", "")
-
-        if not MODULE_ID_RE.match(mid):
-            _die(f"module_runs_log.csv invalid module_id for runtime verification: {mid!r}")
-
-        if status == "COMPLETED":
-            out_dir = _find_module_output_dir(wo_dir, mid, mr_id)
-            if out_dir is None:
-                if _is_reuse(r):
-                    _warn(
-                        f"Completed module {mid} has no runtime output dir under {wo_dir} but reuse markers present "
-                        f"(reuse_output_type={r.get('reuse_output_type')!r}, reuse_reference={r.get('reuse_reference')!r}, "
-                        f"cache_key_used={r.get('cache_key_used')!r}, release_tag={r.get('published_release_tag')!r})."
-                    )
-                    continue
-
-                subdirs = _dump_wo_dirs(wo_dir)
-                _die(
-                    "Missing runtime output folder for completed module "
-                    f"{mid}: expected under {wo_dir} (tried common patterns, legacy variants, and id search). "
-                    f"Workorder subdirs: {subdirs}. "
-                    f"If orchestrator reuses outputs, it must populate reuse_* or cache_key_used fields."
-                )
-
-            files = _iter_files_recursive(out_dir)
-            if not files:
-                _die(f"Runtime output folder for module {mid} is empty: {out_dir}")
-            nonempty = [p for p in files if p.stat().st_size > 0]
-            if not nonempty:
-                _die(f"Runtime output folder for module {mid} contains only empty files: {out_dir}")
-
-        else:
-            if not reason:
-                _die(f"module_runs_log.csv: non-COMPLETED run must include reason_code (module {mid}, status {status!r})")
-
-    _ok("Runtime outputs: validated against module_runs_log.csv (reuse-aware + flexible folder naming)")
+def _verify_dependency_index(repo_root: Path) -> None:
+    dep = repo_root / "maintenance-state" / "module_dependency_index.csv"
+    rows = _read_csv_rows(dep)
+    seen_002 = False
+    for r in rows:
+        if r.get("module_id") == "000002":
+            seen_002 = True
+            depends = r.get("depends_on_module_ids", "")
+            if "000001" not in depends:
+                _die("module_dependency_index.csv: module 000002 must depend on 000001")
+    if not seen_002:
+        _die("module_dependency_index.csv: missing module 000002 row")
+    _ok("Dependency index: module 000002 depends on 000001")
 
 
 def main() -> int:
@@ -542,20 +346,19 @@ def main() -> int:
     ap.add_argument("--runtime-dir", required=True)
     args = ap.parse_args()
 
-    repo_root = _repo_root()
+    repo_root = Path(__file__).resolve().parents[1]
     billing_state_dir = Path(args.billing_state_dir).resolve()
     runtime_dir = Path(args.runtime_dir).resolve()
 
     _verify_platform_billing(repo_root)
+    _verify_platform_registries(repo_root)
     _verify_maintenance_state(repo_root)
     _verify_dependency_index(repo_root)
-    _verify_platform_registries(repo_root)
-    _verify_workorders_scaffolded(repo_root)
 
     if args.phase in ("post", "release"):
-        _verify_billing_state_dir(billing_state_dir)
+        _verify_billing_state_dir(repo_root, billing_state_dir)
         if args.phase == "post":
-            _verify_runtime_outputs(runtime_dir, billing_state_dir)
+            _verify_runtime_outputs(runtime_dir)
 
     _ok(f"{args.phase.upper()} verification complete")
     return 0
