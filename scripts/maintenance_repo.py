@@ -13,10 +13,8 @@ This script is the single source of truth for *repository servicing* work:
    - platform/errors/error_reasons.csv
    - platform/schemas/work_order_modules/<module_id>.schema.json
 
-6) Backfill Work Order module inputs from module tenant parameter schemas.
-   If a Work Order references a module_id and that module has tenant_params.schema.json,
-   Maintenance will ensure the Work Order contains an "inputs" object with the schema's
-   properties scaffolded (defaults where available; placeholders where required).
+6) Ensure billing-state tenant credit ledgers contain rows for every tenant folder
+   (credits may be 0).
 
 Orchestration must NOT mutate these tables.
 """
@@ -57,6 +55,8 @@ PRICES_HEADER = [
 MODULES_REG_HEADER = ["module_id", "module_name", "version", "folder", "entrypoint", "description"]
 REQS_REG_HEADER = ["module_id", "requirement_type", "requirement_key", "requirement_value", "note"]
 ERRORS_REG_HEADER = ["module_id", "error_code", "severity", "description", "remediation"]
+
+TENANTS_CREDITS_HEADER = ["tenant_id", "credits_available", "updated_at", "status"]
 
 
 @dataclass
@@ -219,141 +219,6 @@ def _normalize_module_yaml(module_dir: Path, module_id: str, log: ChangeLog, che
 
     if changed:
         _write_yaml(my, y, log, check)
-
-
-def _json_default_from_schema(schema: Dict[str, Any]) -> Any:
-    """Best-effort default builder from a JSON Schema fragment.
-
-    Rules:
-    - Prefer explicit "default".
-    - If type allows null => None.
-    - If required with no default => placeholder based on type/minimum.
-    """
-    if not isinstance(schema, dict):
-        return None
-    if "default" in schema:
-        return schema.get("default")
-
-    t = schema.get("type")
-    # union types
-    if isinstance(t, list):
-        if "null" in t:
-            return None
-        # pick first non-null
-        t = next((x for x in t if x != "null"), None)
-
-    if t == "string":
-        # If schema provides examples, use first; else placeholder.
-        ex = schema.get("examples")
-        if isinstance(ex, list) and ex and isinstance(ex[0], str) and ex[0].strip():
-            return ex[0]
-        return "CHANGE_ME"
-
-    if t == "integer":
-        # Use minimum if specified; else 1.
-        mn = schema.get("minimum")
-        if isinstance(mn, int):
-            return mn
-        return 1
-
-    if t == "number":
-        mn = schema.get("minimum")
-        if isinstance(mn, (int, float)):
-            return mn
-        return 0
-
-    if t == "boolean":
-        return False
-
-    if t == "array":
-        items = schema.get("items")
-        # For arrays with minItems>=1, scaffold a single placeholder.
-        min_items = schema.get("minItems")
-        if isinstance(min_items, int) and min_items >= 1:
-            if isinstance(items, dict):
-                return [_json_default_from_schema(items)]
-            return ["CHANGE_ME"]
-        return []
-
-    if t == "object":
-        # If object has default, we'd have returned earlier.
-        # Otherwise, if it has properties, scaffold them.
-        props = schema.get("properties")
-        req = schema.get("required")
-        out: Dict[str, Any] = {}
-        if isinstance(props, dict):
-            for k, v in props.items():
-                out[k] = _json_default_from_schema(v) if isinstance(v, dict) else None
-        # For required-only objects with no properties, return {}
-        return out
-
-    return None
-
-
-def ensure_workorder_module_inputs(tenants_dir: Path, modules_dir: Path, log: ChangeLog, check: bool) -> None:
-    """Ensure Work Orders contain scaffolded module inputs.
-
-    Contract:
-    - If Work Order references module_id MID and modules/MID/tenant_params.schema.json exists,
-      then the module entry must include an "inputs" mapping.
-    - "inputs" must include all schema properties (defaults where defined; placeholders otherwise).
-    - Existing values are preserved.
-    """
-    if not tenants_dir.exists():
-        return
-
-    for tenant_dir in sorted(tenants_dir.iterdir()):
-        if not tenant_dir.is_dir() or not TENANT_ID_RE.match(tenant_dir.name):
-            continue
-        wod = tenant_dir / "workorders"
-        if not wod.exists():
-            continue
-        for wf in sorted(wod.glob("*.yml")):
-            wy = _read_yaml(wf)
-            mods = wy.get("modules")
-            if not isinstance(mods, list):
-                continue
-
-            changed = False
-            for m in mods:
-                if not isinstance(m, dict):
-                    continue
-                mid = _normalize_module_id(m.get("module_id"))
-                if not mid:
-                    continue
-                schema_path = modules_dir / mid / "tenant_params.schema.json"
-                if not schema_path.exists():
-                    continue
-
-                try:
-                    schema = json.loads(schema_path.read_text(encoding="utf-8"))
-                except Exception:
-                    continue
-
-                props = schema.get("properties")
-                if not isinstance(props, dict):
-                    continue
-
-                inputs = m.get("inputs")
-                if not isinstance(inputs, dict):
-                    inputs = {}
-                    m["inputs"] = inputs
-                    changed = True
-
-                # Backfill any missing properties.
-                for k, prop_schema in props.items():
-                    if k in inputs:
-                        continue
-                    if isinstance(prop_schema, dict):
-                        inputs[k] = _json_default_from_schema(prop_schema)
-                        changed = True
-                    else:
-                        inputs[k] = None
-                        changed = True
-
-            if changed:
-                log.note(f"BACKFILL workorder module inputs {wf}")
-                _write_yaml(wf, wy, log, check)
 
 
 def canonicalize_module_folders(modules_dir: Path, log: ChangeLog, check: bool) -> List[str]:
@@ -555,6 +420,79 @@ def canonicalize_tenant_folders(tenants_dir: Path, log: ChangeLog, check: bool) 
     return sorted(set(tenant_ids))
 
 
+TENANTS_CREDITS_HEADER = ["tenant_id", "credits_available", "updated_at", "status"]
+
+
+def ensure_tenants_credits_ledgers(repo_root: Path, tenant_ids: List[str], log: ChangeLog, check: bool) -> None:
+    """Ensure every tenant has a row in tenants_credits.csv (credits may be 0).
+
+    Orchestration expects the billing-state ledger to include the tenant; if missing, it hard-fails.
+
+    We update ledgers in-place for directories that already exist in the repository workspace:
+      - .billing-state/ (if present)
+      - .billing-state-ci/ (if present)
+      - billing-state-seed/ (if present)
+
+    Notes:
+      - We do NOT create new directories.
+      - We WILL create tenants_credits.csv inside an existing ledger directory if missing.
+      - updated_at uses a stable placeholder timestamp for deterministic diffs.
+    """
+
+    if not tenant_ids:
+        return
+
+    ledger_dirs = [repo_root / ".billing-state", repo_root / ".billing-state-ci", repo_root / "billing-state-seed"]
+    stable_updated_at = "2000-01-01T00:00:00Z"
+
+    for ld in ledger_dirs:
+        if not ld.exists() or not ld.is_dir():
+            continue
+        path = ld / "tenants_credits.csv"
+
+        header, rows = _read_csv(path)
+        if not header:
+            header = TENANTS_CREDITS_HEADER.copy()
+        if header != TENANTS_CREDITS_HEADER:
+            # Keep strict schema: rewrite to canonical header if file exists with drift.
+            log.note(f"NORMALIZE tenants_credits header in {path}")
+            header = TENANTS_CREDITS_HEADER.copy()
+
+        # Index existing rows by canonical tenant_id.
+        by_tid: Dict[str, Dict[str, str]] = {}
+        for r in rows:
+            raw = str(r.get("tenant_id", "")).strip()
+            tid = _normalize_tenant_id(raw)
+            if not tid:
+                continue
+            # Prefer the first row, but keep the highest credits if duplicates exist.
+            if tid in by_tid:
+                try:
+                    cur = int((by_tid[tid].get("credits_available") or "0").strip() or "0")
+                    nxt = int((r.get("credits_available") or "0").strip() or "0")
+                    if nxt > cur:
+                        by_tid[tid] = r
+                except Exception:
+                    pass
+            else:
+                by_tid[tid] = r
+
+        out_rows: List[Dict[str, str]] = []
+        for tid in sorted(tenant_ids):
+            r = dict(by_tid.get(tid, {}))
+            r["tenant_id"] = tid
+            if not str(r.get("credits_available", "")).strip():
+                r["credits_available"] = "0"
+            if not str(r.get("updated_at", "")).strip():
+                r["updated_at"] = stable_updated_at
+            if not str(r.get("status", "")).strip():
+                r["status"] = "active"
+            out_rows.append(r)
+
+        # Rewrite only if differs.
+        _write_csv(path, TENANTS_CREDITS_HEADER, out_rows, log, check)
+
+
 def ensure_module_prices(prices_path: Path, billing_cfg_path: Path, module_ids: List[str], log: ChangeLog, check: bool) -> None:
     defaults = _read_yaml(billing_cfg_path)
     bdef = defaults.get("billing_defaults", {}) if isinstance(defaults, dict) else {}
@@ -716,10 +654,10 @@ def main() -> int:
 
     log = ChangeLog()
     module_ids = canonicalize_module_folders(modules_dir, log, check=args.check)
-    _ = canonicalize_tenant_folders(tenants_dir, log, check=args.check)
+    tenant_ids = canonicalize_tenant_folders(tenants_dir, log, check=args.check)
 
-    # Work Orders must be scaffolded with module input fields for manual editing/UI.
-    ensure_workorder_module_inputs(tenants_dir, modules_dir, log, check=args.check)
+    # Keep tenant credit ledgers in sync with canonical tenant folders.
+    ensure_tenants_credits_ledgers(repo_root, tenant_ids, log, check=args.check)
 
     ensure_module_prices(
         prices_path=repo_root / "platform" / "billing" / "module_prices.csv",
