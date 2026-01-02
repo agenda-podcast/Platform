@@ -7,6 +7,6 @@ metadata:
   notes: Module 000003.
 modules:
 - module_id: '000003'
-  reuse_output_type: new
+  reuse_output_type: cache
   purchase_release_artifacts: true
 promotions: []
