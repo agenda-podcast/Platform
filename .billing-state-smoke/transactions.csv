@@ -1,0 +1,3 @@
+transaction_id,tenant_id,work_order_id,type,total_amount_credits,created_at,metadata_json
+tx-20260102-092155-528509-local-0002,0000000001,wo-2025-12-31-001,SPEND,7,2026-01-02T09:21:55Z,"{""workorder_path"": ""/mnt/data/work/repo/Platform-main/tenants/0000000001/workorders/wo-2025-12-31-001.yml""}"
+tx-20260102-092155-529458-local-0003,0000000001,wo-2025-12-31-001,REFUND,-7,2026-01-02T09:21:55Z,"{""method"": ""auto""}"

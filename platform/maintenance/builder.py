@@ -9,6 +9,7 @@ from ..utils.csvio import read_csv, write_csv
 from ..utils.ids import reason_code, validate_category_id, validate_module_id, validate_reason_id
 from ..utils.time import utcnow_iso
 from ..utils.yamlio import read_yaml
+from ..common.id_normalize import canonicalize_module_id, canonicalize_tenant_id
 
 
 @dataclass
@@ -325,15 +326,18 @@ def _build_tenant_relationships(ctx: MaintenanceContext) -> List[Dict[str, str]]
     tenants: List[str] = []
     for p in sorted(ctx.tenants_dir.iterdir()):
         if p.is_dir() and (p / "tenant.yml").exists():
-            tenants.append(p.name)
+            tenants.append(canonicalize_tenant_id(p.name))
 
     for t in tenants:
         # self pair always
         out.append((t, t))
+        # Tenant folder is expected to be canonical (10 digits). If a repo uses
+        # non-canonical folder names, maintenance should still run but may not be
+        # able to locate the tenant.yml.
         y = read_yaml(ctx.tenants_dir / t / "tenant.yml")
         allow = y.get("allow_release_consumers", []) or []
         for source in allow:
-            source_t = str(source).strip()
+            source_t = canonicalize_tenant_id(str(source).strip())
             if not source_t:
                 continue
             out.append((source_t, t))
@@ -354,8 +358,8 @@ def _build_module_dependency_index(ctx: MaintenanceContext, module_ids: List[str
         if module_yml.exists():
             y = read_yaml(module_yml)
             depends = [str(x) for x in (y.get("depends_on") or [])]
-        # Normalize
-        depends = sorted({d for d in depends if d})
+        # Normalize: accept "3" and "000003" equivalently, persist canonical 6-digit ids.
+        depends = sorted({canonicalize_module_id(d) for d in depends if str(d).strip() and canonicalize_module_id(d)})
         rows.append({
             "module_id": mid,
             "depends_on_module_ids": json.dumps(depends),

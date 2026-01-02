@@ -1,1 +1,2 @@
 module_run_id,work_order_id,tenant_id,module_id,status,reason_code,started_at,finished_at,reuse_output_type,reuse_reference,cache_key_used,published_release_tag,release_manifest_name,metadata_json
+mr-0000000001-wo-2025-12-31-001-000003-20260102-092155-528473-local-0001,wo-2025-12-31-001,0000000001,000003,FAILED,016000000001,2026-01-02T09:21:55Z,2026-01-02T09:21:55Z,cache,,,,,{}

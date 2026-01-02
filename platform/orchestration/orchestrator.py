@@ -2,19 +2,22 @@ from __future__ import annotations
 
 import json
 import os
-import itertools
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..billing.state import BillingState
-from ..common.id_canonical import canonical_module_id, canonical_tenant_id
-from ..common.id_normalize import normalize_id
 from ..github.releases import ensure_release, upload_release_assets
 from ..utils.csvio import read_csv
 from ..utils.time import utcnow_iso
 from ..utils.yamlio import read_yaml
 from ..utils.ids import parse_reason_code
+from ..common.id_normalize import (
+    canonicalize_module_id,
+    canonicalize_reason_code,
+    canonicalize_tenant_id,
+    normalize_id,
+)
 from .module_exec import ModuleExecResult, build_manifest_item, derive_cache_key, execute_module_runner
 from .planner import load_dependency_index, topo_sort
 
@@ -42,14 +45,10 @@ def load_maintenance_state(repo_root: Path) -> MaintenanceState:
     ms_root = repo_root / "maintenance-state"
     reason_catalog = read_csv(ms_root / "reason_catalog.csv")
     reason_by_key: Dict[Tuple[str, str, str], str] = {}
-
-    def _canonical_reason_code(v: Any) -> str:
-        s = str(v or "").strip()
-        return s.zfill(12) if s.isdigit() else s
-
     for r in reason_catalog:
-        code = _canonical_reason_code(r.get("reason_code", ""))
-        mod = canonical_module_id(r.get("module_id", ""))
+        # Excel/pandas can strip leading zeros; re-canonicalize before indexing.
+        code = canonicalize_reason_code(str(r.get("reason_code", "")).strip())
+        mod = canonicalize_module_id(str(r.get("module_id", "")).strip())
         key = str(r.get("reason_key", "")).strip()
         g = str(r.get("g", "")).strip()
         if not (code and mod and key and g):
@@ -58,12 +57,12 @@ def load_maintenance_state(repo_root: Path) -> MaintenanceState:
         reason_by_key[(scope, mod, key)] = code
 
     policy_rows = read_csv(ms_root / "reason_policy.csv")
-    policy_by_code = {_canonical_reason_code(r.get("reason_code")): r for r in policy_rows if r.get("reason_code")}
+    policy_by_code = {canonicalize_reason_code(str(r.get("reason_code"))): r for r in policy_rows if r.get("reason_code")}
 
     # artifacts policy: missing row => default allow
     ap_rows = read_csv(ms_root / "module_artifacts_policy.csv")
     artifacts_policy: Dict[str, bool] = {
-        canonical_module_id(r.get("module_id")): str(r.get("platform_artifacts_enabled", "true")).lower() == "true"
+        canonicalize_module_id(str(r.get("module_id"))): str(r.get("platform_artifacts_enabled", "true")).lower() == "true"
         for r in ap_rows
         if r.get("module_id")
     }
@@ -71,18 +70,12 @@ def load_maintenance_state(repo_root: Path) -> MaintenanceState:
     rel_rows = read_csv(ms_root / "tenant_relationships.csv")
     rel = set()
     for r in rel_rows:
-        s = canonical_tenant_id(r.get("source_tenant_id", ""))
-        t = canonical_tenant_id(r.get("target_tenant_id", ""))
+        s = canonicalize_tenant_id(str(r.get("source_tenant_id", "")).strip())
+        t = canonicalize_tenant_id(str(r.get("target_tenant_id", "")).strip())
         if s and t:
             rel.add((s, t))
 
-    dep_index_raw = load_dependency_index(ms_root / "module_dependency_index.csv")
-    # Canonicalize dependency index keys/values to match repo contract.
-    dep_index: Dict[str, List[str]] = {
-        canonical_module_id(k): [canonical_module_id(d) for d in v]
-        for k, v in dep_index_raw.items()
-        if k
-    }
+    dep_index = load_dependency_index(ms_root / "module_dependency_index.csv")
 
     return MaintenanceState(
         root=ms_root,
@@ -94,79 +87,9 @@ def load_maintenance_state(repo_root: Path) -> MaintenanceState:
     )
 
 
-def _canonicalize_and_merge_tenants_credits(tenants_credits: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    """Normalize tenant_id and deterministically resolve duplicates.
-
-    Rationale:
-      - CSV tooling may drop leading zeros, producing both "0000000001" and "1" rows.
-      - A naive exact-string lookup can select the wrong row (e.g., 0 credits), triggering
-        a false "not_enough_credits".
-
-    Policy (deterministic, conservative):
-      - Group by normalized id (digits-only -> strip leading zeros).
-      - Keep the row with the highest credits_available.
-      - Tie-break by latest updated_at string (lexicographic ISO-8601), then by last occurrence.
-      - Persist canonical tenant_id (10-digit) in the surviving row.
-    """
-
-    best: Dict[str, Tuple[int, str, int, Dict[str, str]]] = {}
-    # key -> (credits, updated_at, last_idx, row)
-    for idx, r0 in enumerate(tenants_credits):
-        r = dict(r0)
-        key_norm = normalize_id(r.get("tenant_id", ""))
-        if not key_norm:
-            continue
-        credits_raw = str(r.get("credits_available", "0") or "0").strip()
-        try:
-            credits = int(credits_raw)
-        except Exception:
-            credits = 0
-        updated_at = str(r.get("updated_at", "") or "").strip()
-
-        if key_norm not in best:
-            best[key_norm] = (credits, updated_at, idx, r)
-            continue
-
-        prev_credits, prev_ts, prev_idx, _prev_row = best[key_norm]
-
-        take = False
-        if credits > prev_credits:
-            take = True
-        elif credits < prev_credits:
-            take = False
-        else:
-            # credits equal -> prefer latest updated_at, then last row
-            if updated_at and prev_ts:
-                if updated_at > prev_ts:
-                    take = True
-                elif updated_at < prev_ts:
-                    take = False
-                else:
-                    take = idx > prev_idx
-            elif updated_at and not prev_ts:
-                take = True
-            elif not updated_at and prev_ts:
-                take = False
-            else:
-                take = idx > prev_idx
-
-        if take:
-            best[key_norm] = (credits, updated_at, idx, r)
-
-    # Output in deterministic order of first appearance of each canonical key
-    ordered_keys = sorted(best.items(), key=lambda kv: kv[1][2])
-    out: List[Dict[str, str]] = []
-    for key_norm, (credits, _ts, _idx, row) in ordered_keys:
-        row["tenant_id"] = canonical_tenant_id(key_norm)
-        row["credits_available"] = str(max(0, int(credits)))
-        if not str(row.get("status", "")).strip():
-            row["status"] = "active"
-        out.append(row)
-    return out
-
-
 def _reason_code(ms: MaintenanceState, scope: str, module_id: str, reason_key: str) -> str:
-    code = ms.reason_by_key.get((scope, module_id, reason_key))
+    mod = canonicalize_module_id(module_id)
+    code = ms.reason_by_key.get((scope, mod, reason_key))
     if code:
         return code
     # Fallback: if not found, raise to enforce catalog completeness.
@@ -174,7 +97,7 @@ def _reason_code(ms: MaintenanceState, scope: str, module_id: str, reason_key: s
 
 
 def _is_refundable(ms: MaintenanceState, code: str) -> bool:
-    p = ms.policy_by_code.get(code)
+    p = ms.policy_by_code.get(canonicalize_reason_code(code))
     if not p:
         return False
     return str(p.get("refundable", "false")).lower() == "true"
@@ -220,9 +143,10 @@ def load_workorder(tenant_id: str, path: Path) -> Optional[Dict[str, Any]]:
 # -------------------------
 
 def _find_price(module_prices: List[Dict[str, str]], module_id: str) -> Tuple[int, int]:
-    mid = canonical_module_id(module_id)
+    mid = canonicalize_module_id(module_id)
     for r in module_prices:
-        if canonical_module_id(r.get("module_id")) == mid and str(r.get("active", "true")).lower() == "true":
+        rmid = canonicalize_module_id(str(r.get("module_id", "")).strip())
+        if rmid == mid and str(r.get("active", "true")).lower() == "true":
             run = int(str(r.get("price_run_credits", "0")) or 0)
             rel = int(str(r.get("price_save_to_release_credits", "0")) or 0)
             return run, rel
@@ -230,30 +154,85 @@ def _find_price(module_prices: List[Dict[str, str]], module_id: str) -> Tuple[in
 
 
 def _tenant_credit_row(tenants_credits: List[Dict[str, str]], tenant_id: str) -> Dict[str, str]:
-    want = normalize_id(tenant_id)
+    tid = canonicalize_tenant_id(tenant_id)
     for r in tenants_credits:
-        if normalize_id(r.get("tenant_id")) == want:
+        if canonicalize_tenant_id(r.get("tenant_id")) == tid:
+            # Ensure we keep canonical on disk.
+            r["tenant_id"] = tid
             return r
     raise KeyError(f"Tenant not found in tenants_credits.csv: {tenant_id}")
 
 
-_ID_SEQ = itertools.count(1)
+def _normalize_and_dedupe_tenants_credits(tenants_credits: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Normalize tenant_id to 10 digits and deterministically merge duplicates.
+
+    Excel/pandas can turn "0000000001" into "1", creating duplicate rows.
+    This function collapses those duplicates into a single row per canonical tenant_id.
+
+    Deterministic winner selection (conservative, avoids double counting):
+      1) Prefer status=active
+      2) Prefer higher credits_available
+      3) Prefer newer updated_at (lexicographic ISO)
+      4) Prefer later row in file
+    """
+    best_by_tid: Dict[str, Dict[str, str]] = {}
+    for idx, r in enumerate(tenants_credits):
+        tid = canonicalize_tenant_id(r.get("tenant_id"))
+        if not tid:
+            continue
+        rr = dict(r)
+        rr["tenant_id"] = tid
+
+        def score(row: Dict[str, str]) -> Tuple[int, int, str, int]:
+            status = 1 if str(row.get("status", "active")).lower() == "active" else 0
+            try:
+                credits = int(str(row.get("credits_available", "0")) or 0)
+            except Exception:
+                credits = 0
+            updated = str(row.get("updated_at", "") or "")
+            return (status, credits, updated, idx)
+
+        if tid not in best_by_tid:
+            best_by_tid[tid] = rr
+            best_by_tid[tid]["_merge_score"] = json.dumps(score(rr))
+            continue
+
+        cur = best_by_tid[tid]
+        # restore score for cur
+        try:
+            cur_score = tuple(json.loads(cur.get("_merge_score", "[]")))
+        except Exception:
+            cur_score = (0, 0, "", -1)
+        new_score = score(rr)
+        if new_score > cur_score:
+            best_by_tid[tid] = rr
+            best_by_tid[tid]["_merge_score"] = json.dumps(new_score)
+
+    # Drop helper fields
+    out: List[Dict[str, str]] = []
+    for tid in sorted(best_by_tid.keys()):
+        row = best_by_tid[tid]
+        row.pop("_merge_score", None)
+        out.append(row)
+    return out
+
+
+_NEW_ID_SEQ = 0
 
 
 def _new_id(prefix: str) -> str:
-    """Generate a unique ID.
+    """Generate a unique id within a single run.
 
-    Previous implementation used second-level resolution and could collide within the
-    same GitHub Actions run (e.g., SPEND and REFUND transactions created in the same
-    second). That collision produces duplicate transaction_ids, duplicate
-    transaction_item_ids, and incorrect ledger math.
+    Previous implementation used second-level timestamps which can collide when
+    SPEND and REFUND are created within the same second in GitHub Actions.
     """
+    global _NEW_ID_SEQ
+    _NEW_ID_SEQ += 1
     gh_run_id = os.environ.get("GITHUB_RUN_ID") or "local"
     from datetime import datetime, timezone
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
-    seq = next(_ID_SEQ)
-    return f"{prefix}-{ts}-{gh_run_id}-{seq:04d}"
+    return f"{prefix}-{ts}-{gh_run_id}-{_NEW_ID_SEQ:04d}"
 
 def _apply_promotions(
     promotions_catalog: List[Dict[str, str]],
@@ -276,10 +255,10 @@ def _apply_promotions(
     by_code = {str(p.get("code", "")).upper(): p for p in promotions_catalog}
 
     # Count net redemptions per tenant+promo_id (APPLIED minus REFUNDED)
+    tid = canonicalize_tenant_id(tenant_id)
     net_used = {}
-    want = normalize_id(tenant_id)
     for e in promotion_redemptions:
-        if normalize_id(e.get("tenant_id", "")) != want:
+        if canonicalize_tenant_id(str(e.get("tenant_id", "")).strip()) != tid:
             continue
         pid = str(e.get("promo_id", "")).strip()
         if not pid:
@@ -336,14 +315,14 @@ def estimate_spend(
 ) -> Tuple[int, List[Dict[str, Any]]]:
     modules = workorder.get("modules", []) or []
 
-    tenant_id = canonical_tenant_id(workorder.get("tenant_id", ""))
+    tenant_id = canonicalize_tenant_id(str(workorder.get("tenant_id", "")).strip())
     promo_items = _apply_promotions(promotions_catalog, promotion_redemptions, tenant_id, workorder.get("promotions", []) or [])
 
     total = 0
     line_items: List[Dict[str, Any]] = []
 
     for m in modules:
-        mid = canonical_module_id(m.get("module_id", ""))
+        mid = canonicalize_module_id(str(m.get("module_id", "")).strip())
         run_price, rel_price = _find_price(module_prices, mid)
         total += run_price
         line_items.append({"name": f"module:{mid}", "category": "MODULE_RUN", "amount": run_price, "module_id": mid})
@@ -460,7 +439,8 @@ def _parse_retention(ret: str) -> int:
 
 
 def _load_module_config(repo_root: Path, module_id: str) -> Dict[str, Any]:
-    return read_yaml(repo_root / "modules" / module_id / "module.yml")
+    mid = canonicalize_module_id(module_id)
+    return read_yaml(repo_root / "modules" / mid / "module.yml")
 
 
 def _module_supports_artifacts(module_cfg: Dict[str, Any]) -> bool:
@@ -469,7 +449,7 @@ def _module_supports_artifacts(module_cfg: Dict[str, Any]) -> bool:
 
 def _platform_allows_artifacts(ms: MaintenanceState, module_id: str) -> bool:
     # Missing row => allow
-    return ms.artifacts_policy.get(module_id, True)
+    return ms.artifacts_policy.get(canonicalize_module_id(module_id), True)
 
 
 def _cache_index_lookup(cache_index: List[Dict[str, str]], cache_key: str) -> Optional[Dict[str, str]]:
@@ -498,7 +478,7 @@ def _execute_module(
 ) -> ModuleExecResult:
     tenant_id = workorder["tenant_id"]
     work_order_id = workorder["work_order_id"]
-    module_id = str(module_spec.get("module_id"))
+    module_id = canonicalize_module_id(str(module_spec.get("module_id")))
     module_path = cfg.repo_root / "modules" / module_id
 
     module_cfg = _load_module_config(cfg.repo_root, module_id)
@@ -704,13 +684,18 @@ def _publish_release_if_needed(cfg: OrchestratorConfig, workorder: Dict[str, Any
 
 
 def orchestrate_workorder(cfg: OrchestratorConfig, ms: MaintenanceState, billing: BillingState, workorder: Dict[str, Any]) -> None:
-    # Canonicalize ids early (tenant folder name is usually already 10-digit, but billing-state may not be).
-    tenant_id = canonical_tenant_id(workorder["tenant_id"])
+    # Canonicalize tenant_id so "1" == "0000000001" (Excel/pandas may strip zeros).
+    tenant_id = canonicalize_tenant_id(str(workorder["tenant_id"]))
     work_order_id = str(workorder.get("work_order_id"))
+
+    # Ensure the workorder dict itself uses canonical ids for downstream joins/logging.
+    workorder["tenant_id"] = tenant_id
 
     started_at = utcnow_iso()
     # Load billing tables (accounting SoT)
-    tenants_credits = _canonicalize_and_merge_tenants_credits(billing.load_table("tenants_credits.csv"))
+    tenants_credits = _normalize_and_dedupe_tenants_credits(billing.load_table("tenants_credits.csv"))
+    # Persist early to repair drift even if we fail later (e.g., insufficient credits).
+    billing.save_table("tenants_credits.csv", tenants_credits, ["tenant_id","credits_available","updated_at","status"])
     transactions = billing.load_table("transactions.csv")
     transaction_items = billing.load_table("transaction_items.csv")
     workorders_log = billing.load_table("workorders_log.csv")
@@ -720,17 +705,6 @@ def orchestrate_workorder(cfg: OrchestratorConfig, ms: MaintenanceState, billing
     billing_cfg = cfg.repo_root / "platform" / "billing"
     module_prices = read_csv(billing_cfg / "module_prices.csv")
     promotions_catalog = read_csv(billing_cfg / "promotions.csv")
-
-    # Persist canonicalized tenant credits early so follow-on operations see consistent keys,
-    # even if we exit early (e.g., not enough credits).
-    billing.save_table("tenants_credits.csv", tenants_credits, ["tenant_id","credits_available","updated_at","status"])
-
-    # Canonicalize module ids inside the workorder specs.
-    requested_specs = workorder.get("modules", []) or []
-    for s in requested_specs:
-        if "module_id" in s:
-            s["module_id"] = canonical_module_id(s.get("module_id"))
-    workorder["tenant_id"] = tenant_id
 
     # Tenant status check
     trow = _tenant_credit_row(tenants_credits, tenant_id)
@@ -743,7 +717,13 @@ def orchestrate_workorder(cfg: OrchestratorConfig, ms: MaintenanceState, billing
         return
 
     # Dependency planning
-    requested_module_ids = [canonical_module_id(m.get("module_id")) for m in requested_specs]
+    requested_specs = workorder.get("modules", []) or []
+    # Canonicalize module_id in place so "3" == "000003" across planning, pricing, and execution.
+    for m in requested_specs:
+        if "module_id" in m:
+            m["module_id"] = canonicalize_module_id(str(m.get("module_id", "")).strip())
+
+    requested_module_ids = [canonicalize_module_id(str(m.get("module_id"))) for m in requested_specs]
     try:
         ordered = topo_sort(requested_module_ids, ms.dependency_index)
     except Exception:
@@ -794,7 +774,7 @@ def orchestrate_workorder(cfg: OrchestratorConfig, ms: MaintenanceState, billing
     module_results: List[Tuple[str, ModuleExecResult, Dict[str, Any]]] = []
     outputs_root = cfg.runtime_dir / "workorders" / tenant_id / work_order_id
 
-    spec_by_id = {canonical_module_id(s.get("module_id")): s for s in requested_specs}
+    spec_by_id = {str(s.get("module_id")): s for s in requested_specs}
 
     for mid in ordered:
         spec = spec_by_id[mid]

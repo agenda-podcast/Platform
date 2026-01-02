@@ -6,9 +6,10 @@ This script is intentionally standalone so it can be invoked in CI or manually:
 
 What it does:
 - Reads known billing CSVs if they exist.
-- Normalizes ID columns for *matching* (digits-only -> strip leading zeros).
-- Dedupes certain key tables deterministically (tenants_credits, topup_instructions) by normalized id.
-- Writes the CSVs back with canonical IDs (e.g., tenant_id is zero-padded to 10 digits).
+- Canonicalizes fixed-width numeric ID columns (e.g., tenant_id, module_id, reason_code)
+  so that Excel-stripped values ("1") become repo-contract values ("0000000001").
+- Dedupes certain key tables deterministically.
+- Writes the CSVs back.
 
 Rationale:
 CSV has no types; Excel/pandas often strip leading zeros. Canonicalizing on write prevents drift.
@@ -21,16 +22,32 @@ import csv
 from pathlib import Path
 from typing import Any, Iterable
 
-from ..common.id_canonical import canonical_module_id, canonical_tenant_id
-from ..common.id_normalize import dedupe_rows_by_normalized_id, normalize_row_ids
+from platform.common.id_normalize import canonicalize_row_ids, dedupe_rows_by_normalized_id
 
 
 # Configure which files/columns are IDs.
+"""File -> list of id-like fields.
+
+We only canonicalize fields that are defined in BILLING_CSV_ID_WIDTHS.
+Other listed fields are whitespace-trimmed only (safe for alphanumeric IDs).
+"""
+
 BILLING_CSV_ID_FIELDS: dict[str, list[str]] = {
     "tenants_credits.csv": ["tenant_id"],
     "transactions.csv": ["transaction_id", "tenant_id", "work_order_id"],
+    "transaction_items.csv": ["transaction_item_id", "transaction_id", "tenant_id", "work_order_id", "module_run_id", "reason_code"],
+    "promotion_redemptions.csv": ["event_id", "tenant_id", "promo_id", "work_order_id"],
+    "workorders_log.csv": ["work_order_id", "tenant_id"],
+    "module_runs_log.csv": ["module_run_id", "work_order_id", "tenant_id", "module_id", "reason_code"],
     "payments.csv": ["payment_id", "tenant_id", "topup_method_id"],
     "topup_instructions.csv": ["topup_method_id"],
+}
+
+# Per-field fixed widths for digits-only IDs.
+BILLING_CSV_ID_WIDTHS: dict[str, int] = {
+    "tenant_id": 10,
+    "module_id": 6,
+    "reason_code": 12,
 }
 
 # Which tables require dedupe by ID after normalization.
@@ -73,8 +90,9 @@ def normalize_billing_state(billing_state_dir: str) -> list[str]:
 
         headers, rows = _read_csv(p)
 
-        # Normalize ID fields
-        normed = [normalize_row_ids(r, id_fields) for r in rows]
+        # Canonicalize ID fields (fixed-width padding) for numeric ids;
+        # trim whitespace for alphanumeric ids.
+        normed = [canonicalize_row_ids(r, id_fields, widths=BILLING_CSV_ID_WIDTHS) for r in rows]
 
         # Deterministic dedupe if configured
         if filename in DEDUPE_TABLES:
@@ -91,17 +109,10 @@ def normalize_billing_state(billing_state_dir: str) -> list[str]:
                     f"{filename}: normalized + deduped by {cfg['id_field']} (duplicates merged={res.merged_count}, dropped={res.dropped_count})"
                 )
 
-        # Re-apply canonical formatting required by repo contract (padding).
-        for r in normed:
-            if "tenant_id" in r:
-                r["tenant_id"] = canonical_tenant_id(r.get("tenant_id", ""))
-            if "module_id" in r:
-                r["module_id"] = canonical_module_id(r.get("module_id", ""))
-
         # Preserve header order; add any missing normalized id headers if needed
         # (Do not reorder unless necessary.)
-        _write_csv(p, headers or list(normed[0].keys()) if normed else headers, normed)
-        notes.append(f"{filename}: normalized IDs for columns {id_fields}")
+        _write_csv(p, headers or (list(normed[0].keys()) if normed else headers), normed)
+        notes.append(f"{filename}: canonicalized IDs for columns {id_fields}")
 
     return notes
 

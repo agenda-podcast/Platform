@@ -21,6 +21,46 @@ from typing import Any, Iterable, Mapping, MutableMapping, Optional
 _DIGITS_RE = re.compile(r"^\d+$")
 
 
+def canonicalize_digits(value: Any, width: int) -> str:
+    """Canonicalize a digits-only identifier to a fixed-width, zero-padded string.
+
+    Use this when you need a stable canonical representation (repo contract), while
+    still accepting inputs that may have lost leading zeros (e.g., Excel).
+
+    - digits-only input is treated as numeric and padded to `width`
+    - non-digits are preserved (after strip)
+
+    Examples (width=10):
+      - "0000000001" -> "0000000001"
+      - "1" -> "0000000001"
+      - 1 -> "0000000001"
+    """
+    if value is None:
+        return ""
+    s = str(value).strip()
+    if s == "":
+        return ""
+    if _DIGITS_RE.match(s):
+        # strip then pad; avoids "000" -> "" edge case
+        s2 = s.lstrip("0")
+        s2 = s2 if s2 != "" else "0"
+        return s2.zfill(width)
+    return s
+
+
+def canonicalize_tenant_id(value: Any) -> str:
+    return canonicalize_digits(value, 10)
+
+
+def canonicalize_module_id(value: Any) -> str:
+    return canonicalize_digits(value, 6)
+
+
+def canonicalize_reason_code(value: Any) -> str:
+    # reason_code is GCCMMMMMMRRR (12 digits)
+    return canonicalize_digits(value, 12)
+
+
 def normalize_id(value: Any) -> str:
     """Normalize an identifier for matching/lookup.
 
@@ -50,6 +90,29 @@ def normalize_row_ids(row: MutableMapping[str, Any], id_fields: Iterable[str]) -
     for f in id_fields:
         if f in row:
             row[f] = normalize_id(row[f])
+    return row
+
+
+def canonicalize_row_ids(
+    row: MutableMapping[str, Any],
+    id_fields: Iterable[str],
+    *,
+    widths: Mapping[str, int],
+) -> MutableMapping[str, Any]:
+    """In-place canonicalize selected id fields using per-field fixed widths.
+
+    `widths` maps field name -> width. Any field not present in widths is left
+    unchanged (after strip) to avoid corrupting alphanumeric IDs.
+    """
+    for f in id_fields:
+        if f not in row:
+            continue
+        if f in widths:
+            row[f] = canonicalize_digits(row[f], widths[f])
+        else:
+            # Safe fallback: trim whitespace only.
+            v = row[f]
+            row[f] = "" if v is None else str(v).strip()
     return row
 
 

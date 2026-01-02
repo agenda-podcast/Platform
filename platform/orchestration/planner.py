@@ -5,13 +5,14 @@ from pathlib import Path
 from typing import Dict, List, Set
 
 from ..utils.csvio import read_csv
+from ..common.id_normalize import canonicalize_module_id
 
 
 def load_dependency_index(path: Path) -> Dict[str, List[str]]:
     rows = read_csv(path)
     out: Dict[str, List[str]] = {}
     for r in rows:
-        mid = str(r.get("module_id", "")).strip()
+        mid = canonicalize_module_id(str(r.get("module_id", "")).strip())
         if not mid:
             continue
         deps_raw = str(r.get("depends_on_module_ids", "[]")).strip() or "[]"
@@ -19,7 +20,7 @@ def load_dependency_index(path: Path) -> Dict[str, List[str]]:
             deps = json.loads(deps_raw)
         except Exception:
             deps = []
-        out[mid] = [str(x) for x in deps]
+        out[mid] = [canonicalize_module_id(str(x)) for x in deps if str(x).strip()]
     return out
 
 
