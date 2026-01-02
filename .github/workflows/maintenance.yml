@@ -2,21 +2,20 @@ name: Maintenance
 
 on:
   push:
-    branches: [main]
+    branches: [ "main" ]
   workflow_dispatch:
-  schedule:
-    - cron: "17 3 * * *"
 
 permissions:
   contents: write
 
 concurrency:
-  group: maintenance
+  group: maintenance-main
   cancel-in-progress: false
 
 jobs:
   maintenance:
-    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
+    # Prevent infinite loops when Maintenance pushes a commit to main.
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -37,32 +36,71 @@ jobs:
             pip install -r requirements.txt
           fi
 
-      - name: Maintenance - repository servicing (authoritative)
+      # APPLY mode: repo is allowed to be non-canonical on merge;
+      # Maintenance must converge it (rename/merge folders, backfill registries/prices, etc.).
+      - name: Run Maintenance (apply)
         run: |
           set -euxo pipefail
           python scripts/maintenance_repo.py
 
-      - name: Maintenance - compile maintenance-state
-        run: |
-          set -euxo pipefail
-          python -m platform.cli maintenance
-
-      - name: Verify repo is fully serviced
+      # After apply, the repo MUST be canonical and idempotent.
+      - name: Maintenance idempotency check
         run: |
           set -euxo pipefail
           python scripts/maintenance_repo.py --check
 
-      - name: Commit maintenance outputs
+      - name: Commit maintenance outputs (if any)
         run: |
           set -euxo pipefail
-          git add \
-            modules \
-            maintenance-state \
-            platform/billing/module_prices.csv \
-            platform/modules/modules.csv \
-            platform/modules/requirements.csv \
-            platform/errors/error_reasons.csv \
-            platform/schemas/work_order_modules || true
-
-          git commit -m "Maintenance: service repo state" || echo "No changes"
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "No maintenance changes to commit."
+            exit 0
+          fi
+          git add -A
+          git commit -m "Maintenance: canonicalize repo and backfill registries/prices"
           git push
+
+  e2e:
+    name: E2E Verification
+    needs: maintenance
+    runs-on: ubuntu-latest
+    steps:
+      # IMPORTANT: checkout latest main (including any commit pushed by maintenance job).
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          set -euxo pipefail
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+      - name: Verify repo is canonical (post-maintenance)
+        run: |
+          set -euxo pipefail
+          python scripts/maintenance_repo.py --check
+
+      - name: CI Verify (pre)
+        run: |
+          set -euxo pipefail
+          python scripts/ci_verify.py             --phase pre             --billing-state-dir .billing-state-ci             --runtime-dir runtime
+
+      - name: Orchestrate
+        run: |
+          set -euxo pipefail
+          python -m platform.cli orchestrate             --runtime-dir runtime             --billing-state-dir .billing-state-ci
+
+      - name: CI Verify (post)
+        run: |
+          set -euxo pipefail
+          python scripts/ci_verify.py             --phase post             --billing-state-dir .billing-state-ci             --runtime-dir runtime
