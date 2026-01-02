@@ -11,8 +11,8 @@ modules:
   purchase_release_artifacts: true
   inputs:
     queries:
-    - CHANGE_ME
-    max_items_per_query: 100
+    - Word News Today
+    max_items_per_query: 10
     safe: active
     date_restrict: null
     hl: null
