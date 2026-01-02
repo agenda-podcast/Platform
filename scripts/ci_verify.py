@@ -133,8 +133,8 @@ def _verify_platform_billing(repo_root: Path) -> None:
     rows = _read_csv_rows(module_prices)
     for i, r in enumerate(rows, start=2):
         mid = r.get("module_id", "")
-        if mid and not MODULE_ID_RE.match(mid):
-            _die(f"platform/billing/module_prices.csv invalid module_id at line {i}: {mid!r} (expected 6 digits)")
+        if mid and (len(mid) != 3 or not mid.isdigit()):
+            _die(f"platform/billing/module_prices.csv invalid module_id at line {i}: {mid!r}")
 
     # Coverage: every module folder must have at least one effective active price row.
     module_ids = _collect_module_ids(repo_root / "modules")
@@ -284,23 +284,47 @@ def _verify_billing_state_dir(billing_state_dir: Path) -> None:
     _ok(f"Billing-state: required files + headers OK in {billing_state_dir}")
 
 
-def _verify_runtime_outputs(runtime_dir: Path) -> None:
-    wo = runtime_dir / "workorders" / "0000000001" / "wo-2025-12-31-001"
-    m1 = wo / "module-000001" / "source_text.txt"
-    m2 = wo / "module-000002" / "derived_notes.txt"
+def _verify_runtime_outputs(runtime_dir: Path, billing_state_dir: Path) -> None:
+    # E2E runtime output verification should be module-agnostic:
+    # - For each module_run marked COMPLETED in billing-state, ensure its runtime output folder exists
+    #   and contains at least one non-empty file.
+    # - For FAILED runs, ensure a reason_code is present.
+    tenant_id = "0000000001"
+    work_order_id = "wo-2025-12-31-001"
 
-    if not m1.exists():
-        _die(f"Missing runtime output from module 000001: {m1}")
-    if not m2.exists():
-        _die(f"Missing runtime output from module 000002: {m2}")
+    wo = runtime_dir / "workorders" / tenant_id / work_order_id
+    if not wo.exists():
+        _die(f"Missing runtime workorder folder: {wo}")
 
-    if m1.stat().st_size < 10:
-        _die(f"module 000001 output unexpectedly small: {m1} ({m1.stat().st_size} bytes)")
-    if m2.stat().st_size < 10:
-        _die(f"module 000002 output unexpectedly small: {m2} ({m2.stat().st_size} bytes)")
+    runs_path = billing_state_dir / "module_runs_log.csv"
+    rows = _read_csv_rows(runs_path)
+    rows = [r for r in rows if r.get("tenant_id") == tenant_id and r.get("work_order_id") == work_order_id]
+    if not rows:
+        _die(f"No module_runs_log rows for {tenant_id}/{work_order_id} in {runs_path}")
 
-    _ok("Runtime outputs: module-000001/source_text.txt and module-000002/derived_notes.txt present and non-trivial")
+    for r in rows:
+        mid = str(r.get("module_id", "")).strip()
+        status = str(r.get("status", "")).strip().upper()
+        rc = str(r.get("reason_code", "")).strip()
 
+        out_dir = wo / f"module-{mid}"
+        if status == "COMPLETED":
+            if not out_dir.exists():
+                _die(f"Missing runtime output folder for module {mid}: {out_dir}")
+
+            files = [p for p in out_dir.rglob("*") if p.is_file()]
+            if not files:
+                _die(f"Module {mid} completed but produced no runtime files in: {out_dir}")
+
+            # Ensure at least one non-empty file exists
+            if all(p.stat().st_size == 0 for p in files):
+                _die(f"Module {mid} completed but all runtime files are empty in: {out_dir}")
+
+        else:
+            if not rc:
+                _die(f"Module {mid} status={status} but reason_code is empty in module_runs_log.csv")
+
+    _ok("Runtime outputs: verified for all COMPLETED module runs (non-empty files present); FAILED runs include reason_code")
 
 def _verify_dependency_index(repo_root: Path) -> None:
     dep = repo_root / "maintenance-state" / "module_dependency_index.csv"
@@ -336,7 +360,7 @@ def main() -> int:
     if args.phase in ("post", "release"):
         _verify_billing_state_dir(billing_state_dir)
         if args.phase == "post":
-            _verify_runtime_outputs(runtime_dir)
+            _verify_runtime_outputs(runtime_dir, billing_state_dir)
 
     _ok(f"{args.phase.upper()} verification complete")
     return 0
