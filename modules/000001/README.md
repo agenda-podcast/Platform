@@ -1,4 +1,4 @@
-# Module 000001 (Placeholder)
+# Module 001 (Placeholder)
 
 ## Purpose
 This module exists to validate platform plumbing end-to-end:

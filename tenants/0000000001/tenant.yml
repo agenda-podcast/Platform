@@ -6,4 +6,4 @@ billing:
   external_customer_id: ''
   notes: Seed tenant for repository bootstrap.
 allow_release_consumers:
-- '0000000001'
+- tenant-001

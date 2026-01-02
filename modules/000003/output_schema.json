@@ -27,7 +27,7 @@
         "raw_item"
       ],
       "properties": {
-        "module_id": { "type": "string", "const": "000003" },
+        "module_id": { "type": "string", "const": "003" },
         "query_index": { "type": "integer", "minimum": 1 },
         "query": { "type": "string" },
         "title": { "type": ["string", "null"] },
@@ -47,7 +47,7 @@
       "additionalProperties": true,
       "required": ["module_id", "queries_count", "max_items_per_query", "total_written", "per_query"],
       "properties": {
-        "module_id": { "type": "string", "const": "000003" },
+        "module_id": { "type": "string", "const": "003" },
         "queries_count": { "type": "integer" },
         "max_items_per_query": { "type": "integer" },
         "total_written": { "type": "integer" },

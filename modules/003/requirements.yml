@@ -1,9 +1,0 @@
-requirements:
-  - requirement_type: secret
-    requirement_key: GOOGLE_SEARCH_API_KEY
-    requirement_value: ""
-    note: "Provide via env var 003_GOOGLE_SEARCH_API_KEY (GitHub secret name should match)."
-  - requirement_type: secret
-    requirement_key: GOOGLE_SEARCH_ENGINE_ID
-    requirement_value: ""
-    note: "Provide via env var 003_GOOGLE_SEARCH_ENGINE_ID (GitHub secret name should match)."

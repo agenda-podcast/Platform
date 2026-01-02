@@ -7,7 +7,7 @@ from typing import Any, Dict
 def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
     """Placeholder downstream module.
 
-    Reads module 000001 output from the same work order runtime folder and emits
+    Reads module 001 output from the same work order runtime folder and emits
     a deterministic derived artifact.
     """
 
@@ -37,16 +37,16 @@ def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
 
     if summary_style == "paragraph":
         derived = (
-            "DERIVED_NOTES (module 000002)\n"
+            "DERIVED_NOTES (module 002)\n"
             + ("\n".join(header_lines) + "\n\n" if header_lines else "")
-            + "This output is derived from module 000001 content and exists to validate dependency ordering.\n"
+            + "This output is derived from module 001 content and exists to validate dependency ordering.\n"
         )
     else:
         bullets = [
-            "DERIVED_NOTES (module 000002)",
+            "DERIVED_NOTES (module 002)",
             *(header_lines if header_lines else []),
             "",
-            "- Derived from module 000001 output (source_text.txt).",
+            "- Derived from module 001 output (source_text.txt).",
             "- Validates dependency ordering via maintenance dependency index.",
             "- Demonstrates downstream artifact generation as a separate module.",
         ]
