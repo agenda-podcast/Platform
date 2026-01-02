@@ -1,9 +1,9 @@
 name: Verify E2E Platform
 
 on:
-  # workflow_run:
-    # workflows: ["Maintenance"]
-    # types: [completed]
+  workflow_run:
+    workflows: ["Maintenance"]
+    types: [completed]
   workflow_dispatch:
 
 concurrency:
