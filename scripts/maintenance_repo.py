@@ -239,7 +239,9 @@ def _merge_dirs(src: Path, dst: Path, log: ChangeLog, check: bool) -> None:
 
     Rules:
     - If a file exists in both and contents are identical -> keep dst, delete src copy.
-    - If a file exists in both but differs -> raise (manual intervention required).
+    - If a file exists in both but differs:
+        * in --check mode: fail (repo is not canonical / would require mutation)
+        * in apply mode: overwrite dst with src (legacy wins) and delete src
     - Directories are merged recursively.
     - After merge, src is removed if empty.
 
@@ -276,7 +278,14 @@ def _merge_dirs(src: Path, dst: Path, log: ChangeLog, check: bool) -> None:
                 if not check:
                     item.unlink()
                 continue
-            raise RuntimeError(f"Cannot merge {item} into {target}: file differs")
+            # Differing content. Maintenance must be able to converge automatically after merges.
+            # We treat the legacy folder as the source-of-change and overwrite the canonical file.
+            if check:
+                raise RuntimeError(f"Cannot merge {item} into {target}: file differs")
+            log.note(f"OVERWRITE {target} with {item} (legacy wins)")
+            shutil.copy2(str(item), str(target))
+            item.unlink()
+            continue
 
         log.note(f"MOVE {item} -> {target}")
         if not check:
