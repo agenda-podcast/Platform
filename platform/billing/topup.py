@@ -7,8 +7,9 @@ from typing import Dict, List, Optional
 
 from ..utils.csvio import read_csv
 from ..utils.time import utcnow_iso
+from ..common.id_canonical import canonical_tenant_id
+from ..common.id_normalize import normalize_id
 from .state import BillingState
-from ..common.id_canonical import normalize_tenant_id
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,7 @@ def apply_admin_topup(repo_root: Path, billing: BillingState, req: TopupRequest)
     Returns transaction_id.
     """
 
-    tenant_id = req.tenant_id.strip()
+    tenant_id = canonical_tenant_id(req.tenant_id)
     if not tenant_id:
         raise ValueError("tenant_id is required")
 
@@ -66,13 +67,17 @@ def apply_admin_topup(repo_root: Path, billing: BillingState, req: TopupRequest)
 
     # Ensure tenant row
     trow = None
+    want = normalize_id(tenant_id)
     for r in tenants_credits:
-        if normalize_tenant_id(r.get("tenant_id", "")) == tenant_id:
+        if normalize_id(r.get("tenant_id", "")) == want:
             trow = r
             break
     if trow is None:
         trow = {"tenant_id": tenant_id, "credits_available": "0", "updated_at": utcnow_iso(), "status": "active"}
         tenants_credits.append(trow)
+    else:
+        # Persist canonical format in case the billing-state row lost leading zeros.
+        trow["tenant_id"] = tenant_id
 
     current = int(str(trow.get("credits_available", "0")) or 0)
     new_balance = current + int(req.amount_credits)

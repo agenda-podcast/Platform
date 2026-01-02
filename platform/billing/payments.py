@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ..utils.csvio import read_csv, require_headers
+from ..common.id_canonical import canonical_tenant_id
+from ..common.id_normalize import normalize_id
 from .state import BillingState
 from .topup import TopupRequest, apply_admin_topup
 
@@ -97,7 +99,7 @@ def load_repo_payments(repo_root: Path) -> List[PaymentRecord]:
             continue
 
         payment_id = str(r.get("payment_id", "")).strip()
-        tenant_id = str(r.get("tenant_id", "")).strip()
+        tenant_id = canonical_tenant_id(r.get("tenant_id", ""))
         topup_method_id = str(r.get("topup_method_id", "")).strip()
         amount_credits = _coerce_int(str(r.get("amount_credits", "")), context=f"payment_id={payment_id or '<missing>'}/amount_credits")
         reference = str(r.get("reference", "")).strip()
@@ -151,7 +153,7 @@ def validate_repo_payments(repo_root: Path) -> PaymentsValidationReport:
             continue
 
         payment_id = str(r.get("payment_id", "")).strip()
-        tenant_id = str(r.get("tenant_id", "")).strip()
+        tenant_id = canonical_tenant_id(r.get("tenant_id", ""))
         topup_method_id = str(r.get("topup_method_id", "")).strip()
         amount_raw = str(r.get("amount_credits", "")).strip()
         reference = str(r.get("reference", "")).strip()
@@ -197,7 +199,7 @@ def validate_repo_payments(repo_root: Path) -> PaymentsValidationReport:
         if is_eligible:
             eligible += 1
             # Duplicate detection key among eligible payments
-            key = (tenant_id, reference, amount, received_at)
+            key = (normalize_id(tenant_id), reference, amount, received_at)
             eligible_key_to_payment_ids.setdefault(key, []).append(payment_id)
 
     # Duplicate eligible payments guardrail
