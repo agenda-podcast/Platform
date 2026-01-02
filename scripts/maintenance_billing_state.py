@@ -1,152 +1,108 @@
 #!/usr/bin/env python3
-"""Maintenance: billing-state servicing helpers.
+"""Maintenance helper: ensure all repo tenants exist in tenants_credits.csv.
 
-This script is intentionally small and single-purpose.
+This script is intentionally *standalone* (no internal package imports) so it can be
+executed in GitHub Actions with:
+    python scripts/maintenance_billing_state.py --tenants-credits-csv <path>
 
-Current responsibilities
-------------------------
-1) Ensure *every* canonical tenant in repo has a row in tenants_credits.csv
-   (credits_available may be 0).
-
-Rationale
----------
-The orchestrator loads billing-state from GitHub Release assets (or local seed).
-Orchestration correctly hard-fails when a tenant is missing from tenants_credits.csv
-because the billing ledger must be complete.
-
-Maintaining this invariant belongs to the platform servicing layer.
+Invariant:
+  For every canonical tenant folder tenants/NNNNNNNNNN, there must be a row in
+  tenants_credits.csv (even if credits_available=0).
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
-import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+import re
 from typing import Dict, List
 
-from platform.utils.time import utcnow_iso
-TENANT_ID_RE = re.compile(r"^[0-9]{10}$")
+TENANT_ID_RE = re.compile(r"^\d{10}$")
+
+HEADER = ["tenant_id", "credits_available", "updated_at", "status"]
 
 
-TENANTS_CREDITS_HEADER = ["tenant_id", "credits_available", "updated_at", "status"]
+def utcnow_iso() -> str:
+    # RFC3339-ish; stable and readable for logs and diffs.
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _read_csv_rows(path: Path) -> List[Dict[str, str]]:
-    if not path.exists():
+def list_repo_tenants(tenants_dir: Path) -> List[str]:
+    if not tenants_dir.exists():
         return []
+    tids = []
+    for p in tenants_dir.iterdir():
+        if p.is_dir() and TENANT_ID_RE.match(p.name):
+            tids.append(p.name)
+    return sorted(set(tids))
+
+
+def read_rows(path: Path) -> Dict[str, Dict[str, str]]:
+    rows: Dict[str, Dict[str, str]] = {}
+    if not path.exists():
+        return rows
     with path.open("r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
-        if not reader.fieldnames:
-            return []
-        rows: List[Dict[str, str]] = []
+        # tolerate empty or missing header; will be rewritten below
         for r in reader:
-            rows.append({k: (v or "").strip() for k, v in r.items()})
-        return rows
+            tid = (r.get("tenant_id") or "").strip()
+            if tid:
+                rows[tid] = {k: (v or "").strip() for k, v in r.items()}
+    return rows
 
 
-def _write_csv_rows(path: Path, rows: List[Dict[str, str]], header: List[str]) -> None:
+def write_rows(path: Path, rows: Dict[str, Dict[str, str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=header)
+        w = csv.DictWriter(f, fieldnames=HEADER)
         w.writeheader()
-        for r in rows:
-            w.writerow({k: r.get(k, "") for k in header})
+        for tid in sorted(rows.keys()):
+            r = rows[tid]
+            w.writerow(
+                {
+                    "tenant_id": tid,
+                    "credits_available": str(r.get("credits_available") or "0"),
+                    "updated_at": r.get("updated_at") or utcnow_iso(),
+                    "status": r.get("status") or "ACTIVE",
+                }
+            )
 
 
-def discover_repo_tenants(repo_root: Path) -> List[str]:
-    """Canonical tenants: folders under tenants/ that match 10-digit id and contain tenant.yml."""
-    tdir = repo_root / "tenants"
-    out: List[str] = []
-    if not tdir.exists():
-        return out
-    for p in sorted(tdir.iterdir()):
-        if not p.is_dir():
-            continue
-        tid = p.name.strip()
-        if not TENANT_ID_RE.match(tid):
-            continue
-        if not (p / "tenant.yml").exists():
-            continue
-        out.append(tid)
-    return out
+def ensure_all_tenants(path: Path, tenants_dir: Path) -> int:
+    repo_tenants = list_repo_tenants(tenants_dir)
+    existing = read_rows(path)
 
-
-def sync_tenants_credits(tenants_credits_csv: Path, tenant_ids: List[str]) -> bool:
-    """Ensure tenant_ids exist in tenants_credits_csv. Returns True if changed."""
+    changed = 0
     now = utcnow_iso()
-    existing = _read_csv_rows(tenants_credits_csv)
-
-    by_id: Dict[str, Dict[str, str]] = {}
-    for r in existing:
-        tid = (r.get("tenant_id") or "").strip()
-        if not tid:
-            continue
-        by_id[tid] = r
-
-    changed = False
-    for tid in tenant_ids:
-        if tid not in by_id:
-            by_id[tid] = {
+    for tid in repo_tenants:
+        if tid not in existing:
+            existing[tid] = {
                 "tenant_id": tid,
                 "credits_available": "0",
                 "updated_at": now,
                 "status": "ACTIVE",
             }
-            changed = True
-        else:
-            # Normalize minimal fields without changing balances.
-            r = by_id[tid]
-            if (r.get("status") or "").strip() == "":
-                r["status"] = "ACTIVE"
-                changed = True
-            if (r.get("updated_at") or "").strip() == "":
-                r["updated_at"] = now
-                changed = True
-            if (r.get("credits_available") or "").strip() == "":
-                r["credits_available"] = "0"
-                changed = True
+            changed += 1
 
-    # Preserve extra rows (tenants not currently in repo) for safety.
-    rows_out = [by_id[k] for k in sorted(by_id.keys())]
-
-    # If file did not exist, this is a change.
-    if not tenants_credits_csv.exists():
-        changed = True
-
-    if changed:
-        _write_csv_rows(tenants_credits_csv, rows_out, TENANTS_CREDITS_HEADER)
+    # Rewrite file (also normalizes header/ordering).
+    write_rows(path, existing)
     return changed
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument(
-        "--repo-root",
-        default=str(Path(__file__).resolve().parents[1]),
-        help="Repository root (default: project root)",
-    )
-    ap.add_argument(
-        "--tenants-credits-csv",
-        required=True,
-        help="Path to tenants_credits.csv to sync",
-    )
+    ap.add_argument("--tenants-credits-csv", required=True, help="Path to tenants_credits.csv to update in-place")
+    ap.add_argument("--tenants-dir", default="tenants", help="Repo tenants directory (default: tenants/)")
     args = ap.parse_args()
 
-    repo_root = Path(args.repo_root).resolve()
-    tenants_credits_csv = Path(args.tenants_credits_csv).resolve()
+    credits_csv = Path(args.tenants_credits_csv)
+    tenants_dir = Path(args.tenants_dir)
 
-    tenant_ids = discover_repo_tenants(repo_root)
-    if not tenant_ids:
-        print("[MAINTENANCE][WARN] No tenants discovered; nothing to sync")
-        return 0
-
-    changed = sync_tenants_credits(tenants_credits_csv, tenant_ids)
-    if changed:
-        print(f"[MAINTENANCE][OK] Synced tenants_credits.csv: {tenants_credits_csv}")
-    else:
-        print(f"[MAINTENANCE][OK] tenants_credits.csv already up-to-date: {tenants_credits_csv}")
-
+    changed = ensure_all_tenants(credits_csv, tenants_dir)
+    print(f"[MAINTENANCE] tenants_credits backfill: {changed} rows added; path={credits_csv}")
     return 0
 
 
