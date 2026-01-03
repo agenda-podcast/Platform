@@ -302,6 +302,19 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 "note": "Insufficient credits",
                 "metadata_json": json.dumps({"workorder_path": item["path"]}, separators=(",", ":")),
             })
+            # record denied attempt in accounting SoT (no debit applied)
+            deny_tx = _new_id("transaction_id", used_tx)
+            transactions.append({
+                "transaction_id": deny_tx,
+                "tenant_id": tenant_id,
+                "work_order_id": work_order_id,
+                "type": "DENIED",
+                "amount_credits": "0",
+                "created_at": utcnow_iso(),
+                "reason_code": rc,
+                "note": f"Insufficient credits: available={available}, required={est_total}",
+                "metadata_json": json.dumps({"workorder_path": item["path"], "available_credits": available, "required_credits": est_total}, separators=(",", ":")),
+            })
             continue
 
         # spend transaction (debit)

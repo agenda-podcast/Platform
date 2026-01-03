@@ -21,22 +21,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Python dependencies (minimal)
-        run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            python -m pip install -r requirements.txt
-          elif [ -f scripts/requirements.txt ]; then
-            python -m pip install -r scripts/requirements.txt
-          else
-            # Required by scripts/ci_verify.py (import yaml)
-            python -m pip install pyyaml
-          fi
-
       - name: Run Maintenance
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # These can be overridden if you use different paths
           BILLING_TAG: billing-state-v1
           BILLING_TEMPLATE_DIR: releases/billing-state-v1
           BILLING_STATE_DIR: .billing-state

@@ -1,20 +1,13 @@
-PLATFORM Billing Fresh-Start Bootstrap Patch
-
-This package adds platform/billing/bootstrap.py and provides patch diffs
-to wire it into:
-- platform/orchestration/orchestrator.py (wrap validate_minimal)
-- platform/billing/maintenance.py (ensure bootstrap at Maintenance start)
-
-Rationale:
-- If you delete the GitHub Release assets for billing-state-v1 or start fresh,
-  CI and orchestrator will fail early.
-- This patch makes the system self-healing:
-  * bootstraps local billing-state directory from repo template
-  * republishes missing assets to GitHub Releases (best-effort)
-
-FILES INCLUDED:
-- platform/billing/bootstrap.py (NEW)
-- PATCH_orchestrator.diff
-- PATCH_maintenance.diff
-
-You must apply the *.diff patches to your repo files (they are small, safe edits).
+# Patch: Replace DENIED with FAILED for insufficient-credits attempts
+#
+# Apply by overwriting:
+#   platform/orchestration/orchestrator.py
+#
+# Behavior change:
+# - When credits are insufficient for a work order, the orchestrator writes:
+#   * workorders_log.csv: status=FAILED (existing behavior)
+#   * transactions.csv:   type=RUN (or existing run-type), status=FAILED (instead of type/status DENIED)
+# - No credits are deducted (amount remains 0 where applicable).
+#
+# NOTE: This file is provided as a unified diff-like snippet. If you prefer,
+# paste the relevant code blocks into your orchestrator implementation.
