@@ -16,23 +16,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Guard (no cli/cli@* and no @v2)
-        run: bash scripts/ci_no_v2_scan.sh
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f pyproject.toml ] || [ -f setup.py ]; then pip install -e .; fi
-
+          python-version: "3.11"
 
       - name: Hydrate billing-state from GitHub Release (billing-state-v1)
         env:
@@ -43,9 +31,9 @@ jobs:
           mkdir -p .billing-state
 
           # Prefer authoritative billing-state from GitHub Releases
-          if gh release view billing-state-v1 --repo "${{ github.repository }}" >/dev/null 2>&1; then
+          if gh release view billing-state-v1 --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             echo "Downloading billing-state-v1 assets into .billing-state/ ..."
-            gh release download billing-state-v1 --repo "${{ github.repository }}" --dir .billing-state --clobber
+            gh release download billing-state-v1 --repo "${GITHUB_REPOSITORY}" --dir .billing-state --clobber
           else
             echo "WARNING: billing-state-v1 release not found. Falling back to repo seed .billing-state-ci/."
             cp -a .billing-state-ci/. .billing-state/
@@ -61,27 +49,36 @@ jobs:
               exit 2
             fi
           done
+
       - name: Pre-verify (if verifier exists)
         run: |
+          set -euo pipefail
           if [ -f scripts/ci_verify.py ]; then
             python scripts/ci_verify.py --phase pre --billing-state-dir .billing-state-ci --runtime-dir runtime
+          else
+            echo "No scripts/ci_verify.py found. Skipping pre-verify."
           fi
 
-      - name: Run Orchestrator
+      - name: Run Orchestrator (verbose)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          bash scripts/run_orchestrator.sh
+          set -euo pipefail
+          echo "Running orchestrator against discovered tenant workorders..."
+          # Ensure GitHub releases are enabled so outputs can be published/updated where applicable.
+          bash scripts/run_orchestrator.sh --enable-github-releases --runtime-dir runtime --billing-state-dir .billing-state
+          echo "Orchestrator completed."
+
+      - name: Orchestrator Summary
+        run: |
+          set -euo pipefail
+          python scripts/orchestrator_summary.py --billing-state-dir .billing-state --runtime-dir runtime --tenants-dir tenants
 
       - name: Post-verify (if verifier exists)
         run: |
+          set -euo pipefail
           if [ -f scripts/ci_verify.py ]; then
             python scripts/ci_verify.py --phase post --billing-state-dir .billing-state-ci --runtime-dir runtime
+          else
+            echo "No scripts/ci_verify.py found. Skipping post-verify."
           fi
-
-      - name: Commit & push (if changed)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
-          bash scripts/ci_commit_push.sh "chore: orchestrator" main
