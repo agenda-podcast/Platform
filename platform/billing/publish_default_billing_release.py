@@ -3,16 +3,17 @@
 Publish default billing-state assets to the fixed GitHub Release tag (billing-state-v1)
 if that release (or its required CSV assets) are missing.
 
-Design goals:
 - Idempotent: safe to run repeatedly.
-- No gh CLI dependency. Uses GitHub REST API.
-- Fails loudly with actionable logs if token/permissions are insufficient.
+- No external dependencies: uses Python stdlib only.
+- Fails loudly if token/permissions are insufficient.
 
-Env:
-- GITHUB_TOKEN (required)
-- GITHUB_REPOSITORY (owner/repo) provided by Actions
-- BILLING_TAG (optional, default billing-state-v1)
-- BILLING_TEMPLATE_DIR (optional, default releases/billing-state-v1)
+Required env (GitHub Actions provides GITHUB_REPOSITORY automatically):
+- GITHUB_TOKEN
+- GITHUB_REPOSITORY (owner/repo)
+
+Optional env:
+- BILLING_TAG (default billing-state-v1)
+- BILLING_TEMPLATE_DIR (default releases/billing-state-v1)
 """
 from __future__ import annotations
 
@@ -21,10 +22,10 @@ import mimetypes
 import os
 import pathlib
 import sys
-import time
-from typing import Dict, List, Tuple
-
-import requests
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Dict, List
 
 
 REQUIRED_FILES = [
@@ -58,26 +59,50 @@ def _api_headers(token: str) -> Dict[str, str]:
     }
 
 
+def _request(method: str, url: str, headers: Dict[str, str], body: bytes | None = None) -> tuple[int, bytes]:
+    req = urllib.request.Request(url=url, data=body, method=method)
+    for k, v in headers.items():
+        req.add_header(k, v)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return resp.getcode(), resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+    except Exception as e:
+        raise RuntimeError(f"HTTP {method} {url} failed: {e}") from e
+
+
+def _json(method: str, url: str, headers: Dict[str, str], payload: dict | None = None) -> tuple[int, dict | None, str]:
+    body = None
+    h = dict(headers)
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+        h["Content-Type"] = "application/json"
+    code, raw = _request(method, url, h, body)
+    txt = raw.decode("utf-8", errors="replace") if raw else ""
+    if not txt:
+        return code, None, ""
+    try:
+        return code, json.loads(txt), txt
+    except Exception:
+        return code, None, txt
+
+
 def _gh_api_base(repo: str) -> str:
     return f"https://api.github.com/repos/{repo}"
 
 
-def _request_json(method: str, url: str, headers: Dict[str, str], **kwargs):
-    r = requests.request(method, url, headers=headers, timeout=60, **kwargs)
-    return r
-
-
-def _get_release_by_tag(repo: str, token: str, tag: str):
-    url = f"{_gh_api_base(repo)}/releases/tags/{tag}"
-    r = _request_json("GET", url, _api_headers(token))
-    if r.status_code == 404:
+def _get_release_by_tag(repo: str, token: str, tag: str) -> dict | None:
+    url = f"{_gh_api_base(repo)}/releases/tags/{urllib.parse.quote(tag)}"
+    code, data, txt = _json("GET", url, _api_headers(token))
+    if code == 404:
         return None
-    if r.status_code >= 300:
-        raise RuntimeError(f"GET {url} failed: {r.status_code} {r.text}")
-    return r.json()
+    if code >= 300 or data is None:
+        raise RuntimeError(f"GET {url} failed: HTTP {code} {txt[:800]}")
+    return data
 
 
-def _create_release(repo: str, token: str, tag: str):
+def _create_release(repo: str, token: str, tag: str) -> dict:
     url = f"{_gh_api_base(repo)}/releases"
     payload = {
         "tag_name": tag,
@@ -87,14 +112,14 @@ def _create_release(repo: str, token: str, tag: str):
         "generate_release_notes": False,
         "body": "Auto-published by Maintenance bootstrap (default billing-state template).",
     }
-    r = _request_json("POST", url, _api_headers(token), json=payload)
-    if r.status_code >= 300:
-        raise RuntimeError(f"POST {url} failed: {r.status_code} {r.text}")
-    return r.json()
+    code, data, txt = _json("POST", url, _api_headers(token), payload)
+    if code >= 300 or data is None:
+        raise RuntimeError(f"POST {url} failed: HTTP {code} {txt[:800]}")
+    return data
 
 
 def _normalize_upload_url(upload_url_template: str) -> str:
-    # Template looks like: https://uploads.github.com/repos/{owner}/{repo}/releases/{id}/assets{?name,label}
+    # https://uploads.github.com/repos/{owner}/{repo}/releases/{id}/assets{?name,label}
     return upload_url_template.split("{", 1)[0]
 
 
@@ -103,30 +128,33 @@ def _guess_content_type(path: pathlib.Path) -> str:
     return ctype or "application/octet-stream"
 
 
-def _upload_asset(upload_url_template: str, repo: str, token: str, file_path: pathlib.Path, name: str):
+def _summarize_assets(release_json: dict) -> Dict[str, int]:
+    out: Dict[str, int] = {}
+    for a in release_json.get("assets", []) or []:
+        n = a.get("name")
+        i = a.get("id")
+        if n and isinstance(i, int):
+            out[n] = i
+    return out
+
+
+def _upload_asset(upload_url_template: str, token: str, file_path: pathlib.Path, name: str) -> tuple[str, int, str]:
     upload_base = _normalize_upload_url(upload_url_template)
-    url = f"{upload_base}?name={name}"
+    url = f"{upload_base}?name={urllib.parse.quote(name)}"
+
     data = file_path.read_bytes()
     headers = _api_headers(token)
     headers["Content-Type"] = _guess_content_type(file_path)
-    r = requests.post(url, headers=headers, data=data, timeout=120)
-    if r.status_code == 422:
-        # asset exists or name conflict; treat as ok (we gate on missing names first)
-        return ("exists_or_conflict", r.status_code, r.text)
-    if r.status_code >= 300:
-        return ("error", r.status_code, r.text)
-    return ("ok", r.status_code, "")
 
+    code, raw = _request("POST", url, headers, data)
+    txt = raw.decode("utf-8", errors="replace") if raw else ""
 
-def _summarize_assets(release_json) -> Dict[str, int]:
-    # name -> id
-    out = {}
-    for a in release_json.get("assets", []):
-        n = a.get("name")
-        i = a.get("id")
-        if n and i:
-            out[n] = i
-    return out
+    if code == 201:
+        return ("ok", code, "")
+    if code == 422:
+        # asset exists or conflict
+        return ("exists_or_conflict", code, txt[:800])
+    return ("error", code, txt[:800])
 
 
 def main() -> int:
@@ -140,9 +168,7 @@ def main() -> int:
     # Validate template files exist in repo checkout
     missing_local = [fn for fn in REQUIRED_FILES if not (template_dir / fn).exists()]
     if missing_local:
-        raise FileNotFoundError(
-            f"[billing-bootstrap] Missing template files in repo at {template_dir}: {missing_local}"
-        )
+        raise FileNotFoundError(f"[billing-bootstrap] Missing template files in repo at {template_dir}: {missing_local}")
 
     release = _get_release_by_tag(repo, token, tag)
     if release is None:
@@ -168,20 +194,18 @@ def main() -> int:
 
     for fn in to_upload:
         p = template_dir / fn
-        status, code, text = _upload_asset(upload_url_template, repo, token, p, fn)
+        status, code, text = _upload_asset(upload_url_template, token, p, fn)
         if status == "ok":
             print(f"[billing-bootstrap] Uploaded: {fn}")
         elif status == "exists_or_conflict":
-            print(f"[billing-bootstrap] Asset already exists/conflict: {fn} (422). Continuing.")
+            print(f"[billing-bootstrap] Asset exists/conflict (422): {fn}. Continuing.")
         else:
-            print(f"[billing-bootstrap] ERROR uploading {fn}: HTTP {code}")
-            # Avoid dumping huge bodies
-            errors.append(f"{fn}: HTTP {code} {text[:500]}")
+            errors.append(f"{fn}: HTTP {code} {text}")
 
     # Re-check release to confirm
     release2 = _get_release_by_tag(repo, token, tag)
     if release2 is None:
-        errors.append("Release disappeared after creation (unexpected).")
+        errors.append("Release missing after creation (unexpected).")
     else:
         existing2 = _summarize_assets(release2)
         still_missing = [fn for fn in REQUIRED_FILES if fn not in existing2]

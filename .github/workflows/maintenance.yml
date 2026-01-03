@@ -3,7 +3,8 @@ name: Maintenance
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 * * * *"   # hourly at :17 (adjust as needed)
+    - cron: "17 * * * *"
+  push: {}
 
 permissions:
   contents: write
