@@ -21,21 +21,13 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Ensure billing-state release exists (bootstrap defaults if missing)
+      - name: Run Maintenance
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # These can be overridden if you use different paths
           BILLING_TAG: billing-state-v1
           BILLING_TEMPLATE_DIR: releases/billing-state-v1
-        run: |
-          set -euo pipefail
-          python -m platform.billing.publish_default_billing_release
-
-      - name: Run Maintenance (existing)
+          BILLING_STATE_DIR: .billing-state
         run: |
           set -euo pipefail
           bash scripts/run_maintenance.sh
-
-      - name: Run E2E Verification (invoked by Maintenance)
-        run: |
-          set -euo pipefail
-          bash scripts/run_e2e_verification.sh

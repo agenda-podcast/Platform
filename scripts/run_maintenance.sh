@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ -f "scripts/maintenance.py" ]]; then
-  exec python scripts/maintenance.py "$@"
-else
-  if python -m platform.cli --help 2>/dev/null | grep -qi "maint"; then
-    exec python -m platform.cli maintenance "$@"
-  fi
-fi
+# Default locations (can be overridden by workflow env)
+export BILLING_TAG="${BILLING_TAG:-billing-state-v1}"
+export BILLING_TEMPLATE_DIR="${BILLING_TEMPLATE_DIR:-releases/billing-state-v1}"
+export BILLING_STATE_DIR="${BILLING_STATE_DIR:-.billing-state}"
 
-echo "[ERROR] No maintenance entrypoint found." >&2
-exit 2
+python -m platform.maintenance.main
