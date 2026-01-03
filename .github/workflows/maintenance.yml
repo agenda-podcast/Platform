@@ -34,3 +34,8 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/run_maintenance.sh
+
+      - name: Run E2E Verification (invoked by Maintenance)
+        run: |
+          set -euo pipefail
+          bash scripts/run_e2e_verification.sh

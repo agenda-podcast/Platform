@@ -1,0 +1,24 @@
+name: E2E Verification
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run E2E Verification
+        run: |
+          set -euo pipefail
+          bash scripts/run_e2e_verification.sh
