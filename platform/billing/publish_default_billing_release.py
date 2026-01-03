@@ -1,19 +1,10 @@
 \
 """
 Publish default billing-state assets to the fixed GitHub Release tag (billing-state-v1)
-if that release (or its required CSV assets) are missing.
+if that release (or its required assets) are missing.
 
-- Idempotent: safe to run repeatedly.
-- No external dependencies: uses Python stdlib only.
-- Fails loudly if token/permissions are insufficient.
-
-Required env (GitHub Actions provides GITHUB_REPOSITORY automatically):
-- GITHUB_TOKEN
-- GITHUB_REPOSITORY (owner/repo)
-
-Optional env:
-- BILLING_TAG (default billing-state-v1)
-- BILLING_TEMPLATE_DIR (default releases/billing-state-v1)
+Stdlib-only (urllib). Idempotent.
+Also ensures state_manifest.json exists and is uploaded.
 """
 from __future__ import annotations
 
@@ -27,6 +18,7 @@ import urllib.parse
 import urllib.request
 from typing import Dict, List
 
+from platform.billing.manifest import write_manifest
 
 REQUIRED_FILES = [
     "tenants_credits.csv",
@@ -38,6 +30,7 @@ REQUIRED_FILES = [
     "module_runs_log.csv",
     "github_releases_map.csv",
     "github_assets_map.csv",
+    "state_manifest.json",
 ]
 
 
@@ -119,7 +112,6 @@ def _create_release(repo: str, token: str, tag: str) -> dict:
 
 
 def _normalize_upload_url(upload_url_template: str) -> str:
-    # https://uploads.github.com/repos/{owner}/{repo}/releases/{id}/assets{?name,label}
     return upload_url_template.split("{", 1)[0]
 
 
@@ -152,7 +144,6 @@ def _upload_asset(upload_url_template: str, token: str, file_path: pathlib.Path,
     if code == 201:
         return ("ok", code, "")
     if code == 422:
-        # asset exists or conflict
         return ("exists_or_conflict", code, txt[:800])
     return ("error", code, txt[:800])
 
@@ -165,7 +156,9 @@ def main() -> int:
 
     print(f"[billing-bootstrap] repo={repo} tag={tag} template_dir={template_dir}")
 
-    # Validate template files exist in repo checkout
+    # Ensure manifest exists in template dir (generated from template files)
+    write_manifest(template_dir, [f for f in REQUIRED_FILES if f != "state_manifest.json"])
+
     missing_local = [fn for fn in REQUIRED_FILES if not (template_dir / fn).exists()]
     if missing_local:
         raise FileNotFoundError(f"[billing-bootstrap] Missing template files in repo at {template_dir}: {missing_local}")
@@ -202,7 +195,6 @@ def main() -> int:
         else:
             errors.append(f"{fn}: HTTP {code} {text}")
 
-    # Re-check release to confirm
     release2 = _get_release_by_tag(repo, token, tag)
     if release2 is None:
         errors.append("Release missing after creation (unexpected).")
@@ -215,7 +207,7 @@ def main() -> int:
     if errors:
         raise RuntimeError("[billing-bootstrap] Failed:\n- " + "\n- ".join(errors))
 
-    print("[billing-bootstrap] Success: billing-state assets ensured.")
+    print("[billing-bootstrap] Success: billing-state assets ensured (including state_manifest.json).")
     return 0
 
 

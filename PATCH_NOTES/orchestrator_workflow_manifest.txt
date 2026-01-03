@@ -1,0 +1,8 @@
+# Patch snippet for Orchestrator workflow:
+# - Add state_manifest.json to the required list.
+# - Ensure manifest is generated before uploading back to the billing-state-v1 release.
+#
+# Insert BEFORE uploading assets back to release:
+#   python -c "from pathlib import Path; from platform.billing.manifest import write_manifest; write_manifest(Path('.billing-state'), ['tenants_credits.csv','transactions.csv','transaction_items.csv','promotion_redemptions.csv','cache_index.csv','workorders_log.csv','module_runs_log.csv','github_releases_map.csv','github_assets_map.csv'])"
+#
+# Then include state_manifest.json in gh release upload.
