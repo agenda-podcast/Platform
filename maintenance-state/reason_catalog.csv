@@ -14,15 +14,15 @@ reason_code,g,category_id,module_id,reason_key,category_name,description,scope
 112000002001,1,12,000002,skipped_cache,Caching,Cache was used; module execution skipped and marked FAILED for refund logic.,MODULE
 112000003001,1,12,000003,skipped_cache,Caching,Cache was used; module execution skipped and marked FAILED for refund logic.,MODULE
 114000001001,1,14,000001,artifacts_not_eligible,Validation,Artifacts were purchased but not eligible per policy or module capability.,MODULE
-114000001002,1,14,000001,artifacts_download_not_allowed_by_module,Validation,"Artifacts download was requested, but this module does not support downloadable artifacts.",MODULE
-114000001003,1,14,000001,artifacts_download_not_allowed_by_platform,Validation,"Artifacts download was requested, but platform policy disables artifacts for this module.",MODULE
+114000001002,1,14,000001,artifacts_download_not_allowed_by_module,Validation,"Artifacts were purchased, but this module does not support downloadable release artifacts.",MODULE
+114000001003,1,14,000001,artifacts_download_not_allowed_by_platform,Validation,"Artifacts were purchased, but platform policy disables downloadable release artifacts for this module.",MODULE
 114000002001,1,14,000002,artifacts_not_eligible,Validation,Artifacts were purchased but not eligible per policy or module capability.,MODULE
-114000002002,1,14,000002,artifacts_download_not_allowed_by_module,Validation,"Artifacts download was requested, but this module does not support downloadable artifacts.",MODULE
-114000002003,1,14,000002,artifacts_download_not_allowed_by_platform,Validation,"Artifacts download was requested, but platform policy disables artifacts for this module.",MODULE
+114000002002,1,14,000002,artifacts_download_not_allowed_by_module,Validation,"Artifacts were purchased, but this module does not support downloadable release artifacts.",MODULE
+114000002003,1,14,000002,artifacts_download_not_allowed_by_platform,Validation,"Artifacts were purchased, but platform policy disables downloadable release artifacts for this module.",MODULE
 114000003001,1,14,000003,bad_input_format,Validation,Input was present but not in a supported format.,MODULE
 114000003002,1,14,000003,external_api_error,Validation,Upstream API call failed or returned an error.,MODULE
 114000003003,1,14,000003,missing_required_input,Validation,A required module input was not provided or could not be resolved.,MODULE
 114000003004,1,14,000003,missing_secret,Validation,Required env secrets were not provided for Google Custom Search API.,MODULE
 114000003005,1,14,000003,output_write_failed,Validation,Failed to write module outputs to the runtime directory.,MODULE
-114000003006,1,14,000003,artifacts_download_not_allowed_by_module,Validation,"Artifacts download was requested, but this module does not support downloadable artifacts.",MODULE
-114000003007,1,14,000003,artifacts_download_not_allowed_by_platform,Validation,"Artifacts download was requested, but platform policy disables artifacts for this module.",MODULE
+114000003006,1,14,000003,artifacts_download_not_allowed_by_module,Validation,"Artifacts were purchased, but this module does not support downloadable release artifacts.",MODULE
+114000003007,1,14,000003,artifacts_download_not_allowed_by_platform,Validation,"Artifacts were purchased, but platform policy disables downloadable release artifacts for this module.",MODULE

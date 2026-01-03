@@ -56,6 +56,14 @@ REQS_REG_HEADER = ["module_id", "requirement_type", "requirement_key", "requirem
 ERRORS_REG_HEADER = ["module_id", "error_code", "severity", "description", "remediation"]
 
 
+# Artifact-policy contract
+ARTIFACT_CAPABILITY_KEY = "supports_downloadable_artifacts"
+ARTIFACT_REASON_KEYS = (
+    "artifacts_download_not_allowed_by_module",
+    "artifacts_download_not_allowed_by_platform",
+)
+
+
 @dataclass
 class ChangeLog:
     changed: bool = False
@@ -545,6 +553,59 @@ def ensure_module_prices(prices_path: Path, billing_cfg_path: Path, module_ids: 
     _write_csv(prices_path, PRICES_HEADER, rows, log, check)
 
 
+def ensure_module_artifacts_contract(modules_dir: Path, module_ids: List[str], log: ChangeLog, check: bool) -> None:
+    """Enforce explicit per-module artifact capability and reasons.
+
+    Rationale:
+    - Workorders can request `purchase_release_artifacts: true`.
+    - When artifacts are ineligible, we must fail with a precise, module-scoped reason code.
+    - To keep the system deterministic, every module must explicitly declare whether downloadable
+      artifacts are supported.
+    - Every module must also declare the two standard artifact-denial reasons in validation.yml,
+      so Maintenance can compile consistent reason codes.
+    """
+
+    for mid in module_ids:
+        # module.yml: ensure capability flag exists.
+        module_yml = modules_dir / mid / "module.yml"
+        y = _read_yaml(module_yml)
+        if ARTIFACT_CAPABILITY_KEY not in y:
+            y[ARTIFACT_CAPABILITY_KEY] = False
+            log.note(f"SET {ARTIFACT_CAPABILITY_KEY}=false for module {mid}")
+            _write_yaml(module_yml, y, log, check)
+
+        # validation.yml: ensure standard artifact reasons exist.
+        validation_yml = modules_dir / mid / "validation.yml"
+        vy = _read_yaml(validation_yml)
+        reasons = vy.get("reasons") or []
+        if not isinstance(reasons, list):
+            reasons = []
+
+        existing = {str(r.get("reason_key", "")).strip() for r in reasons if isinstance(r, dict)}
+        changed = False
+
+        if ARTIFACT_REASON_KEYS[0] not in existing:
+            reasons.append({
+                "reason_key": ARTIFACT_REASON_KEYS[0],
+                "category_id": "14",
+                "description": "Artifacts were purchased, but this module does not support downloadable release artifacts.",
+            })
+            changed = True
+
+        if ARTIFACT_REASON_KEYS[1] not in existing:
+            reasons.append({
+                "reason_key": ARTIFACT_REASON_KEYS[1],
+                "category_id": "14",
+                "description": "Artifacts were purchased, but platform policy disables downloadable release artifacts for this module.",
+            })
+            changed = True
+
+        if changed:
+            vy["reasons"] = reasons
+            log.note(f"ADD artifact denial reasons to {validation_yml.relative_to(modules_dir)}")
+            _write_yaml(validation_yml, vy, log, check)
+
+
 def regenerate_platform_registries(repo_root: Path, modules_dir: Path, module_ids: List[str], log: ChangeLog, check: bool) -> None:
     # modules.csv
     modules_rows: List[Dict[str, str]] = []
@@ -656,6 +717,9 @@ def main() -> int:
         log=log,
         check=args.check,
     )
+
+    # Enforce explicit artifact capability + standardized artifact denial reasons across all modules.
+    ensure_module_artifacts_contract(modules_dir, module_ids, log, check=args.check)
 
     regenerate_platform_registries(repo_root, modules_dir, module_ids, log, check=args.check)
 

@@ -159,7 +159,6 @@ def _verify_maintenance_state(repo_root: Path) -> None:
         ms / "reason_policy.csv",
         ms / "module_dependency_index.csv",
         ms / "module_artifacts_policy.csv",
-        ms / "platform_policy.csv",
         ms / "tenant_relationships.csv",
         ms / "ids" / "module_registry.csv",
     ]
@@ -170,39 +169,52 @@ def _verify_maintenance_state(repo_root: Path) -> None:
     _ok("Maintenance-state: required files present")
 
 
-def _verify_module_artifacts_contract(repo_root: Path) -> None:
-    """Ensure every module declares artifacts support and denial reasons."""
-    modules_dir = repo_root / "modules"
-    if not modules_dir.exists():
-        _die("Missing modules/ folder")
+def _read_yaml(path: Path) -> dict:
+    if not path.exists():
+        _die(f"Missing YAML: {path}")
+    with path.open("r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
 
-    for p in sorted(modules_dir.iterdir()):
-        if not p.is_dir():
-            continue
-        mid = p.name
-        if not MODULE_ID_RE.match(mid):
-            continue
 
-        module_yml = p / "module.yml"
-        if not module_yml.exists():
-            _die(f"Missing module.yml for module {mid}")
-        with module_yml.open("r", encoding="utf-8") as f:
-            y = yaml.safe_load(f) or {}
-        if "supports_downloadable_artifacts" not in y:
-            _die(f"Module {mid} missing supports_downloadable_artifacts in module.yml")
+def _verify_artifacts_contract(repo_root: Path) -> None:
+    """E2E verification for deterministic artifact-eligibility reasons.
 
-        vpath = p / "validation.yml"
-        if not vpath.exists():
-            _die(f"Module {mid} missing validation.yml")
-        with vpath.open("r", encoding="utf-8") as f:
-            vy = yaml.safe_load(f) or {}
+    This prevents regressions where orchestration falls back to GLOBAL:internal_error
+    (which later shows up as an ambiguous refund reason in transaction_items.csv).
+    """
+
+    # Discover modules from maintenance-state registry (authoritative list).
+    mreg = repo_root / "maintenance-state" / "ids" / "module_registry.csv"
+    modules = [r.get("module_id", "") for r in _read_csv_rows(mreg) if r.get("module_id")]
+
+    # Load reason_catalog for cross-check.
+    rc_rows = _read_csv_rows(repo_root / "maintenance-state" / "reason_catalog.csv")
+    by_mod_key = {(r.get("module_id"), r.get("reason_key")): r for r in rc_rows if r.get("scope") == "MODULE"}
+
+    missing: List[str] = []
+    for mid in modules:
+        # module.yml must explicitly declare supports_downloadable_artifacts
+        my = _read_yaml(repo_root / "modules" / mid / "module.yml")
+        if "supports_downloadable_artifacts" not in my:
+            missing.append(f"modules/{mid}/module.yml: missing supports_downloadable_artifacts")
+
+        # validation.yml must declare both standard artifact-denial reason keys
+        vy = _read_yaml(repo_root / "modules" / mid / "validation.yml")
         reasons = vy.get("reasons") or []
-        keys = {str(r.get("reason_key", "")).strip() for r in reasons if isinstance(r, dict)}
-        for req in ("artifacts_download_not_allowed_by_module", "artifacts_download_not_allowed_by_platform"):
-            if req not in keys:
-                _die(f"Module {mid} missing required reason_key in validation.yml: {req}")
+        if not isinstance(reasons, list):
+            reasons = []
+        rkeys = {str(r.get("reason_key", "")).strip() for r in reasons if isinstance(r, dict)}
+        for rk in ("artifacts_download_not_allowed_by_module", "artifacts_download_not_allowed_by_platform"):
+            if rk not in rkeys:
+                missing.append(f"modules/{mid}/validation.yml: missing reason_key {rk}")
+            # reason_catalog must contain compiled code for it
+            if (mid, rk) not in by_mod_key:
+                missing.append(f"maintenance-state/reason_catalog.csv: missing MODULE reason for {mid}:{rk}")
 
-    _ok("Modules: artifacts contract enforced (supports flag + denial reasons)")
+    if missing:
+        _die("Artifacts contract verification failed:\n  - " + "\n  - ".join(missing))
+
+    _ok("Artifacts contract: module.yml + validation.yml + reason_catalog consistent")
 
 
 def _parse_dep_list(raw: str) -> List[str]:
@@ -311,7 +323,7 @@ def main() -> int:
 
     _verify_platform_billing(repo_root)
     _verify_maintenance_state(repo_root)
-    _verify_module_artifacts_contract(repo_root)
+    _verify_artifacts_contract(repo_root)
     _verify_dependency_index(repo_root)
 
     if args.phase in ("post", "release"):
