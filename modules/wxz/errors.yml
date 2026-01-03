@@ -1,0 +1,17 @@
+errors:
+  - error_code: MISSING_SECRET
+    severity: ERROR
+    description: "Required env vars are not set for Google Custom Search."
+    remediation: "Define GitHub secrets 000000wxz_GOOGLE_SEARCH_API_KEY and 000000wxz_GOOGLE_SEARCH_ENGINE_ID, and map them to env in the workflow."
+  - error_code: BAD_INPUT
+    severity: ERROR
+    description: "Work Order inputs for module wxz do not conform to the tenant parameters schema."
+    remediation: "Validate tenant inputs against platform/schemas/work_order_modules/wxz.schema.json and correct the values."
+  - error_code: GOOGLE_API_ERROR
+    severity: ERROR
+    description: "Google Custom Search API returned a non-2xx response or an invalid payload."
+    remediation: "Check API key/cx validity, quota, and query restrictions. Retry the Work Order after remediation."
+  - error_code: OUTPUT_WRITE_FAILED
+    severity: ERROR
+    description: "Failed to write module output files to the runtime outputs directory."
+    remediation: "Verify runner filesystem permissions and available disk space; rerun the workflow."

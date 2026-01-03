@@ -1,4 +1,4 @@
 module_id,module_name,version,folder,entrypoint,description
-000001,module_000001,0.1.0,000001,src/run.py:run,Placeholder module that generates a deterministic text artifact and a release manifest item.
-000002,module_000002,0.1.0,000002,src/run.py:run,"Placeholder transform module that depends on 001, reads its output, and emits derived notes."
-000003,google_search_pages,0.1.0,000003,src/run.py:run,"Google Custom Search (web pages only): fetch up to 100 results per query, up to 5 queries per run."
+U2T,module_U2T,0.1.0,U2T,src/run.py:run,Placeholder module that generates a deterministic text artifact and a release manifest item.
+9SD,module_9SD,0.1.0,9SD,src/run.py:run,"Placeholder transform module that depends on 001, reads its output, and emits derived notes."
+wxz,google_search_pages,0.1.0,wxz,src/run.py:run,"Google Custom Search (web pages only): fetch up to 100 results per query, up to 5 queries per run."

@@ -198,7 +198,7 @@ def _next_unused_module_id(used: Iterable[str]) -> str:
         mid = f"{i:06d}"
         if mid not in used_set:
             return mid
-    raise RuntimeError("No available module_id left in 000001..999999")
+    raise RuntimeError("No available module_id left in U2T..999999")
 
 
 def _next_unused_tenant_id(used: Iterable[str]) -> str:
@@ -207,7 +207,7 @@ def _next_unused_tenant_id(used: Iterable[str]) -> str:
         tid = f"{i:010d}"
         if tid not in used_set:
             return tid
-    raise RuntimeError("No available tenant_id left in 0000000001..9999999999")
+    raise RuntimeError("No available tenant_id left in 0000U2T..9999999999")
 
 
 def _normalize_module_id(raw: str) -> Optional[str]:
@@ -296,7 +296,7 @@ def canonicalize_module_folders(modules_dir: Path, log: ChangeLog, check: bool) 
     if not modules_dir.exists():
         return []
 
-    # First pass: rename legacy "001_name" -> "000001" and "001" -> "000001".
+    # First pass: rename legacy "001_name" -> "U2T" and "001" -> "U2T".
     used: List[str] = []
     for p in sorted(modules_dir.iterdir()):
         if not p.is_dir():
@@ -385,7 +385,7 @@ def canonicalize_tenant_folders(tenants_dir: Path, log: ChangeLog, check: bool) 
 
     used: List[str] = []
 
-    # First pass: normalize folder names (legacy tenant-001, 1, 0000000001, etc.).
+    # First pass: normalize folder names (legacy tenant-001, 1, 0000U2T, etc.).
     for p in sorted(tenants_dir.iterdir()):
         if not p.is_dir():
             continue

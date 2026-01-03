@@ -1,9 +1,0 @@
-module_id: "000003"
-name: "google_search_pages"
-version: "0.1.0"
-description: "Google Custom Search (web pages only): fetch up to 100 results per query, up to 5 queries per run."
-depends_on: []
-
-# Explicit artifact capability flag is required for consistency.
-# If not present, Maintenance will default it to false.
-supports_downloadable_artifacts: false

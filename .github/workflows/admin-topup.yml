@@ -1,94 +1,84 @@
-name: Admin Top-Up
+name: Admin Top-up
 
 on:
   workflow_dispatch:
     inputs:
       tenant_id:
-        description: "Tenant ID"
+        description: "Tenant ID (Base62, 6 chars)"
         required: true
-        type: string
-      amount_credits:
-        description: "Credits to add (positive integer)"
-        required: true
-        type: string
       topup_method_id:
-        description: "Top-up method ID (platform/billing/topup_instructions.csv)"
+        description: "Top-up method ID (Base62, 2 chars) from platform/billing/topup_instructions.csv"
         required: true
-        type: string
+      amount_credits:
+        description: "Amount of credits to add (positive integer)"
+        required: true
       reference:
-        description: "External reference (bank transfer memo, etc.)"
-        required: true
-        type: string
+        description: "Reference (bank transfer, etc.)"
+        required: false
       note:
         description: "Optional note"
         required: false
-        default: ""
-        type: string
 
 permissions:
   contents: write
+  actions: read
 
 env:
-  BILLING_RELEASE_TAG: "billing-state-v1"
+  BILLING_RELEASE_TAG: billing-state-v1
 
 jobs:
   topup:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Verify GitHub CLI
-        run: gh --version
+      - name: Setup GitHub CLI
+        uses: cli/cli@v2
+        with:
+          version: latest
 
-      - name: Download billing-state
+      - name: Auth GitHub CLI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh auth status
+
+      - name: Download billing-state release assets (or seed)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euxo pipefail
           mkdir -p .billing-state
-          gh release download "${BILLING_RELEASE_TAG}" -D .billing-state \
-            -p "tenants_credits.csv" \
-            -p "transactions.csv" \
-            -p "transaction_items.csv" \
-            -p "promotion_redemptions.csv" \
-            -p "cache_index.csv" \
-            -p "workorders_log.csv" \
-            -p "module_runs_log.csv" \
-            -p "state_manifest.json"
+          if gh release view "$BILLING_RELEASE_TAG" >/dev/null 2>&1; then
+            gh release download "$BILLING_RELEASE_TAG" --dir .billing-state || true
+          else
+            gh release create "$BILLING_RELEASE_TAG" --title "Billing State v1" --notes "System of record"
+          fi
+          for f in tenants_credits.csv transactions.csv transaction_items.csv promotion_redemptions.csv cache_index.csv workorders_log.csv module_runs_log.csv github_releases_map.csv github_assets_map.csv; do
+            if [ ! -f ".billing-state/$f" ]; then
+              cp "billing-state-seed/$f" ".billing-state/$f"
+            fi
+          done
 
-      - name: Apply top-up
+      - name: Apply admin top-up
+        run: |
+          python -m platform.cli admin-topup             --billing-state-dir .billing-state             --tenant-id "${{ github.event.inputs.tenant_id }}"             --topup-method-id "${{ github.event.inputs.topup_method_id }}"             --amount-credits "${{ github.event.inputs.amount_credits }}"             --reference "${{ github.event.inputs.reference }}"             --note "${{ github.event.inputs.note }}"
+
+      - name: Verify billing-state contract (post)
+        run: |
+          python scripts/ci_verify.py --phase post --billing-state-dir .billing-state
+
+      - name: Upload billing-state back to fixed release tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python -m platform.cli admin-topup \
-            --billing-state-dir .billing-state \
-            --tenant-id "${{ inputs.tenant_id }}" \
-            --amount-credits "${{ inputs.amount_credits }}" \
-            --topup-method-id "${{ inputs.topup_method_id }}" \
-            --reference "${{ inputs.reference }}" \
-            --note "${{ inputs.note }}"
-
-      - name: Upload updated billing-state
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          python -c "from pathlib import Path; from platform.billing.state import BillingState; BillingState(Path('.billing-state')).write_state_manifest()"
-          gh release upload "${BILLING_RELEASE_TAG}" \
-            .billing-state/tenants_credits.csv \
-            .billing-state/transactions.csv \
-            .billing-state/transaction_items.csv \
-            .billing-state/promotion_redemptions.csv \
-            .billing-state/cache_index.csv \
-            .billing-state/workorders_log.csv \
-            .billing-state/module_runs_log.csv \
-            .billing-state/state_manifest.json --clobber
+          set -euxo pipefail
+          gh release upload "$BILLING_RELEASE_TAG"             .billing-state/tenants_credits.csv             .billing-state/transactions.csv             .billing-state/transaction_items.csv             .billing-state/promotion_redemptions.csv             .billing-state/cache_index.csv             .billing-state/workorders_log.csv             .billing-state/module_runs_log.csv             .billing-state/github_releases_map.csv             .billing-state/github_assets_map.csv             .billing-state/state_manifest.json             --clobber

@@ -4,846 +4,526 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+import yaml
 
 from ..billing.state import BillingState
-from ..common.id_codec import (
-    canon_module_id,
-    canon_reason_code,
-    canon_tenant_id,
-    dedupe_tenants_credits,
-    id_key,
-)
-from ..github.releases import ensure_release, upload_release_assets
+from ..common.id_codec import canon_module_id, canon_tenant_id, canon_work_order_id, id_key, dedupe_tenants_credits
+from ..common.id_policy import generate_unique_id, validate_id
+from ..github.releases import ensure_release, upload_release_assets, get_release_numeric_id, get_release_assets_numeric_ids
+from ..orchestration.module_exec import execute_module_runner
 from ..utils.csvio import read_csv
+from ..utils.fs import ensure_dir
+from ..utils.hashing import sha256_file
 from ..utils.time import utcnow_iso
-from ..utils.yamlio import read_yaml
-from ..utils.ids import parse_reason_code
-from .module_exec import ModuleExecResult, build_manifest_item, derive_cache_key, execute_module_runner
-from .planner import load_dependency_index, topo_sort
 
 
-@dataclass
-class MaintenanceState:
-    root: Path
-    reason_by_key: Dict[Tuple[str, str, str], str]  # (scope, module_id, reason_key) -> reason_code
-    policy_by_code: Dict[str, Dict[str, str]]
-    artifacts_policy: Dict[str, bool]
-    tenant_relationships: set[Tuple[str, str]]
-    dependency_index: Dict[str, List[str]]
+WORKORDERS_LOG_HEADERS = [
+    "work_order_id","tenant_id","status","created_at","started_at","ended_at","note","metadata_json",
+]
+
+MODULE_RUNS_LOG_HEADERS = [
+    "module_run_id","tenant_id","work_order_id","module_id","status","created_at","started_at","ended_at",
+    "reason_code","report_path","output_ref","metadata_json",
+]
+
+TRANSACTIONS_HEADERS = [
+    "transaction_id","tenant_id","work_order_id","type","amount_credits","created_at","reason_code","note","metadata_json",
+]
+
+TRANSACTION_ITEMS_HEADERS = [
+    "transaction_item_id","transaction_id","tenant_id","module_id","feature","type","amount_credits","created_at","note","metadata_json",
+]
+
+TENANTS_CREDITS_HEADERS = ["tenant_id","credits_available","updated_at","status"]
+
+CACHE_INDEX_HEADERS = ["cache_key","tenant_id","module_id","created_at","expires_at","cache_id"]
+
+PROMOTION_REDEMPTIONS_HEADERS = ["redemption_id","tenant_id","promo_code","credits_granted","created_at","note","metadata_json"]
+
+GITHUB_RELEASES_MAP_HEADERS = ["release_id","github_release_id","tag","tenant_id","work_order_id","created_at"]
+
+GITHUB_ASSETS_MAP_HEADERS = ["asset_id","github_asset_id","release_id","asset_name","created_at"]
 
 
-@dataclass
-class OrchestratorConfig:
-    repo_root: Path
-    runtime_dir: Path
-    billing_state_dir: Path
-    enable_github_releases: bool = False
+@dataclass(frozen=True)
+class ReasonIndex:
+    by_key: Dict[Tuple[str, str, str], str]  # (scope, module_id, reason_slug) -> reason_code
+    refundable: Dict[str, bool]              # reason_code -> refundable
 
 
-
-def load_maintenance_state(repo_root: Path) -> MaintenanceState:
-    ms_root = repo_root / "maintenance-state"
-    reason_catalog = read_csv(ms_root / "reason_catalog.csv")
-    reason_by_key: Dict[Tuple[str, str, str], str] = {}
-    for r in reason_catalog:
-        code = canon_reason_code(r.get("reason_code", ""))
-        mod = canon_module_id(r.get("module_id", ""))
-        key = str(r.get("reason_key", "")).strip()
-        g = str(r.get("g", "")).strip()
-        if not (code and mod and key and g):
-            continue
-        scope = "GLOBAL" if g == "0" else "MODULE"
-        reason_by_key[(scope, mod, key)] = code
-
-    policy_rows = read_csv(ms_root / "reason_policy.csv")
-    policy_by_code = {canon_reason_code(r.get("reason_code")): r for r in policy_rows if r.get("reason_code")}
-
-    # artifacts policy: missing row => default allow
-    ap_rows = read_csv(ms_root / "module_artifacts_policy.csv")
-    artifacts_policy: Dict[str, bool] = {
-        canon_module_id(r.get("module_id")): str(r.get("platform_artifacts_enabled", "true")).lower() == "true"
-        for r in ap_rows
-        if r.get("module_id")
-    }
-
-    rel_rows = read_csv(ms_root / "tenant_relationships.csv")
-    rel = set()
-    for r in rel_rows:
-        s = canon_tenant_id(r.get("source_tenant_id", ""))
-        t = canon_tenant_id(r.get("target_tenant_id", ""))
-        if s and t:
-            rel.add((s, t))
-
-    dep_index = load_dependency_index(ms_root / "module_dependency_index.csv")
-
-    return MaintenanceState(
-        root=ms_root,
-        reason_by_key=reason_by_key,
-        policy_by_code=policy_by_code,
-        artifacts_policy=artifacts_policy,
-        tenant_relationships=rel,
-        dependency_index=dep_index,
-    )
+def _repo_yaml(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
-def _reason_code(ms: MaintenanceState, scope: str, module_id: str, reason_key: str) -> str:
-    code = ms.reason_by_key.get((scope, canon_module_id(module_id), reason_key))
-    if code:
-        return code
-    # Fallback: if not found, raise to enforce catalog completeness.
-    raise KeyError(f"Missing reason_code for ({scope}, {module_id}, {reason_key}). Run maintenance.")
-
-
-def _is_refundable(ms: MaintenanceState, code: str) -> bool:
-    p = ms.policy_by_code.get(canon_reason_code(code))
-    if not p:
-        return False
-    return str(p.get("refundable", "false")).lower() == "true"
-
-# -------------------------
-# Work order discovery
-# -------------------------
-
-def discover_workorders(repo_root: Path) -> List[Dict[str, Any]]:
-    """Return list of (tenant_id, workorder_path)."""
-    tenants_dir = repo_root / "tenants"
+def _discover_workorders(repo_root: Path) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
+    tenants_dir = repo_root / "tenants"
     if not tenants_dir.exists():
         return out
-    for tenant_dir in sorted(tenants_dir.iterdir()):
-        if not tenant_dir.is_dir():
+    for tdir in sorted(tenants_dir.iterdir(), key=lambda p: p.name):
+        if not tdir.is_dir():
             continue
-        tenant_yml = tenant_dir / "tenant.yml"
+        tenant_yml = tdir / "tenant.yml"
         if not tenant_yml.exists():
             continue
-        # Canonicalize in case tooling created a non-padded folder name.
-        tenant_id = canon_tenant_id(tenant_dir.name)
-        wdir = tenant_dir / "workorders"
+        tcfg = _repo_yaml(tenant_yml)
+        tenant_id = canon_tenant_id(tcfg.get("tenant_id", tdir.name))
+        if not tenant_id:
+            continue
+        validate_id("tenant_id", tenant_id, "tenant_id")
+        wdir = tdir / "workorders"
         if not wdir.exists():
             continue
-        for wo in sorted(wdir.glob("*.yml")):
-            out.append({"tenant_id": tenant_id, "path": wo})
+        for wpath in sorted(wdir.glob("*.yml"), key=lambda p: p.name):
+            w = _repo_yaml(wpath)
+            wid = canon_work_order_id(w.get("work_order_id", wpath.stem))
+            if not wid:
+                continue
+            validate_id("work_order_id", wid, "work_order_id")
+            out.append({"tenant_id": tenant_id, "work_order_id": wid, "workorder": w, "path": str(wpath)})
     return out
 
 
-def load_workorder(tenant_id: str, path: Path) -> Optional[Dict[str, Any]]:
-    y = read_yaml(path)
-    if not y:
-        return None
-    if not bool(y.get("enabled", False)):
-        return None
-    y["tenant_id"] = canon_tenant_id(tenant_id)
-    y["_path"] = str(path)
-    return y
+def _load_reason_index(repo_root: Path) -> ReasonIndex:
+    ms = repo_root / "maintenance-state"
+    catalog = read_csv(ms / "reason_catalog.csv")
+    policy = read_csv(ms / "reason_policy.csv")
 
-
-# -------------------------
-# Billing helpers
-# -------------------------
-
-def _find_price(module_prices: List[Dict[str, str]], module_id: str) -> Tuple[int, int]:
-    want_key = id_key(module_id)
-    for r in module_prices:
-        if id_key(r.get("module_id")) == want_key and str(r.get("active", "true")).lower() == "true":
-            run = int(str(r.get("price_run_credits", "0")) or 0)
-            rel = int(str(r.get("price_save_to_release_credits", "0")) or 0)
-            return run, rel
-    raise KeyError(f"Missing active module price for module {module_id}")
-
-
-def _tenant_credit_row(tenants_credits: List[Dict[str, str]], tenant_id: str) -> Dict[str, str]:
-    want_key = id_key(tenant_id)
-    for r in tenants_credits:
-        if id_key(r.get("tenant_id")) == want_key:
-            return r
-    raise KeyError(f"Tenant not found in tenants_credits.csv: {tenant_id}")
-
-
-_ID_SEQ = 0
-
-
-def _new_id(prefix: str) -> str:
-    """Generate a collision-resistant ID.
-
-    Prior implementation used second-level timestamps and could collide when
-    multiple transactions (SPEND + REFUND) were generated within the same second.
-    """
-    global _ID_SEQ
-    _ID_SEQ += 1
-
-    gh_run_id = os.environ.get("GITHUB_RUN_ID") or "local"
-    from datetime import datetime, timezone
-
-    now = datetime.now(timezone.utc)
-    ts = now.strftime("%Y%m%d-%H%M%S")
-    micros = f"{now.microsecond:06d}"
-    return f"{prefix}-{ts}-{micros}-{gh_run_id}-{_ID_SEQ:04d}"
-
-def _apply_promotions(
-    promotions_catalog: List[Dict[str, str]],
-    promotion_redemptions: List[Dict[str, str]],
-    tenant_id: str,
-    requested_promotions: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    """Return list of promo line items (negative amount).
-
-    Promo definitions are repo-managed (platform/billing/promotions.csv).
-    Redemption events (APPLIED/REFUNDED) are accounting state in billing-state.
-
-    This scaffold applies promos conservatively:
-    - exact code match
-    - promo must be active
-    - enforces max_uses_per_tenant if provided
-
-    NOTE: date windows and rules_json are intentionally not enforced in this placeholder.
-    """
-    by_code = {str(p.get("code", "")).upper(): p for p in promotions_catalog}
-
-    # Count net redemptions per tenant+promo_id (APPLIED minus REFUNDED)
-    net_used = {}
-    want_tenant = id_key(tenant_id)
-    for e in promotion_redemptions:
-        if id_key(e.get("tenant_id", "")) != want_tenant:
+    by_key: Dict[Tuple[str, str, str], str] = {}
+    for r in catalog:
+        scope = str(r.get("scope", "")).strip().upper()
+        module_id = str(r.get("module_id", "")).strip()
+        slug = str(r.get("reason_slug", "")).strip()
+        code = str(r.get("reason_code", "")).strip()
+        if not (scope and slug and code):
             continue
-        pid = str(e.get("promo_id", "")).strip()
-        if not pid:
-            continue
-        et = str(e.get("event_type", "")).strip().upper()
-        delta = 0
-        if et == "APPLIED":
-            delta = 1
-        elif et == "REFUNDED":
-            delta = -1
-        net_used[pid] = net_used.get(pid, 0) + delta
+        if scope == "GLOBAL":
+            module_id = ""
+        by_key[(scope, module_id, slug)] = code
 
-    out: List[Dict[str, Any]] = []
-    for req in requested_promotions or []:
-        code = str(req.get("code", "")).upper().strip()
+    refundable: Dict[str, bool] = {}
+    for r in policy:
+        code = str(r.get("reason_code", "")).strip()
         if not code:
             continue
-        p = by_code.get(code)
-        if not p:
+        refundable[code] = str(r.get("refundable", "")).strip().lower() == "true"
+
+    return ReasonIndex(by_key=by_key, refundable=refundable)
+
+
+def _reason_code(idx: ReasonIndex, scope: str, module_id: str, reason_slug: str) -> str:
+    scope_u = scope.upper()
+    mid = module_id if scope_u == "MODULE" else ""
+    code = idx.by_key.get((scope_u, mid, reason_slug))
+    if code:
+        return code
+    # fallback: global unknown_error if present
+    code = idx.by_key.get(("GLOBAL", "", "unknown_error"))
+    return code or ""
+
+
+def _load_module_prices(repo_root: Path) -> Dict[str, Dict[str, str]]:
+    rows = read_csv(repo_root / "platform" / "billing" / "module_prices.csv")
+    out: Dict[str, Dict[str, str]] = {}
+    for r in rows:
+        mid = str(r.get("module_id", "")).strip()
+        if not mid:
             continue
-        if str(p.get("active", "false")).lower() != "true":
-            continue
-
-        promo_id = str(p.get("promo_id", "")).strip()
-        value = int(str(p.get("value_credits", "0")) or 0)
-        if value <= 0 or not promo_id:
-            continue
-
-        max_uses_raw = str(p.get("max_uses_per_tenant", "")).strip()
-        if max_uses_raw:
-            try:
-                max_uses = int(max_uses_raw)
-            except Exception:
-                max_uses = 0
-            if max_uses > 0:
-                if net_used.get(promo_id, 0) >= max_uses:
-                    continue
-
-        out.append({
-            "code": code,
-            "promo_id": promo_id,
-            "type": str(p.get("type", "PROMO_CODE")),
-            "amount_credits": -abs(value),
-        })
-
+        out[mid] = r
     return out
 
 
-def estimate_spend(
-    module_prices: List[Dict[str, str]],
-    workorder: Dict[str, Any],
-    promotions_catalog: List[Dict[str, str]],
-    promotion_redemptions: List[Dict[str, str]],
-) -> Tuple[int, List[Dict[str, Any]]]:
-    modules = workorder.get("modules", []) or []
-
-    tenant_id = canon_tenant_id(workorder.get("tenant_id", ""))
-    promo_items = _apply_promotions(promotions_catalog, promotion_redemptions, tenant_id, workorder.get("promotions", []) or [])
-
-    total = 0
-    line_items: List[Dict[str, Any]] = []
-
-    for m in modules:
-        mid = canon_module_id(m.get("module_id", ""))
-        run_price, rel_price = _find_price(module_prices, mid)
-        total += run_price
-        line_items.append({"name": f"module:{mid}", "category": "MODULE_RUN", "amount": run_price, "module_id": mid})
-        if bool(m.get("purchase_release_artifacts", False)):
-            total += rel_price
-            line_items.append({"name": f"upload:{mid}", "category": "UPLOAD", "amount": rel_price, "module_id": mid})
-
-    for p in promo_items:
-        amt = int(p["amount_credits"])
-        total += amt
-        line_items.append({
-            "name": f"promo:{p['code']}",
-            "category": "PROMO",
-            "amount": amt,
-            "module_id": "",
-            "promo_id": p["promo_id"],
-            "promo_code": p["code"],
-        })
-
-    # Total spend may not be negative; clamp.
-    total = max(0, total)
-    return total, line_items
-
-# -------------------------
-# Billing mutations
-# -------------------------
-
-def _append_transaction(transactions: List[Dict[str, str]], tenant_id: str, work_order_id: str, tx_type: str, total_amount: int, metadata: Dict[str, Any]) -> str:
-    tx_id = _new_id("tx")
-    transactions.append({
-        "transaction_id": tx_id,
-        "tenant_id": canon_tenant_id(tenant_id),
-        "work_order_id": work_order_id,
-        "type": tx_type,
-        "total_amount_credits": str(total_amount),
-        "created_at": utcnow_iso(),
-        "metadata_json": json.dumps(metadata, sort_keys=True),
-    })
-    return tx_id
+def _price_for_module(prices: Dict[str, Dict[str, str]], module_id: str, purchase_release_artifacts: bool) -> int:
+    row = prices.get(module_id)
+    if not row:
+        return 0
+    try:
+        run_price = int(str(row.get("price_run_credits", "0")).strip() or "0")
+        rel_price = int(str(row.get("price_save_to_release_credits", "0")).strip() or "0")
+    except Exception:
+        return 0
+    return run_price + (rel_price if purchase_release_artifacts else 0)
 
 
-def _append_transaction_items(transaction_items: List[Dict[str, str]], tx_id: str, tenant_id: str, work_order_id: str, items: List[Dict[str, Any]], module_run_id_map: Dict[str, str]) -> None:
-    tenant_id = canon_tenant_id(tenant_id)
-    for i, it in enumerate(items, start=1):
-        name = str(it.get("name"))
-        category = str(it.get("category"))
-        amount = int(it.get("amount"))
-        module_id = canon_module_id(it.get("module_id", ""))
-        module_run_id = module_run_id_map.get(module_id) if module_id else ""
-        transaction_items.append({
-            "transaction_item_id": f"ti-{tx_id}-{i:04d}",
-            "transaction_id": tx_id,
-            "tenant_id": tenant_id,
-            "work_order_id": work_order_id,
-            "module_run_id": module_run_id or "",
-            "name": name,
-            "category": category,
-            "amount_credits": str(amount),
-            "reason_code": str(it.get("reason_code", "")) or "",
-            "note": str(it.get("note", "")) or "",
-        })
+def _toposort_modules(modules_requested: List[str], deps_index: List[Dict[str, str]]) -> List[str]:
+    requested = [canon_module_id(m) for m in modules_requested if canon_module_id(m)]
+    requested_set = set(requested)
 
-def _append_promotion_redemptions(
-    promotion_redemptions: list[dict[str, str]],
-    tenant_id: str,
-    work_order_id: str,
-    spend_items: list[dict[str, object]],
-) -> None:
-    """Append APPLIED promotion redemption events for promo spend items."""
-    tenant_id = canon_tenant_id(tenant_id)
-    for it in spend_items:
-        if str(it.get("category")) != "PROMO":
+    deps: Dict[str, Set[str]] = {m: set() for m in requested}
+    for r in deps_index:
+        mid = canon_module_id(r.get("module_id", ""))
+        dep = canon_module_id(r.get("depends_on_module_id", ""))
+        if not (mid and dep):
             continue
-        promo_id = str(it.get("promo_id", "") or "").strip()
-        promo_code = str(it.get("promo_code", "") or "").strip()
-        if not promo_id:
+        if mid in requested_set and dep in requested_set:
+            deps[mid].add(dep)
+
+    ordered: List[str] = []
+    temp: Set[str] = set()
+    perm: Set[str] = set()
+
+    def visit(n: str) -> None:
+        if n in perm:
+            return
+        if n in temp:
+            raise ValueError(f"Cycle in module dependencies at {n}")
+        temp.add(n)
+        for d in sorted(deps.get(n, set())):
+            visit(d)
+        temp.remove(n)
+        perm.add(n)
+        ordered.append(n)
+
+    for m in requested:
+        visit(m)
+    return ordered
+
+
+def _load_tenant_relationships(repo_root: Path) -> Set[Tuple[str, str]]:
+    rows = read_csv(repo_root / "maintenance-state" / "tenant_relationships.csv")
+    out=set()
+    for r in rows:
+        s = canon_tenant_id(r.get("source_tenant_id",""))
+        t = canon_tenant_id(r.get("target_tenant_id",""))
+        if s and t:
+            out.add((s,t))
+    return out
+
+
+def _load_module_artifacts_policy(repo_root: Path) -> Dict[str, bool]:
+    rows = read_csv(repo_root / "maintenance-state" / "module_artifacts_policy.csv")
+    out: Dict[str, bool] = {}
+    for r in rows:
+        mid = canon_module_id(r.get("module_id",""))
+        if not mid:
             continue
-        amount = int(it.get("amount", 0) or 0)
-        promotion_redemptions.append({
-            "event_id": _new_id("pr"),
-            "tenant_id": tenant_id,
-            "promo_id": promo_id,
-            "work_order_id": work_order_id,
-            "event_type": "APPLIED",
-            "amount_credits": str(amount),
-            "created_at": utcnow_iso(),
-            "note": promo_code,
-        })
+        out[mid] = str(r.get("platform_artifacts_enabled","")).strip().lower() == "true"
+    return out
 
 
-# -------------------------
-# Module execution
-# -------------------------
-
-def _parse_retention(ret: str) -> int:
-    """Parse retention like 1d|1w|2m|1y into days."""
-    s = (ret or "").strip().lower()
-    if not s:
-        return 7
-    import re
-
-    m = re.match(r"^(\d+)([dwmy])$", s)
-    if not m:
-        return 7
-    n = int(m.group(1))
-    u = m.group(2)
-    if u == "d":
-        return n
-    if u == "w":
-        return n * 7
-    if u == "m":
-        return n * 30
-    if u == "y":
-        return n * 365
-    return 7
+def _new_id(id_type: str, used: Set[str]) -> str:
+    return generate_unique_id(id_type, used)
 
 
-def _load_module_config(repo_root: Path, module_id: str) -> Dict[str, Any]:
-    return read_yaml(repo_root / "modules" / module_id / "module.yml")
+def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path, enable_github_releases: bool = False) -> None:
+    reason_idx = _load_reason_index(repo_root)
+    tenant_rel = _load_tenant_relationships(repo_root)
+    deps_index = read_csv(repo_root / "maintenance-state" / "module_dependency_index.csv")
+    prices = _load_module_prices(repo_root)
+    artifacts_policy = _load_module_artifacts_policy(repo_root)
 
+    billing = BillingState(billing_state_dir)
+    billing_state_dir.mkdir(parents=True, exist_ok=True)
 
-def _module_supports_artifacts(module_cfg: Dict[str, Any]) -> bool:
-    return bool(module_cfg.get("supports_downloadable_artifacts", False))
+    # Orchestrator needs full state including mapping tables
+    billing.validate_minimal(
+        required_files=[
+            "tenants_credits.csv",
+            "transactions.csv",
+            "transaction_items.csv",
+            "promotion_redemptions.csv",
+            "cache_index.csv",
+            "workorders_log.csv",
+            "module_runs_log.csv",
+            "github_releases_map.csv",
+            "github_assets_map.csv",
+        ]
+    )
 
-
-def _platform_allows_artifacts(ms: MaintenanceState, module_id: str) -> bool:
-    # Missing row => allow
-    return ms.artifacts_policy.get(module_id, True)
-
-
-def _cache_index_lookup(cache_index: List[Dict[str, str]], cache_key: str) -> Optional[Dict[str, str]]:
-    for r in cache_index:
-        if str(r.get("cache_key")) == cache_key:
-            return r
-    return None
-
-
-def _cache_index_upsert(cache_index: List[Dict[str, str]], row: Dict[str, str]) -> None:
-    existing = _cache_index_lookup(cache_index, row["cache_key"])
-    if existing:
-        existing.update(row)
-    else:
-        cache_index.append(row)
-
-
-def _execute_module(
-    cfg: OrchestratorConfig,
-    ms: MaintenanceState,
-    billing: BillingState,
-    workorder: Dict[str, Any],
-    module_spec: Dict[str, Any],
-    module_run_id: str,
-    outputs_dir: Path,
-) -> ModuleExecResult:
-    tenant_id = canon_tenant_id(workorder["tenant_id"])
-    work_order_id = workorder["work_order_id"]
-    module_id = canon_module_id(module_spec.get("module_id"))
-    module_path = cfg.repo_root / "modules" / module_id
-
-    module_cfg = _load_module_config(cfg.repo_root, module_id)
-
-    # Artifact eligibility checks only apply when purchased.
-    if bool(module_spec.get("purchase_release_artifacts", False)):
-        # Provide a precise, module-scoped reason code for artifact eligibility failures.
-        # This avoids falling back to GLOBAL:internal_error (which makes refunds and logs ambiguous).
-        if not _module_supports_artifacts(module_cfg):
-            rc = _reason_code(ms, "MODULE", module_id, "artifacts_download_not_allowed_by_module")
-            return ModuleExecResult(status="FAILED", reason_code=rc)
-        if not _platform_allows_artifacts(ms, module_id):
-            rc = _reason_code(ms, "MODULE", module_id, "artifacts_download_not_allowed_by_platform")
-            return ModuleExecResult(status="FAILED", reason_code=rc)
-
-    # Validate required params from module.yml
-    params = module_spec.get("params", {}) or {}
-    for inp in (module_cfg.get("inputs", []) or []):
-        if not bool(inp.get("required", False)):
-            continue
-        name = str(inp.get("name"))
-        if name not in params or params.get(name) in (None, ""):
-            rc = _reason_code(ms, "MODULE", module_id, "missing_required_input")
-            return ModuleExecResult(status="FAILED", reason_code=rc)
-
-    # Cache key
-    cache_cfg = module_cfg.get("cache", {}) or {}
-    key_inputs = {k: params.get(k) for k in (cache_cfg.get("key_inputs") or [])}
-    cache_key = derive_cache_key(module_id, tenant_id, key_inputs)
-
-    reuse = str(module_spec.get("reuse_output_type", "new"))
-
-    # Reuse types
-    if reuse == "cache":
-        cache_index = billing.load_table("cache_index.csv")
-        hit = _cache_index_lookup(cache_index, cache_key)
-        if hit:
-            rc = _reason_code(ms, "MODULE", module_id, "skipped_cache")
-            return ModuleExecResult(status="FAILED", reason_code=rc, cache_key=cache_key)
-
-    # NOTE: release/assets reuse is intentionally minimal in the placeholder scaffold.
-    if reuse == "release":
-        tag = str(module_spec.get("release_tag", "")).strip()
-        if not tag:
-            rc = _reason_code(ms, "MODULE", module_id, "missing_required_input")
-            return ModuleExecResult(status="FAILED", reason_code=rc)
-        # Access control: source tenant is assumed encoded in tag or provided; for scaffold, deny cross-tenant.
-        if (tenant_id, tenant_id) not in ms.tenant_relationships:
-            rc = _reason_code(ms, "GLOBAL", "000000", "unauthorized_release_access")
-            return ModuleExecResult(status="FAILED", reason_code=rc)
-
-    if reuse == "assets":
-        folder = str(module_spec.get("assets_folder_name", "")).strip()
-        if not folder:
-            rc = _reason_code(ms, "MODULE", module_id, "missing_required_input")
-            return ModuleExecResult(status="FAILED", reason_code=rc)
-        manifest_path = cfg.repo_root / "tenants" / tenant_id / "assets" / "outputs" / folder / "manifest.json"
-        if not manifest_path.exists():
-            rc = _reason_code(ms, "MODULE", module_id, "missing_required_input")
-            return ModuleExecResult(status="FAILED", reason_code=rc)
-
-    # Execute runner
-    out = execute_module_runner(module_path, params, outputs_dir)
-
-    # Cache persist if enabled and reuse==cache
-    if reuse == "cache" and bool(cache_cfg.get("enabled", False)):
-        from datetime import datetime, timezone, timedelta
-
-        days = _parse_retention(str(module_spec.get("cache_retention_override") or cache_cfg.get("retention_default") or "1w"))
-        now = datetime.now(timezone.utc).replace(microsecond=0)
-        exp = now + timedelta(days=days)
-        cache_index = billing.load_table("cache_index.csv")
-        _cache_index_upsert(cache_index, {
-            "cache_key": cache_key,
-            "tenant_id": tenant_id,
-            "module_id": module_id,
-            "created_at": now.isoformat().replace("+00:00", "Z"),
-            "expires_at": exp.isoformat().replace("+00:00", "Z"),
-            "cache_id": "",  # optional: can be populated by cache-prune workflow
-        })
-        billing.save_table("cache_index.csv", cache_index, ["cache_key", "tenant_id", "module_id", "created_at", "expires_at", "cache_id"])
-
-    # Build manifest item (single file per placeholder)
-    files = out.get("files") or []
-    manifest_item = None
-    if files:
-        rel = str(files[0])
-        fpath = outputs_dir / rel
-        if fpath.exists():
-            manifest_item = build_manifest_item(
-                tenant_id=tenant_id,
-                work_order_id=work_order_id,
-                module_id=module_id,
-                item_id="001",
-                file_path=fpath,
-                mime_type="text/plain",
-            )
-
-    return ModuleExecResult(status="COMPLETED", cache_key=cache_key, manifest_item=manifest_item)
-
-# -------------------------
-# Orchestration
-# -------------------------
-
-def _write_workorder_log(
-    workorders_log: List[Dict[str, str]],
-    workorder: Dict[str, Any],
-    status: str,
-    reason_code: str,
-    started_at: str,
-    finished_at: str,
-    requested_modules: List[str],
-) -> None:
-    workorders_log.append({
-        "work_order_id": str(workorder["work_order_id"]),
-        "tenant_id": canon_tenant_id(workorder["tenant_id"]),
-        "status": status,
-        "reason_code": canon_reason_code(reason_code),
-        "started_at": started_at,
-        "finished_at": finished_at,
-        "github_run_id": os.environ.get("GITHUB_RUN_ID", ""),
-        "workorder_mode": str(workorder.get("mode", "")),
-        "requested_modules": json.dumps(requested_modules),
-        "metadata_json": json.dumps(workorder.get("metadata", {}), sort_keys=True),
-    })
-
-
-def _append_module_run_log(
-    module_runs_log: List[Dict[str, str]],
-    module_run_id: str,
-    workorder: Dict[str, Any],
-    module_id: str,
-    result: ModuleExecResult,
-    started_at: str,
-    finished_at: str,
-    reuse_output_type: str,
-    reuse_reference: str,
-    published_release_tag: str,
-    release_manifest_name: str,
-) -> None:
-    module_runs_log.append({
-        "module_run_id": module_run_id,
-        "work_order_id": str(workorder["work_order_id"]),
-        "tenant_id": canon_tenant_id(workorder["tenant_id"]),
-        "module_id": canon_module_id(module_id),
-        "status": result.status,
-        "reason_code": canon_reason_code(result.reason_code or ""),
-        "started_at": started_at,
-        "finished_at": finished_at,
-        "reuse_output_type": reuse_output_type,
-        "reuse_reference": reuse_reference,
-        "cache_key_used": result.cache_key or "",
-        "published_release_tag": published_release_tag,
-        "release_manifest_name": release_manifest_name,
-        "metadata_json": json.dumps({}, sort_keys=True),
-    })
-
-
-def _publish_release_if_needed(cfg: OrchestratorConfig, workorder: Dict[str, Any], module_results: List[Tuple[str, ModuleExecResult, Dict[str, Any]]]) -> Tuple[str, str]:
-    """Publish purchased artifacts to a release.
-
-    Returns (release_tag, manifest_name) or ("", "") if nothing to publish.
-    """
-    if not cfg.enable_github_releases:
-        return "", ""
-
-    tenant_id = workorder["tenant_id"]
-    work_order_id = workorder["work_order_id"]
-
-    items: List[Dict[str, Any]] = []
-    staging = cfg.runtime_dir / "releases" / f"{tenant_id}-{work_order_id}"
-    staging.mkdir(parents=True, exist_ok=True)
-
-    for module_id, res, module_spec in module_results:
-        if res.status != "COMPLETED":
-            continue
-        if not bool(module_spec.get("purchase_release_artifacts", False)):
-            continue
-        if not res.manifest_item:
-            continue
-        src = Path(res.manifest_item["_source_path"])
-        dst = staging / res.manifest_item["filename"]
-        dst.write_bytes(src.read_bytes())
-        item = {k: v for k, v in res.manifest_item.items() if not k.startswith("_")}
-        items.append(item)
-
-    if not items:
-        return "", ""
-
-    manifest = {
-        "owning_tenant_id": tenant_id,
-        "work_order_id": work_order_id,
-        "published_at": utcnow_iso(),
-        "items": items,
-    }
-    manifest_name = f"{tenant_id}-{work_order_id}-manifest.json"
-    manifest_path = staging / manifest_name
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-
-    tag = f"release-{tenant_id}-{work_order_id}"
-    ensure_release(tag, title=f"{tenant_id} {work_order_id}")
-    upload_release_assets(tag, [manifest_path, *[staging / i["filename"] for i in items]], clobber=True)
-
-    return tag, manifest_name
-
-
-def orchestrate_workorder(cfg: OrchestratorConfig, ms: MaintenanceState, billing: BillingState, workorder: Dict[str, Any]) -> None:
-    # Canonicalize tenant_id immediately; this prevents drift across all joins.
-    tenant_id = canon_tenant_id(workorder["tenant_id"])
-    workorder["tenant_id"] = tenant_id
-    work_order_id = str(workorder.get("work_order_id"))
-
-    started_at = utcnow_iso()
-    # Load billing tables (accounting SoT)
-    tenants_credits = billing.load_table("tenants_credits.csv")
-    # Repair / normalize tenant IDs and deterministically merge duplicates.
-    tenants_credits, _dropped = dedupe_tenants_credits(tenants_credits)
+    tenants_credits = dedupe_tenants_credits(billing.load_table("tenants_credits.csv"))
     transactions = billing.load_table("transactions.csv")
     transaction_items = billing.load_table("transaction_items.csv")
     workorders_log = billing.load_table("workorders_log.csv")
     module_runs_log = billing.load_table("module_runs_log.csv")
-    promotion_redemptions = billing.load_table("promotion_redemptions.csv")
-    # Load billing configuration from the repository (admin-managed)
-    billing_cfg = cfg.repo_root / "platform" / "billing"
-    module_prices = read_csv(billing_cfg / "module_prices.csv")
-    promotions_catalog = read_csv(billing_cfg / "promotions.csv")
+    cache_index = billing.load_table("cache_index.csv")
+    promo_redemptions = billing.load_table("promotion_redemptions.csv")
+    rel_map = billing.load_table("github_releases_map.csv")
+    asset_map = billing.load_table("github_assets_map.csv")
 
-    # Tenant status check
-    trow = _tenant_credit_row(tenants_credits, tenant_id)
-    if str(trow.get("status", "active")).lower() != "active":
-        rc = _reason_code(ms, "GLOBAL", "000000", "tenant_suspended")
-        _write_workorder_log(workorders_log, workorder, "FAILED", rc, started_at, utcnow_iso(), [])
-        billing.save_table("workorders_log.csv", workorders_log, list(workorders_log[0].keys()) if workorders_log else [
-            "work_order_id","tenant_id","status","reason_code","started_at","finished_at","github_run_id","workorder_mode","requested_modules","metadata_json"
-        ])
-        return
+    used_tx: Set[str] = {id_key(r.get("transaction_id")) for r in transactions if id_key(r.get("transaction_id"))}
+    used_ti: Set[str] = {id_key(r.get("transaction_item_id")) for r in transaction_items if id_key(r.get("transaction_item_id"))}
+    used_mr: Set[str] = {id_key(r.get("module_run_id")) for r in module_runs_log if id_key(r.get("module_run_id"))}
+    used_rel: Set[str] = {id_key(r.get("release_id")) for r in rel_map if id_key(r.get("release_id"))}
+    used_asset: Set[str] = {id_key(r.get("asset_id")) for r in asset_map if id_key(r.get("asset_id"))}
 
-    # Dependency planning
-    requested_specs = workorder.get("modules", []) or []
-    # Canonicalize module IDs inside the workorder spec to prevent lookups failing.
-    for m in requested_specs:
-        if "module_id" in m:
-            m["module_id"] = canon_module_id(m.get("module_id"))
-    requested_module_ids = [canon_module_id(m.get("module_id")) for m in requested_specs]
-    try:
-        ordered = topo_sort(requested_module_ids, ms.dependency_index)
-    except Exception:
-        rc = _reason_code(ms, "GLOBAL", "000000", "workorder_invalid")
-        _write_workorder_log(workorders_log, workorder, "FAILED", rc, started_at, utcnow_iso(), requested_module_ids)
-        billing.save_table("workorders_log.csv", workorders_log, list(workorders_log[0].keys()) if workorders_log else [
-            "work_order_id","tenant_id","status","reason_code","started_at","finished_at","github_run_id","workorder_mode","requested_modules","metadata_json"
-        ])
-        return
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    ensure_dir(runtime_dir)
 
-    # Estimate + credit check
-    est_total, spend_items = estimate_spend(module_prices, workorder, promotions_catalog, promotion_redemptions)
-    available = int(str(trow.get("credits_available", "0")) or 0)
-    if available < est_total:
-        rc = _reason_code(ms, "GLOBAL", "000000", "not_enough_credits")
-        _write_workorder_log(workorders_log, workorder, "FAILED", rc, started_at, utcnow_iso(), ordered)
-        billing.save_table("workorders_log.csv", workorders_log, list(workorders_log[0].keys()) if workorders_log else [
-            "work_order_id","tenant_id","status","reason_code","started_at","finished_at","github_run_id","workorder_mode","requested_modules","metadata_json"
-        ])
-        return
-
-    # Spend transaction (debit)
-    module_run_id_map: Dict[str, str] = {}
-    for m in ordered:
-        module_run_id_map[m] = _new_id(f"mr-{tenant_id}-{work_order_id}-{m}")
-
-    spend_tx_id = _append_transaction(transactions, tenant_id, work_order_id, "SPEND", est_total, {"workorder_path": workorder.get("_path", "")})
-
-    tx_items = []
-    for it in spend_items:
-        item = {"name": it.get("name"), "category": it.get("category"), "amount": it.get("amount"), "module_id": it.get("module_id", ""), "reason_code": "", "note": ""}
-        if str(it.get("category")) == "PROMO":
-            item["note"] = str(it.get("promo_code", ""))
-            item["promo_id"] = it.get("promo_id")
-            item["promo_code"] = it.get("promo_code")
-        tx_items.append(item)
-
-    _append_transaction_items(transaction_items, spend_tx_id, tenant_id, work_order_id, tx_items, module_run_id_map)
-
-    # Record promo redemption events (accounting state)
-    _append_promotion_redemptions(promotion_redemptions, tenant_id, work_order_id, spend_items)
-
-    # Update credits
-    trow["credits_available"] = str(available - est_total)
-    trow["updated_at"] = utcnow_iso()
-
-    # Execute modules
-    module_results: List[Tuple[str, ModuleExecResult, Dict[str, Any]]] = []
-    outputs_root = cfg.runtime_dir / "workorders" / tenant_id / work_order_id
-
-    spec_by_id = {canon_module_id(s.get("module_id")): s for s in requested_specs}
-
-    for mid in ordered:
-        spec = spec_by_id[mid]
-        mr_id = module_run_id_map[mid]
-        m_started = utcnow_iso()
-        out_dir = outputs_root / f"module-{mid}"
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        res = _execute_module(cfg, ms, billing, workorder, spec, mr_id, out_dir)
-        m_finished = utcnow_iso()
-        module_results.append((mid, res, spec))
-
-        _append_module_run_log(
-            module_runs_log,
-            module_run_id=mr_id,
-            workorder=workorder,
-            module_id=mid,
-            result=res,
-            started_at=m_started,
-            finished_at=m_finished,
-            reuse_output_type=str(spec.get("reuse_output_type", "new")),
-            reuse_reference=str(spec.get("reuse_reference", "")),
-            published_release_tag="",
-            release_manifest_name="",
-        )
-
-        # STRICT mode: stop on first failure
-        if res.status != "COMPLETED" and str(workorder.get("mode", "STRICT")).upper() == "STRICT":
-            break
-
-    # Publish (optional)
-    tag, manifest_name = _publish_release_if_needed(cfg, workorder, module_results)
-    if tag:
-        # Update module run logs with publication details
-        for r in module_runs_log:
-            if r.get("work_order_id") == work_order_id and r.get("tenant_id") == tenant_id:
-                if str(r.get("status")) == "COMPLETED":
-                    r["published_release_tag"] = tag
-                    r["release_manifest_name"] = manifest_name
-
-    # Refund calculation
-    # Build gross_failed + deals_total
-    deals_total = sum(abs(int(it["amount"])) for it in spend_items if it["category"] == "PROMO")
-    refundable_failed: List[Tuple[str, int, str]] = []  # (module_id, gross, reason_code)
-    for mid, res, spec in module_results:
-        if res.status == "COMPLETED":
+    workorders = _discover_workorders(repo_root)
+    for item in workorders:
+        w = dict(item["workorder"])
+        if not bool(w.get("enabled", True)):
             continue
-        if not res.reason_code:
-            continue
-        if not _is_refundable(ms, res.reason_code):
-            continue
-        gross = 0
-        for it in spend_items:
-            if it.get("module_id") == mid and it["category"] in ("MODULE_RUN", "UPLOAD"):
-                gross += int(it["amount"])
-        refundable_failed.append((mid, gross, res.reason_code))
 
-    # Allocate deals against refunds in order
-    remaining_deals = deals_total
-    refund_items: List[Dict[str, Any]] = []
-    refund_total = 0
-    for mid, gross, rc in refundable_failed:
-        net = gross
-        if remaining_deals > 0:
-            applied = min(net, remaining_deals)
-            net -= applied
-            remaining_deals -= applied
-        if net <= 0:
-            continue
-        refund_total += net
-        refund_items.append({"name": f"refund:{mid}", "category": "REFUND", "amount": -net, "module_id": mid, "reason_code": rc, "note": "auto"})
+        tenant_id = canon_tenant_id(item["tenant_id"])
+        work_order_id = canon_work_order_id(item["work_order_id"])
+        created_at = str((w.get("metadata") or {}).get("created_at") or utcnow_iso())
+        started_at = utcnow_iso()
 
-    if refund_total > 0:
-        refund_tx_id = _append_transaction(transactions, tenant_id, work_order_id, "REFUND", -refund_total, {"method": "auto"})
-        _append_transaction_items(transaction_items, refund_tx_id, tenant_id, work_order_id,
-                                 [{"name": it["name"], "category": it["category"], "amount": int(it["amount"]), "module_id": it.get("module_id",""), "reason_code": it.get("reason_code",""), "note": it.get("note",""),} for it in refund_items],
-                                 module_run_id_map)
-        # credit back
-        trow["credits_available"] = str(int(trow["credits_available"]) + refund_total)
+        # pricing
+        requested_modules = [str(m.get("module_id","")).strip() for m in (w.get("modules") or []) if m.get("module_id")]
+        ordered = _toposort_modules(requested_modules, deps_index)
+
+        module_cfgs: Dict[str, Dict[str, Any]] = {}
+        est_total = 0
+        for m in (w.get("modules") or []):
+            mid = canon_module_id(m.get("module_id",""))
+            if not mid:
+                continue
+            module_cfgs[mid] = m
+        for mid in ordered:
+            cfg = module_cfgs.get(mid, {})
+            est_total += _price_for_module(prices, mid, bool(cfg.get("purchase_release_artifacts", False)))
+
+        # current balance
+        trow = None
+        for r in tenants_credits:
+            if canon_tenant_id(r.get("tenant_id","")) == tenant_id:
+                trow = r
+                break
+        if not trow:
+            trow = {"tenant_id": tenant_id, "credits_available": "0", "updated_at": utcnow_iso(), "status": "ACTIVE"}
+            tenants_credits.append(trow)
+        available = int(str(trow.get("credits_available","0")).strip() or "0")
+
+        if available < est_total:
+            rc = _reason_code(reason_idx, "GLOBAL", "", "not_enough_credits")
+            workorders_log.append({
+                "work_order_id": work_order_id,
+                "tenant_id": tenant_id,
+                "status": "FAILED",
+                "created_at": created_at,
+                "started_at": started_at,
+                "ended_at": utcnow_iso(),
+                "note": "Insufficient credits",
+                "metadata_json": json.dumps({"workorder_path": item["path"]}, separators=(",", ":")),
+            })
+            continue
+
+        # spend transaction (debit)
+        spend_tx = _new_id("transaction_id", used_tx)
+        transactions.append({
+            "transaction_id": spend_tx,
+            "tenant_id": tenant_id,
+            "work_order_id": work_order_id,
+            "type": "SPEND",
+            "amount_credits": str(-est_total),
+            "created_at": utcnow_iso(),
+            "reason_code": "",
+            "note": "",
+            "metadata_json": json.dumps({"workorder_path": item["path"]}, separators=(",", ":")),
+        })
+
+        # transaction items per module (for audit)
+        per_module_cost: Dict[str, int] = {}
+        for mid in ordered:
+            cfg = module_cfgs.get(mid, {})
+            cost = _price_for_module(prices, mid, bool(cfg.get("purchase_release_artifacts", False)))
+            per_module_cost[mid] = cost
+            transaction_items.append({
+                "transaction_item_id": _new_id("transaction_item_id", used_ti),
+                "transaction_id": spend_tx,
+                "tenant_id": tenant_id,
+                "module_id": mid,
+                "feature": "RUN",
+                "type": "SPEND",
+                "amount_credits": str(-cost),
+                "created_at": utcnow_iso(),
+                "note": "",
+                "metadata_json": json.dumps({"purchase_release_artifacts": bool(cfg.get("purchase_release_artifacts", False))}, separators=(",", ":")),
+            })
+
+        # update balance
+        trow["credits_available"] = str(available - est_total)
         trow["updated_at"] = utcnow_iso()
 
-    # Workorder status
-    completed = [m for m, res, _ in module_results if res.status == "COMPLETED"]
-    failed = [m for m, res, _ in module_results if res.status != "COMPLETED"]
-    if not failed and len(completed) == len(ordered):
-        wo_status = "COMPLETED"
-        wo_rc = ""
-    elif completed and str(workorder.get("mode", "STRICT")).upper() == "PARTIAL_ALLOWED":
-        wo_status = "PARTIALLY_COMPLETED"
-        wo_rc = ""
-    else:
-        wo_status = "FAILED"
-        wo_rc = module_results[-1][1].reason_code or _reason_code(ms, "GLOBAL", "000000", "internal_error")
+        mode = str(w.get("mode","")).strip().upper() or "PARTIAL_ALLOWED"
+        any_failed = False
+        completed_modules: List[str] = []
 
-    finished_at = utcnow_iso()
-    _write_workorder_log(workorders_log, workorder, wo_status, wo_rc, started_at, finished_at, ordered)
+        # Execute modules
+        for mid in ordered:
+            cfg = module_cfgs.get(mid, {})
+            mr_id = _new_id("module_run_id", used_mr)
+            m_started = utcnow_iso()
 
-    # Persist billing tables (with canonical tenant IDs)
-    billing.save_table("transactions.csv", transactions, ["transaction_id","tenant_id","work_order_id","type","total_amount_credits","created_at","metadata_json"])
-    billing.save_table("transaction_items.csv", transaction_items, ["transaction_item_id","transaction_id","tenant_id","work_order_id","module_run_id","name","category","amount_credits","reason_code","note"])
-    billing.save_table("tenants_credits.csv", tenants_credits, ["tenant_id","credits_available","updated_at","status"])
-    billing.save_table("promotion_redemptions.csv", promotion_redemptions, ["event_id","tenant_id","promo_id","work_order_id","event_type","amount_credits","created_at","note"])
-    billing.save_table("workorders_log.csv", workorders_log, ["work_order_id","tenant_id","status","reason_code","started_at","finished_at","github_run_id","workorder_mode","requested_modules","metadata_json"])
-    billing.save_table("module_runs_log.csv", module_runs_log, ["module_run_id","work_order_id","tenant_id","module_id","status","reason_code","started_at","finished_at","reuse_output_type","reuse_reference","cache_key_used","published_release_tag","release_manifest_name","metadata_json"])
+            # inputs: pass through
+            params = {
+                "tenant_id": tenant_id,
+                "work_order_id": work_order_id,
+                "module_run_id": mr_id,
+                "inputs": cfg.get("inputs") or {},
+                "reuse_output_type": str(cfg.get("reuse_output_type","")).strip(),
+            }
 
+            module_path = repo_root / "modules" / mid
+            out_dir = runtime_dir / "runs" / tenant_id / work_order_id / mid / mr_id
+            ensure_dir(out_dir)
 
-def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path, enable_github_releases: bool = False) -> None:
-    cfg = OrchestratorConfig(
-        repo_root=repo_root,
-        runtime_dir=runtime_dir,
-        billing_state_dir=billing_state_dir,
-        enable_github_releases=enable_github_releases,
-    )
-    ms = load_maintenance_state(repo_root)
-    billing = BillingState(billing_state_dir)
-    billing.validate_minimal()
+            result = execute_module_runner(module_path=module_path, params=params, outputs_dir=out_dir)
 
-    # Execute all enabled work orders
-    for item in discover_workorders(repo_root):
-        wo = load_workorder(item["tenant_id"], Path(item["path"]))
-        if not wo:
-            continue
-        orchestrate_workorder(cfg, ms, billing, wo)
+            status = str(result.get("status","")).strip().upper() or "FAILED"
+            reason_slug = str(result.get("reason_slug","")).strip() or str(result.get("reason_key","")).strip()
+            if status == "COMPLETED":
+                completed_modules.append(mid)
+                reason_code = ""
+            else:
+                any_failed = True
+                if reason_slug:
+                    reason_code = _reason_code(reason_idx, "MODULE", mid, reason_slug) or _reason_code(reason_idx, "GLOBAL", "", "module_failed")
+                else:
+                    reason_code = _reason_code(reason_idx, "GLOBAL", "", "module_failed")
 
-    # Update state manifest
+            # output ref / report path: optional
+            report_path = str(result.get("report_path","") or "")
+            output_ref = str(result.get("output_ref","") or "")
+
+            module_runs_log.append({
+                "module_run_id": mr_id,
+                "tenant_id": tenant_id,
+                "work_order_id": work_order_id,
+                "module_id": mid,
+                "status": status,
+                "created_at": created_at,
+                "started_at": m_started,
+                "ended_at": utcnow_iso(),
+                "reason_code": reason_code,
+                "report_path": report_path,
+                "output_ref": output_ref,
+                "metadata_json": json.dumps({"outputs_dir": str(out_dir)}, separators=(",", ":")),
+            })
+
+            # refund if configured refundable and module failed
+            if status != "COMPLETED" and reason_code and reason_idx.refundable.get(reason_code, False):
+                refund_amt = per_module_cost.get(mid, 0)
+                if refund_amt > 0:
+                    refund_tx = _new_id("transaction_id", used_tx)
+                    transactions.append({
+                        "transaction_id": refund_tx,
+                        "tenant_id": tenant_id,
+                        "work_order_id": work_order_id,
+                        "type": "REFUND",
+                        "amount_credits": str(refund_amt),
+                        "created_at": utcnow_iso(),
+                        "reason_code": reason_code,
+                        "note": "",
+                        "metadata_json": json.dumps({"module_id": mid, "refund_for": mr_id}, separators=(",", ":")),
+                    })
+                    transaction_items.append({
+                        "transaction_item_id": _new_id("transaction_item_id", used_ti),
+                        "transaction_id": refund_tx,
+                        "tenant_id": tenant_id,
+                        "module_id": mid,
+                        "feature": "RUN",
+                        "type": "REFUND",
+                        "amount_credits": str(refund_amt),
+                        "created_at": utcnow_iso(),
+                        "note": "",
+                        "metadata_json": json.dumps({"refund_for": mr_id}, separators=(",", ":")),
+                    })
+                    # balance update
+                    trow["credits_available"] = str(int(trow["credits_available"]) + refund_amt)
+                    trow["updated_at"] = utcnow_iso()
+
+            # publish artifacts to GitHub release (optional)
+            purchase_release = bool(cfg.get("purchase_release_artifacts", False))
+            if enable_github_releases and purchase_release and artifacts_policy.get(mid, True) and status == "COMPLETED":
+                release_id = _new_id("github_release_asset_id", used_rel)
+                tag = f"r-{release_id}"
+                title = f"Artifacts {release_id}"
+                ensure_release(tag=tag, title=title, notes=f"tenant_id={tenant_id} work_order_id={work_order_id} module_id={mid}")
+
+                staging = runtime_dir / "releases" / release_id
+                ensure_dir(staging)
+
+                items: List[Dict[str, Any]] = []
+                for fp in sorted(out_dir.rglob("*")):
+                    if not fp.is_file():
+                        continue
+                    rel = fp.relative_to(out_dir).as_posix()
+                    dst = staging / rel
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    dst.write_bytes(fp.read_bytes())
+                    items.append({
+                        "name": rel,
+                        "sha256": sha256_file(dst),
+                        "size_bytes": str(dst.stat().st_size),
+                    })
+
+                manifest = {
+                    "release_id": release_id,
+                    "tenant_id": tenant_id,
+                    "work_order_id": work_order_id,
+                    "module_id": mid,
+                    "module_run_id": mr_id,
+                    "created_at": utcnow_iso(),
+                    "items": items,
+                }
+                manifest_path = staging / "manifest.json"
+                manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+                upload_release_assets(tag, [manifest_path, *[staging / i["name"] for i in items]], clobber=True)
+
+                # Map internal IDs -> GitHub numeric IDs
+                gh_rel_id = str(get_release_numeric_id(tag))
+                rel_map.append({
+                    "release_id": release_id,
+                    "github_release_id": gh_rel_id,
+                    "tag": tag,
+                    "tenant_id": tenant_id,
+                    "work_order_id": work_order_id,
+                    "created_at": utcnow_iso(),
+                })
+
+                assets_ids = get_release_assets_numeric_ids(tag)  # name -> numeric id
+                # internal asset ids for each uploaded asset
+                for asset_name, gh_asset_id in assets_ids.items():
+                    asset_id = _new_id("github_release_asset_id", used_asset)
+                    asset_map.append({
+                        "asset_id": asset_id,
+                        "github_asset_id": str(gh_asset_id),
+                        "release_id": release_id,
+                        "asset_name": asset_name,
+                        "created_at": utcnow_iso(),
+                    })
+
+                # keep output_ref as tag
+                module_runs_log[-1]["output_ref"] = tag
+
+            if status != "COMPLETED" and mode == "ALL_OR_NOTHING":
+                break
+
+        ended_at = utcnow_iso()
+        final_status = "COMPLETED"
+        if any_failed and completed_modules:
+            final_status = "PARTIAL"
+        elif any_failed and not completed_modules:
+            final_status = "FAILED"
+
+        workorders_log.append({
+            "work_order_id": work_order_id,
+            "tenant_id": tenant_id,
+            "status": final_status,
+            "created_at": created_at,
+            "started_at": started_at,
+            "ended_at": ended_at,
+            "note": "",
+            "metadata_json": json.dumps({"requested_modules": ordered}, separators=(",", ":")),
+        })
+
+    # Persist billing state tables
+    billing.save_table("tenants_credits.csv", tenants_credits, TENANTS_CREDITS_HEADERS)
+    billing.save_table("transactions.csv", transactions, TRANSACTIONS_HEADERS)
+    billing.save_table("transaction_items.csv", transaction_items, TRANSACTION_ITEMS_HEADERS)
+    billing.save_table("promotion_redemptions.csv", promo_redemptions, PROMOTION_REDEMPTIONS_HEADERS)
+    billing.save_table("cache_index.csv", cache_index, CACHE_INDEX_HEADERS)
+    billing.save_table("workorders_log.csv", workorders_log, WORKORDERS_LOG_HEADERS)
+    billing.save_table("module_runs_log.csv", module_runs_log, MODULE_RUNS_LOG_HEADERS)
+    billing.save_table("github_releases_map.csv", rel_map, GITHUB_RELEASES_MAP_HEADERS)
+    billing.save_table("github_assets_map.csv", asset_map, GITHUB_ASSETS_MAP_HEADERS)
+
     billing.write_state_manifest()

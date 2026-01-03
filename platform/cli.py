@@ -102,7 +102,22 @@ def cmd_reconcile_payments(args: argparse.Namespace) -> int:
     repo_root = _repo_root()
     billing = BillingState(Path(args.billing_state_dir))
 
+    billing.validate_minimal(
+        required_files=[
+            "tenants_credits.csv",
+            "transactions.csv",
+            "transaction_items.csv",
+            "promotion_redemptions.csv",
+            "cache_index.csv",
+            "workorders_log.csv",
+            "module_runs_log.csv",
+            "github_releases_map.csv",
+            "github_assets_map.csv",
+        ]
+    )
+
     res = reconcile_repo_payments_into_billing_state(repo_root, billing)
+    billing.write_state_manifest()
 
     if res.payments_applied:
         # Marker for workflows that conditionally upload updated Release assets.
@@ -145,6 +160,12 @@ def cmd_admin_topup(args: argparse.Namespace) -> int:
             "tenants_credits.csv",
             "transactions.csv",
             "transaction_items.csv",
+            "promotion_redemptions.csv",
+            "cache_index.csv",
+            "workorders_log.csv",
+            "module_runs_log.csv",
+            "github_releases_map.csv",
+            "github_assets_map.csv",
         ]
     )
 
@@ -187,6 +208,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--billing-state-dir", default=".billing-state")
     sp.add_argument("--enable-github-releases", action="store_true")
     sp.set_defaults(func=cmd_orchestrate)
+
+    sp = sub.add_parser("orchestrator", help="Alias for orchestrate")
+    sp.add_argument("--runtime-dir", default="runtime")
+    sp.add_argument("--billing-state-dir", default=".billing-state")
+    sp.add_argument("--enable-github-releases", action="store_true")
+    sp.set_defaults(func=cmd_orchestrate)
+
 
     sp = sub.add_parser("module-exec", help="Execute a single module runner")
     sp.add_argument("--module-id", required=True)

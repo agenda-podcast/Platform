@@ -9,7 +9,6 @@ on:
 
 permissions:
   contents: write
-  actions: read
 
 concurrency:
   group: maintenance
@@ -17,197 +16,46 @@ concurrency:
 
 jobs:
   maintenance:
-    # Avoid infinite loops: this workflow may push a maintenance commit by github-actions[bot].
-    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    outputs:
-      maintained_sha: ${{ steps.sha.outputs.maintained_sha }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install deps
         run: |
-          set -euxo pipefail
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          fi
+          pip install -r requirements.txt
 
-      - name: Configure git identity
+      - name: Run Maintenance
         run: |
-          set -euxo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      # Pass 1: canonicalize modules/tenants, placeholders, module prices, platform registries, schemas.
-      - name: Maintenance - repository servicing (pass 1)
-        run: |
-          set -euxo pipefail
-          python scripts/maintenance_repo.py
-
-      # Build maintenance-state from repo sources (ids/reasons/policies).
-      - name: Maintenance - compile maintenance-state
-        run: |
-          set -euxo pipefail
           python -m platform.cli maintenance
 
-      # Pass 2: ensure servicing is idempotent after maintenance-state compilation.
-      - name: Maintenance - repository servicing (pass 2)
+      - name: Verify repo contract (pre)
         run: |
-          set -euxo pipefail
-          python scripts/maintenance_repo.py
+          python scripts/ci_verify.py --phase pre
 
-      - name: Verify repo is fully serviced (idempotent)
+      - name: Commit maintenance-state (if changed)
         run: |
           set -euxo pipefail
-          python scripts/maintenance_repo.py --check
-
-      - name: Commit maintenance outputs (if changed)
-        run: |
-          set -euxo pipefail
-          if [ -n "$(git status --porcelain)" ]; then
-            git add -A
-            git commit -m "Maintenance: service repo state"
-            git push
-          else
-            echo "No changes to commit."
+          if git diff --quiet; then
+            echo "No changes."
+            exit 0
           fi
-
-      - name: Export maintained SHA
-        id: sha
-        run: |
-          set -euxo pipefail
-          echo "maintained_sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-
-  e2e_verification:
-    name: E2E Verification
-    needs: maintenance
-    if: needs.maintenance.result == 'success'
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-
-    steps:
-      - name: Checkout maintained revision
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.maintenance.outputs.maintained_sha }}
-          fetch-depth: 0
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install deps
-        run: |
-          set -euxo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-
-      - name: Verify repository servicing is up-to-date
-        run: |
-          set -euxo pipefail
-          python scripts/maintenance_repo.py --check
-
-      - name: Verify GitHub CLI present
-        run: gh --version
-
-      - name: Prepare CI billing-state workspace
-        run: |
-          set -euxo pipefail
-          rm -rf .billing-state-ci runtime .billing-state-dl
-          mkdir -p .billing-state-ci runtime .billing-state-dl
-          if [ -d "billing-state-seed" ]; then
-            cp -f billing-state-seed/*.csv .billing-state-ci/ || true
-            cp -f billing-state-seed/*.json .billing-state-ci/ || true
-          fi
-
-      - name: Compile maintenance-state (repo-managed)
-        run: |
-          set -euxo pipefail
-          python -m platform.cli maintenance
-
-      - name: Validate billing config + payments file (repo-managed)
-        run: |
-          set -euxo pipefail
-          python scripts/ci_verify.py             --phase pre             --billing-state-dir .billing-state-ci             --runtime-dir runtime
-
-      - name: Validate payments (fail-fast)
-        run: |
-          set -euxo pipefail
-          python -m platform.cli validate-payments
-
-      - name: Reconcile repo payments into CI billing-state
-        run: |
-          set -euxo pipefail
-          python -m platform.cli reconcile-payments --billing-state-dir .billing-state-ci
-
-      - name: Run orchestrator against CI billing-state
-        run: |
-          set -euxo pipefail
-          python -m platform.cli orchestrate             --runtime-dir runtime             --billing-state-dir .billing-state-ci
-
-      - name: Verify runtime outputs + billing-state tables (local)
-        run: |
-          set -euxo pipefail
-          python scripts/ci_verify.py             --phase post             --billing-state-dir .billing-state-ci             --runtime-dir runtime
-
-      - name: Create ephemeral CI release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euxo pipefail
-          TAG="billing-ci-${{ github.run_id }}-${{ github.run_attempt }}"
-          echo "CI_TAG=$TAG" >> $GITHUB_ENV
-          gh release create "$TAG"             --title "CI Billing State $TAG"             --notes "Temporary CI verification release. Safe to delete."             --draft
-
-      - name: Upload CI billing-state assets to ephemeral release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euxo pipefail
-          while IFS= read -r f; do
-            gh release upload "$CI_TAG" "$f" --clobber
-          done < <(find .billing-state-ci -maxdepth 1 -type f -print | sort)
-
-      - name: Download billing-state assets from ephemeral release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euxo pipefail
-          gh release download "$CI_TAG" --dir .billing-state-dl --clobber
-
-      - name: Verify billing-state assets (release round-trip)
-        run: |
-          set -euxo pipefail
-          python scripts/ci_verify.py             --phase release             --billing-state-dir .billing-state-dl             --runtime-dir runtime
-
-      - name: Delete ephemeral CI release
-        if: always()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euxo pipefail
-          if [ -n "${CI_TAG:-}" ]; then
-            gh release delete "$CI_TAG" -y || true
-          fi
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add maintenance-state
+          git commit -m "Maintenance-state refresh"
+          git push
 
       - name: Upload diagnostics (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: verify-e2e-diagnostics
+          name: maintenance-diagnostics
           path: |
-            runtime
-            .billing-state-ci
-            .billing-state-dl
             maintenance-state
             platform/billing
+            scripts

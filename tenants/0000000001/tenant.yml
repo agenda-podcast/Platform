@@ -1,9 +1,0 @@
-tenant_id: '0000000001'
-tenant_name: Example Tenant
-registered_at: '2025-12-31T00:00:00Z'
-billing:
-  plan: payg
-  external_customer_id: ''
-  notes: Seed tenant for repository bootstrap.
-allow_release_consumers:
-- '0000000001'

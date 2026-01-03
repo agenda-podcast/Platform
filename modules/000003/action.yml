@@ -1,8 +1,0 @@
-name: "Module 000003 - Google Search Pages"
-description: "Google Custom Search (web pages only)."
-runs:
-  using: "composite"
-  steps:
-    - shell: bash
-      run: |
-        echo "Module 000003 is executed by platform/orchestration/module_exec.py (python import)." 

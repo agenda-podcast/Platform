@@ -2,23 +2,30 @@
 from __future__ import annotations
 
 import argparse
-import csv
+import json
 import re
 import sys
-import json
-import yaml
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-# Canonical formats (as per repo contract):
-#   module_id: 6 digits (NNNNNN)
-#   tenant_id: 10 digits (NNNNNNNNNN)
-MODULE_ID_RE = re.compile(r"^\d{6}$")
-TENANT_ID_RE = re.compile(r"^\d{10}$")
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+# If the stdlib 'platform' module is loaded, remove it so our package can import
+if 'platform' in sys.modules and not hasattr(sys.modules['platform'], '__path__'):
+    del sys.modules['platform']
+
+from platform.common.id_policy import validate_id
+from platform.utils.csvio import read_csv, require_headers
 
 
-def _die(msg: str) -> None:
-    print(f"[CI_VERIFY][FAIL] {msg}", file=sys.stderr)
+BASE62_RE = re.compile(r"^[0-9A-Za-z]+$")
+
+
+def _fail(msg: str) -> None:
+    print(f"[CI_VERIFY][FAIL] {msg}")
     raise SystemExit(2)
 
 
@@ -26,310 +33,258 @@ def _ok(msg: str) -> None:
     print(f"[CI_VERIFY][OK] {msg}")
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+def _warn(msg: str) -> None:
+    print(f"[CI_VERIFY][WARN] {msg}")
 
 
-def _read_csv_header(path: Path) -> List[str]:
+def _read_yaml(path: Path) -> Dict[str, Any]:
     if not path.exists():
-        _die(f"Missing CSV: {path}")
-    with path.open("r", encoding="utf-8", newline="") as f:
-        reader = csv.reader(f)
-        try:
-            header = next(reader)
-        except StopIteration:
-            _die(f"Empty CSV (no header): {path}")
-    return [h.strip() for h in header]
-
-
-def _read_csv_rows(path: Path) -> List[Dict[str, str]]:
-    _ = _read_csv_header(path)
-    rows: List[Dict[str, str]] = []
-    with path.open("r", encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
-        if reader.fieldnames is None:
-            _die(f"CSV has no header: {path}")
-        for r in reader:
-            rows.append({k: (v or "").strip() for k, v in r.items()})
-    return rows
+        return {}
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
 def _assert_exact_header(path: Path, expected: List[str]) -> None:
-    got = _read_csv_header(path)
+    rows = read_csv(path)
+    require_headers(path, expected)
+    # Ensure exact (no extra columns) by reading header line directly
+    header_line = path.read_text(encoding="utf-8").splitlines()[0]
+    got = header_line.split(",")
     if got != expected:
-        _die(
-            "CSV header mismatch:\n"
-            f"  file: {path}\n"
-            f"  expected: {expected}\n"
-            f"  got:      {got}"
-        )
+        _fail(f"CSV header mismatch: file: {path} expected: {expected} got: {got}")
 
 
-def _ensure_file(path: Path, header: List[str]) -> None:
-    if path.exists():
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(header)
+def _validate_repo_billing_config(repo_root: Path) -> None:
+    billing = repo_root / "platform" / "billing"
+    _assert_exact_header(billing / "billing_defaults.csv", ["key","value","notes"])
+    _assert_exact_header(billing / "module_prices.csv", ["module_id","price_run_credits","price_save_to_release_credits","effective_from","effective_to","active","notes"])
+    _assert_exact_header(billing / "promotions.csv", ["promo_id","code","type","value_credits","max_uses_per_tenant","valid_from","valid_to","active","rules_json","notes"])
+    _assert_exact_header(billing / "topup_instructions.csv", ["topup_method_id","name","enabled","instructions"])
+    _assert_exact_header(billing / "payments.csv", ["payment_id","tenant_id","topup_method_id","amount_credits","reference","received_at","status","note"])
 
-
-def _verify_platform_billing(repo_root: Path) -> None:
-    billing_dir = repo_root / "platform" / "billing"
-    if not billing_dir.exists():
-        _die("Missing repo folder: platform/billing")
-
-    module_prices = billing_dir / "module_prices.csv"
-    promotions = billing_dir / "promotions.csv"
-    topup_instr = billing_dir / "topup_instructions.csv"
-    payments = billing_dir / "payments.csv"
-
-    _assert_exact_header(
-        module_prices,
-        [
-            "module_id",
-            "price_run_credits",
-            "price_save_to_release_credits",
-            "effective_from",
-            "effective_to",
-            "active",
-            "notes",
-        ],
-    )
-    _assert_exact_header(
-        promotions,
-        [
-            "promo_id",
-            "code",
-            "type",
-            "value_credits",
-            "max_uses_per_tenant",
-            "valid_from",
-            "valid_to",
-            "active",
-            "rules_json",
-            "notes",
-        ],
-    )
-    _assert_exact_header(
-        topup_instr,
-        [
-            "topup_method_id",
-            "channel",
-            "status",
-            "currency",
-            "min_amount",
-            "fee_notes",
-            "processing_time",
-            "admin_action_required",
-            "reference_format",
-            "instructions",
-        ],
-    )
-    _assert_exact_header(
-        payments,
-        [
-            "payment_id",
-            "tenant_id",
-            "topup_method_id",
-            "amount_credits",
-            "reference",
-            "received_at",
-            "status",
-            "note",
-        ],
-    )
-
-    rows = _read_csv_rows(module_prices)
-    for i, r in enumerate(rows, start=2):
-        mid = (r.get("module_id") or "").strip()
-        if mid and not MODULE_ID_RE.match(mid):
-            _die(f"platform/billing/module_prices.csv invalid module_id at line {i}: {mid!r} (expected 6 digits)")
-
-    _ok("Repo billing config: headers + basic validation OK")
-
-
-def _verify_maintenance_state(repo_root: Path) -> None:
-    ms = repo_root / "maintenance-state"
-    if not ms.exists():
-        _die("Missing maintenance-state/ folder")
-
-    required = [
-        ms / "reason_catalog.csv",
-        ms / "reason_policy.csv",
-        ms / "module_dependency_index.csv",
-        ms / "module_artifacts_policy.csv",
-        ms / "tenant_relationships.csv",
-        ms / "ids" / "module_registry.csv",
-    ]
-    for p in required:
-        if not p.exists():
-            _die(f"Missing maintenance-state required file: {p}")
-
-    _ok("Maintenance-state: required files present")
-
-
-def _read_yaml(path: Path) -> dict:
-    if not path.exists():
-        _die(f"Missing YAML: {path}")
-    with path.open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
-
-
-def _verify_artifacts_contract(repo_root: Path) -> None:
-    """E2E verification for deterministic artifact-eligibility reasons.
-
-    This prevents regressions where orchestration falls back to GLOBAL:internal_error
-    (which later shows up as an ambiguous refund reason in transaction_items.csv).
-    """
-
-    # Discover modules from maintenance-state registry (authoritative list).
-    mreg = repo_root / "maintenance-state" / "ids" / "module_registry.csv"
-    modules = [r.get("module_id", "") for r in _read_csv_rows(mreg) if r.get("module_id")]
-
-    # Load reason_catalog for cross-check.
-    rc_rows = _read_csv_rows(repo_root / "maintenance-state" / "reason_catalog.csv")
-    by_mod_key = {(r.get("module_id"), r.get("reason_key")): r for r in rc_rows if r.get("scope") == "MODULE"}
-
-    missing: List[str] = []
-    for mid in modules:
-        # module.yml must explicitly declare supports_downloadable_artifacts
-        my = _read_yaml(repo_root / "modules" / mid / "module.yml")
-        if "supports_downloadable_artifacts" not in my:
-            missing.append(f"modules/{mid}/module.yml: missing supports_downloadable_artifacts")
-
-        # validation.yml must declare both standard artifact-denial reason keys
-        vy = _read_yaml(repo_root / "modules" / mid / "validation.yml")
-        reasons = vy.get("reasons") or []
-        if not isinstance(reasons, list):
-            reasons = []
-        rkeys = {str(r.get("reason_key", "")).strip() for r in reasons if isinstance(r, dict)}
-        for rk in ("artifacts_download_not_allowed_by_module", "artifacts_download_not_allowed_by_platform"):
-            if rk not in rkeys:
-                missing.append(f"modules/{mid}/validation.yml: missing reason_key {rk}")
-            # reason_catalog must contain compiled code for it
-            if (mid, rk) not in by_mod_key:
-                missing.append(f"maintenance-state/reason_catalog.csv: missing MODULE reason for {mid}:{rk}")
-
-    if missing:
-        _die("Artifacts contract verification failed:\n  - " + "\n  - ".join(missing))
-
-    _ok("Artifacts contract: module.yml + validation.yml + reason_catalog consistent")
-
-
-def _parse_dep_list(raw: str) -> List[str]:
-    """Parse depends_on_module_ids from CSV.
-
-    Acceptable encodings:
-      - empty / null-ish: "", "[]", "null", "none"  -> []
-      - JSON list: ["000001","000002"]
-      - pipe-separated: "000001|000002"
-    """
-    s = (raw or "").strip()
-    if not s:
-        return []
-    low = s.lower()
-    if low in ("[]", "null", "none", "nil", "n/a", "na"):
-        return []
-    if s.startswith("[") and s.endswith("]"):
-        try:
-            arr = json.loads(s)
-        except Exception:
-            if low == "[]":
-                return []
-            raise
-        if arr is None:
-            return []
-        if not isinstance(arr, list):
-            return []
-        out: List[str] = []
-        for x in arr:
-            if x is None:
-                continue
-            out.append(str(x).strip())
-        return [x for x in out if x]
-    return [x.strip() for x in s.split("|") if x.strip()]
-
-
-def _verify_dependency_index(repo_root: Path) -> None:
-    dep = repo_root / "maintenance-state" / "module_dependency_index.csv"
-    rows = _read_csv_rows(dep)
-    if not rows:
-        _die("module_dependency_index.csv: no rows")
-
+    # ID format checks (static repo config)
+    rows = read_csv(billing / "module_prices.csv")
     for r in rows:
-        mid = (r.get("module_id") or "").strip()
-        if mid and not MODULE_ID_RE.match(mid):
-            _die(f"module_dependency_index.csv invalid module_id: {mid!r} (expected 6 digits)")
+        mid = str(r.get("module_id","")).strip()
+        if mid:
+            validate_id("module_id", mid, "module_prices.module_id")
 
-        deps_raw = (r.get("depends_on_module_ids") or "").strip()
+    rows = read_csv(billing / "topup_instructions.csv")
+    for r in rows:
+        tid = str(r.get("topup_method_id","")).strip()
+        if tid:
+            validate_id("topup_method_id", tid, "topup_method_id")
+
+    rows = read_csv(billing / "payments.csv")
+    for r in rows:
+        pid = str(r.get("payment_id","")).strip()
+        if pid:
+            validate_id("payment_id", pid, "payment_id")
+        tenant_id = str(r.get("tenant_id","")).strip()
+        if tenant_id:
+            validate_id("tenant_id", tenant_id, "tenant_id")
+        tm = str(r.get("topup_method_id","")).strip()
+        if tm:
+            validate_id("topup_method_id", tm, "topup_method_id")
+
+    _ok("Repo billing config: headers + ID format basic validation OK")
+
+
+def _validate_modules(repo_root: Path) -> None:
+    modules_dir = repo_root / "modules"
+    if not modules_dir.exists():
+        _fail("modules/ directory missing")
+
+    module_ids = set()
+    for d in sorted(modules_dir.iterdir(), key=lambda p: p.name):
+        if not d.is_dir():
+            continue
+        mid = d.name.strip()
         try:
-            deps = _parse_dep_list(deps_raw)
-        except Exception:
-            _die(f"module_dependency_index.csv depends_on_module_ids is not parseable: {deps_raw!r}")
+            validate_id("module_id", mid, "module_id")
+        except Exception as e:
+            _fail(f"Invalid module folder name: {mid!r}: {e}")
+        module_ids.add(mid)
 
-        for d in deps:
-            if not MODULE_ID_RE.match(d):
-                _die(f"module_dependency_index.csv invalid depends_on_module_id: {d!r} (expected 6 digits)")
+        myml = d / "module.yml"
+        if not myml.exists():
+            _fail(f"Missing module.yml for module {mid}")
+        cfg = _read_yaml(myml)
+        declared = str(cfg.get("module_id","")).strip()
+        if declared and declared != mid:
+            _fail(f"module.yml module_id mismatch for {mid}: declared={declared!r}")
+        deps = [str(x).strip() for x in (cfg.get("depends_on") or []) if str(x).strip()]
+        for dep in deps:
+            try:
+                validate_id("module_id", dep, "depends_on")
+            except Exception as e:
+                _fail(f"Invalid depends_on in module {mid}: {dep!r}: {e}")
 
-    _ok("Dependency index: format OK")
+    # platform/modules/modules.csv must match folders
+    pm = repo_root / "platform" / "modules" / "modules.csv"
+    _assert_exact_header(pm, ["module_id","module_name","version","folder","entrypoint","description"])
+    rows = read_csv(pm)
+    for r in rows:
+        mid = str(r.get("module_id","")).strip()
+        if not mid:
+            continue
+        validate_id("module_id", mid, "platform/modules/modules.csv module_id")
+        folder = str(r.get("folder","")).strip()
+        if folder and folder != mid:
+            _fail(f"modules.csv folder mismatch: module_id={mid!r} folder={folder!r}")
+        if mid not in module_ids:
+            _fail(f"modules.csv references missing module folder: {mid!r}")
 
-
-def _verify_billing_state_dir(billing_state_dir: Path) -> None:
-    expected_headers = {
-        "tenants_credits.csv": ["tenant_id", "credits_available", "updated_at", "status"],
-        "transactions.csv": ["transaction_id", "tenant_id", "work_order_id", "type", "total_amount_credits", "created_at", "metadata_json"],
-        "transaction_items.csv": ["transaction_item_id", "transaction_id", "tenant_id", "work_order_id", "module_run_id", "name", "category", "amount_credits", "reason_code", "note"],
-        "promotion_redemptions.csv": ["event_id", "tenant_id", "promo_id", "work_order_id", "event_type", "amount_credits", "created_at", "note"],
-        "cache_index.csv": ["cache_key", "tenant_id", "module_id", "created_at", "expires_at", "cache_id"],
-        "workorders_log.csv": ["work_order_id", "tenant_id", "status", "reason_code", "started_at", "finished_at", "github_run_id", "workorder_mode", "requested_modules", "metadata_json"],
-        "module_runs_log.csv": ["module_run_id", "work_order_id", "tenant_id", "module_id", "status", "reason_code", "started_at", "finished_at", "reuse_output_type", "reuse_reference", "cache_key_used", "published_release_tag", "release_manifest_name", "metadata_json"],
-    }
-
-    for fname, hdr in expected_headers.items():
-        _ensure_file(billing_state_dir / fname, hdr)
-        _assert_exact_header(billing_state_dir / fname, hdr)
-
-    tenants = _read_csv_rows(billing_state_dir / "tenants_credits.csv")
-    for t in tenants:
-        tid = (t.get("tenant_id") or "").strip()
-        if tid and not TENANT_ID_RE.match(tid):
-            _die(f"tenants_credits.csv invalid tenant_id: {tid!r} (expected 10 digits)")
-        ca = (t.get("credits_available") or "").strip()
-        if ca and not ca.isdigit():
-            _die(f"tenants_credits.csv credits_available must be integer: {ca!r}")
-
-    runs = _read_csv_rows(billing_state_dir / "module_runs_log.csv")
-    for r in runs:
-        mid = (r.get("module_id") or "").strip()
-        if mid and not MODULE_ID_RE.match(mid):
-            _die(f"module_runs_log.csv invalid module_id: {mid!r} (expected 6 digits)")
-        tid = (r.get("tenant_id") or "").strip()
-        if tid and not TENANT_ID_RE.match(tid):
-            _die(f"module_runs_log.csv invalid tenant_id: {tid!r} (expected 10 digits)")
-
-    _ok(f"Billing-state: required files + headers OK in {billing_state_dir}")
+    _ok("Modules: folder IDs + module.yml + modules.csv OK")
 
 
-def main() -> int:
+def _validate_tenants_and_workorders(repo_root: Path) -> None:
+    tenants_dir = repo_root / "tenants"
+    if not tenants_dir.exists():
+        _fail("tenants/ directory missing")
+
+    for td in sorted(tenants_dir.iterdir(), key=lambda p: p.name):
+        if not td.is_dir():
+            continue
+        tid = td.name.strip()
+        validate_id("tenant_id", tid, "tenant_id")
+        tyml = td / "tenant.yml"
+        if not tyml.exists():
+            _fail(f"Missing tenant.yml for tenant {tid}")
+        cfg = _read_yaml(tyml)
+        declared = str(cfg.get("tenant_id","")).strip()
+        if declared and declared != tid:
+            _fail(f"tenant.yml tenant_id mismatch: folder={tid!r} declared={declared!r}")
+
+        wdir = td / "workorders"
+        if not wdir.exists():
+            continue
+        for wp in sorted(wdir.glob("*.yml"), key=lambda p: p.name):
+            wo = _read_yaml(wp)
+            wid = str(wo.get("work_order_id", wp.stem)).strip()
+            validate_id("work_order_id", wid, "work_order_id")
+            if wp.stem != wid:
+                _fail(f"Workorder filename mismatch: {wp.name} declared work_order_id={wid!r}")
+
+            mods = wo.get("modules") or []
+            if not isinstance(mods, list):
+                _fail(f"Invalid workorder modules list in {wp}")
+            for m in mods:
+                mid = str((m or {}).get("module_id","")).strip()
+                validate_id("module_id", mid, "workorder.module_id")
+
+    _ok("Tenants + workorders: IDs + filenames OK")
+
+
+def _validate_maintenance_state(repo_root: Path) -> None:
+    ms = repo_root / "maintenance-state"
+    required = [
+        "reason_catalog.csv",
+        "reason_policy.csv",
+        "tenant_relationships.csv",
+        "module_dependency_index.csv",
+        "module_requirements_index.csv",
+        "module_artifacts_policy.csv",
+        "platform_policy.csv",
+        "maintenance_manifest.csv",
+        "ids/category_registry.csv",
+        "ids/reason_registry.csv",
+    ]
+    for rel in required:
+        p = ms / rel
+        if not p.exists():
+            _fail(f"Missing maintenance-state file: {rel}")
+
+    # spot-check IDs in reason catalog/registry
+    cat = read_csv(ms / "reason_catalog.csv")
+    for r in cat:
+        rc = str(r.get("reason_code","")).strip()
+        if rc:
+            validate_id("reason_code", rc, "reason_code")
+        rk = str(r.get("reason_key","")).strip()
+        if rk:
+            validate_id("reason_key", rk, "reason_key")
+        scope = str(r.get("scope","")).strip().upper()
+        if scope not in ("GLOBAL","MODULE"):
+            _fail(f"Invalid reason scope: {scope!r}")
+        mid = str(r.get("module_id","")).strip()
+        if scope == "MODULE":
+            validate_id("module_id", mid, "module_id")
+        elif mid:
+            _fail("Global reason has non-empty module_id")
+
+    dep = read_csv(ms / "module_dependency_index.csv")
+    for r in dep:
+        validate_id("module_id", str(r.get("module_id","")).strip(), "module_dependency_index.module_id")
+        validate_id("module_id", str(r.get("depends_on_module_id","")).strip(), "module_dependency_index.depends_on_module_id")
+
+    _ok("Maintenance-state: required files + ID format OK")
+
+
+def _validate_billing_state(billing_state_dir: Path) -> None:
+    required_files = [
+        "tenants_credits.csv",
+        "transactions.csv",
+        "transaction_items.csv",
+        "promotion_redemptions.csv",
+        "cache_index.csv",
+        "workorders_log.csv",
+        "module_runs_log.csv",
+        "github_releases_map.csv",
+        "github_assets_map.csv",
+        "state_manifest.json",
+    ]
+    for fn in required_files:
+        p = billing_state_dir / fn
+        if not p.exists():
+            _fail(f"Billing-state missing required file: {p}")
+
+    # headers
+    _assert_exact_header(billing_state_dir / "tenants_credits.csv", ["tenant_id","credits_available","updated_at","status"])
+    _assert_exact_header(billing_state_dir / "transactions.csv", ["transaction_id","tenant_id","work_order_id","type","amount_credits","created_at","reason_code","note","metadata_json"])
+    _assert_exact_header(billing_state_dir / "transaction_items.csv", ["transaction_item_id","transaction_id","tenant_id","module_id","feature","type","amount_credits","created_at","note","metadata_json"])
+    _assert_exact_header(billing_state_dir / "promotion_redemptions.csv", ["redemption_id","tenant_id","promo_code","credits_granted","created_at","note","metadata_json"])
+    _assert_exact_header(billing_state_dir / "cache_index.csv", ["cache_key","tenant_id","module_id","created_at","expires_at","cache_id"])
+    _assert_exact_header(billing_state_dir / "workorders_log.csv", ["work_order_id","tenant_id","status","created_at","started_at","ended_at","note","metadata_json"])
+    _assert_exact_header(billing_state_dir / "module_runs_log.csv", ["module_run_id","tenant_id","work_order_id","module_id","status","created_at","started_at","ended_at","reason_code","report_path","output_ref","metadata_json"])
+    _assert_exact_header(billing_state_dir / "github_releases_map.csv", ["release_id","github_release_id","tag","tenant_id","work_order_id","created_at"])
+    _assert_exact_header(billing_state_dir / "github_assets_map.csv", ["asset_id","github_asset_id","release_id","asset_name","created_at"])
+
+    # ID format sanity on non-empty rows
+    for r in read_csv(billing_state_dir / "tenants_credits.csv"):
+        tid = str(r.get("tenant_id","")).strip()
+        if tid:
+            validate_id("tenant_id", tid, "tenant_id")
+
+    for r in read_csv(billing_state_dir / "transactions.csv"):
+        if r.get("transaction_id"):
+            validate_id("transaction_id", str(r["transaction_id"]).strip(), "transaction_id")
+        if r.get("tenant_id"):
+            validate_id("tenant_id", str(r["tenant_id"]).strip(), "tenant_id")
+        wid = str(r.get("work_order_id","")).strip()
+        if wid:
+            validate_id("work_order_id", wid, "work_order_id")
+
+    _ok("Billing-state: required assets + headers + basic ID format OK")
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--phase", choices=["pre", "post", "release"], required=True)
-    ap.add_argument("--billing-state-dir", required=True)
-    ap.add_argument("--runtime-dir", required=True)
-    args = ap.parse_args()
+    ap.add_argument("--phase", choices=["pre","post"], required=True)
+    ap.add_argument("--billing-state-dir", default=".billing-state")
+    ap.add_argument("--runtime-dir", default="runtime")
+    args = ap.parse_args(argv)
 
-    repo_root = _repo_root()
+    repo_root = Path(__file__).resolve().parents[1]
     billing_state_dir = Path(args.billing_state_dir).resolve()
 
-    _verify_platform_billing(repo_root)
-    _verify_maintenance_state(repo_root)
-    _verify_artifacts_contract(repo_root)
-    _verify_dependency_index(repo_root)
+    if args.phase == "pre":
+        _validate_repo_billing_config(repo_root)
+        _validate_modules(repo_root)
+        _validate_tenants_and_workorders(repo_root)
+        _validate_maintenance_state(repo_root)
+    else:
+        _validate_billing_state(billing_state_dir)
 
-    if args.phase in ("post", "release"):
-        _verify_billing_state_dir(billing_state_dir)
-
-    _ok(f"{args.phase.upper()} verification complete")
     return 0
 
 

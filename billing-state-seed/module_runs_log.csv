@@ -1,1 +1,1 @@
-module_run_id,work_order_id,tenant_id,module_id,status,reason_code,started_at,finished_at,reuse_output_type,reuse_reference,cache_key_used,published_release_tag,release_manifest_name,metadata_json
+module_run_id,tenant_id,work_order_id,module_id,status,created_at,started_at,ended_at,reason_code,report_path,output_ref,metadata_json

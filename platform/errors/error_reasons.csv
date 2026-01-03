@@ -1,5 +1,5 @@
 module_id,error_code,severity,description,remediation
-000003,BAD_INPUT,ERROR,Work Order inputs for module 000003 do not conform to the tenant parameters schema.,Validate tenant inputs against platform/schemas/work_order_modules/000003.schema.json and correct the values.
-000003,GOOGLE_API_ERROR,ERROR,Google Custom Search API returned a non-2xx response or an invalid payload.,"Check API key/cx validity, quota, and query restrictions. Retry the Work Order after remediation."
-000003,MISSING_SECRET,ERROR,Required env vars are not set for Google Custom Search.,"Define GitHub secrets 000000000003_GOOGLE_SEARCH_API_KEY and 000000000003_GOOGLE_SEARCH_ENGINE_ID, and map them to env in the workflow."
-000003,OUTPUT_WRITE_FAILED,ERROR,Failed to write module output files to the runtime outputs directory.,Verify runner filesystem permissions and available disk space; rerun the workflow.
+wxz,BAD_INPUT,ERROR,Work Order inputs for module wxz do not conform to the tenant parameters schema.,Validate tenant inputs against platform/schemas/work_order_modules/wxz.schema.json and correct the values.
+wxz,GOOGLE_API_ERROR,ERROR,Google Custom Search API returned a non-2xx response or an invalid payload.,"Check API key/cx validity, quota, and query restrictions. Retry the Work Order after remediation."
+wxz,MISSING_SECRET,ERROR,Required env vars are not set for Google Custom Search.,"Define GitHub secrets 000000wxz_GOOGLE_SEARCH_API_KEY and 000000wxz_GOOGLE_SEARCH_ENGINE_ID, and map them to env in the workflow."
+wxz,OUTPUT_WRITE_FAILED,ERROR,Failed to write module output files to the runtime outputs directory.,Verify runner filesystem permissions and available disk space; rerun the workflow.

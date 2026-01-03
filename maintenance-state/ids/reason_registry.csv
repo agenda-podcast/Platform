@@ -1,28 +1,28 @@
-g,category_id,module_id,reason_id,reason_key,active,notes
-0,14,000000,001,workorder_invalid,true,
-0,15,000000,001,unauthorized_release_access,true,
-0,16,000000,001,internal_error,true,
-0,16,000000,002,not_enough_credits,true,
-0,16,000000,003,tenant_suspended,true,
-1,01,000001,001,bad_input_format,true,
-1,01,000001,002,external_api_error,true,
-1,01,000001,003,missing_required_input,true,
-1,01,000002,001,bad_input_format,true,
-1,01,000002,002,external_api_error,true,
-1,01,000002,003,missing_required_input,true,
-1,12,000001,001,skipped_cache,true,
-1,12,000002,001,skipped_cache,true,
-1,12,000003,001,skipped_cache,true,
-1,14,000001,001,artifacts_not_eligible,true,
-1,14,000001,002,artifacts_download_not_allowed_by_module,true,
-1,14,000001,003,artifacts_download_not_allowed_by_platform,true,
-1,14,000002,001,artifacts_not_eligible,true,
-1,14,000002,002,artifacts_download_not_allowed_by_module,true,
-1,14,000002,003,artifacts_download_not_allowed_by_platform,true,
-1,14,000003,001,bad_input_format,true,
-1,14,000003,002,external_api_error,true,
-1,14,000003,003,missing_required_input,true,
-1,14,000003,004,missing_secret,true,
-1,14,000003,005,output_write_failed,true,
-1,14,000003,006,artifacts_download_not_allowed_by_module,true,
-1,14,000003,007,artifacts_download_not_allowed_by_platform,true,
+reason_code,scope,module_id,reason_key,reason_slug,category_id,description
+6O6V4z,MODULE,wxz,r0D,artifacts_download_not_allowed_by_module,14,"Artifacts were purchased, but this module does not support downloadable release artifacts."
+9RXo6Z,MODULE,wxz,zoA,bad_input_format,01,Input was present but not in a supported format.
+E7LC3q,MODULE,U2T,dpb,bad_input_format,01,Input was present but not in a supported format.
+ES9Hgt,MODULE,9SD,J8u,external_api_error,01,Upstream API call failed or returned an error.
+LSNoxf,MODULE,9SD,sd5,artifacts_not_eligible,14,Artifacts were purchased but not eligible per policy or module capability.
+MD2Bcx,GLOBAL,,EMl,internal_error,16,Unexpected internal system error.
+MXixWy,MODULE,9SD,9oM,missing_required_input,01,A required module input was not provided or could not be resolved.
+RCNCl7,MODULE,wxz,wrP,missing_secret,01,Required env secrets were not provided for Google Custom Search API.
+RVe9DN,MODULE,9SD,Vut,skipped_cache,12,Cache was used; module execution skipped and marked FAILED for refund logic.
+ShlFvj,MODULE,wxz,tmn,missing_required_input,01,A required module input was not provided or could not be resolved.
+T2J0Yj,MODULE,9SD,GqU,artifacts_download_not_allowed_by_platform,14,"Artifacts were purchased, but platform policy disables downloadable release artifacts for this module."
+Tdqu2d,MODULE,wxz,E2Y,output_write_failed,01,Failed to write module outputs to the runtime directory.
+W02JvS,GLOBAL,,0Qx,tenant_suspended,16,Tenant account is suspended; execution not allowed.
+blEqc2,MODULE,U2T,lBy,artifacts_download_not_allowed_by_platform,14,"Artifacts were purchased, but platform policy disables downloadable release artifacts for this module."
+c8XOYn,MODULE,U2T,GyK,artifacts_not_eligible,14,Artifacts were purchased but not eligible per policy or module capability.
+eDaZkN,MODULE,U2T,0aG,artifacts_download_not_allowed_by_module,14,"Artifacts were purchased, but this module does not support downloadable release artifacts."
+gSgN1Q,MODULE,U2T,lNB,missing_required_input,01,A required module input was not provided or could not be resolved.
+iQEX3f,MODULE,wxz,Yt1,skipped_cache,12,Cache was used; module execution skipped and marked FAILED for refund logic.
+j2tD8N,MODULE,U2T,vEK,skipped_cache,12,Cache was used; module execution skipped and marked FAILED for refund logic.
+kUnE3K,MODULE,wxz,a2u,artifacts_download_not_allowed_by_platform,14,"Artifacts were purchased, but platform policy disables downloadable release artifacts for this module."
+kbgyWT,MODULE,U2T,5eS,external_api_error,01,Upstream API call failed or returned an error.
+mdAfF9,GLOBAL,,MEy,not_enough_credits,16,Tenant credits do not cover estimated work order spend.
+oHsCKk,GLOBAL,,FM9,workorder_invalid,14,Work order file failed schema validation.
+qDjGKS,MODULE,wxz,ljz,external_api_error,01,Upstream API call failed or returned an error.
+rWX9Jx,GLOBAL,,gww,unauthorized_release_access,15,Cross-tenant access denied by tenant relationships.
+xquEPE,MODULE,9SD,Ntd,bad_input_format,01,Input was present but not in a supported format.
+y7eE9e,MODULE,9SD,FLe,artifacts_download_not_allowed_by_module,14,"Artifacts were purchased, but this module does not support downloadable release artifacts."

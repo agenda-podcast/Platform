@@ -1,0 +1,28 @@
+reasons:
+- reason_key: tmn
+  reason_slug: missing_required_input
+  description: A required module input was not provided or could not be resolved.
+- reason_key: zoA
+  reason_slug: bad_input_format
+  description: Input was present but not in a supported format.
+- reason_key: wrP
+  reason_slug: missing_secret
+  description: Required env secrets were not provided for Google Custom Search API.
+- reason_key: ljz
+  reason_slug: external_api_error
+  description: Upstream API call failed or returned an error.
+- reason_key: E2Y
+  reason_slug: output_write_failed
+  description: Failed to write module outputs to the runtime directory.
+- reason_key: Yt1
+  reason_slug: skipped_cache
+  category_id: '12'
+  description: Cache was used; module execution skipped and marked FAILED for refund logic.
+- reason_key: r0D
+  reason_slug: artifacts_download_not_allowed_by_module
+  category_id: '14'
+  description: Artifacts were purchased, but this module does not support downloadable release artifacts.
+- reason_key: a2u
+  reason_slug: artifacts_download_not_allowed_by_platform
+  category_id: '14'
+  description: Artifacts were purchased, but platform policy disables downloadable release artifacts for this module.

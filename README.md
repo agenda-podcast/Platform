@@ -1,73 +1,90 @@
-# Platform (Modular Orchestration + Billing-State)
+# PLATFORM (Modular, Release-backed State)
 
-This repository is a reference implementation of:
+This repository implements a small, modular “platform” runner with:
 
-- **Tenant-scoped work orders** (YAML) that request **modules** to run
-- An **orchestrator** that plans dependencies, checks credits, runs modules, and writes ledgers
-- A GitHub Releases-friendly **billing-state** directory that is the accounting system of record
-- A repo-managed **maintenance-state** directory that provides controlled catalogs (reason codes, dependencies, policies)
+- **Modules** (in `modules/<module_id>/`) executed by the orchestrator
+- **Tenants + Work Orders** (in `tenants/<tenant_id>/workorders/`)
+- **Release-backed billing state** (GitHub Release tag is the **system of record**)
+- **Maintenance** that regenerates derived indexes in `maintenance-state/`
+- **E2E verification** that enforces schemas, headers, and ID policy
+- A **standalone Cache Prune** workflow (left unchanged)
 
-## Repository layout
+## ID policy (Base62, fixed length, randomized, de-duplicated)
 
-```text
-platform/               Core library + CLI
-  billing/              Billing workflows (pricing, promotions, payments, top-ups)
-  orchestration/        Workorder discovery, planning, execution, billing mutations
-  common/               Shared utilities (incl. ID canonicalization)
+All IDs are **random Base62** using the alphabet: `0-9 A-Z a-z`.
 
-modules/                Module definitions (each module in its own folder)
-tenants/                Tenant folders + workorders
+| Entity | Length |
+|---|---:|
+| Tenant ID | 6 |
+| Work Order ID | 8 |
+| Module ID | 3 |
+| Transaction ID | 8 |
+| Transaction Item ID | 8 |
+| Module Run ID | 8 |
+| Reason Code | 6 |
+| Reason Key | 3 |
+| Payment ID | 8 |
+| Top-up Method ID | 2 |
+| Product Code | 3 |
+| GitHub Release / Asset ID (internal) | 8 |
 
-maintenance-state/      Repo-managed catalogs (reason codes, policies, dependency index, etc.)
-billing-state-seed/     Seed accounting state used to bootstrap a billing-state directory
+Validation and generation are implemented in:
+- `platform/common/id_policy.py`
+- `platform/common/id_codec.py`
 
-scripts/                CI helpers (verification) and repo maintenance utilities
-config/                 Repository configuration
-.github/workflows/      CI workflows
-```
+## Release-backed billing state (fixed tag)
 
-## Quick start
+Billing state is **not stored as editable source of truth in the repository**.
 
-1) Bootstrap a local billing-state directory:
+- The **source-of-truth release tag is fixed**: `billing-state-v1`
+- Workflows download the release assets into `.billing-state/`, mutate locally, then upload back.
 
-```bash
-mkdir -p .billing-state
-cp billing-state-seed/* .billing-state/
-```
+Billing-state assets (CSV) include:
+- `tenants_credits.csv`
+- `transactions.csv`
+- `transaction_items.csv`
+- `promotion_redemptions.csv`
+- `cache_index.csv`
+- `workorders_log.csv`
+- `module_runs_log.csv`
+- `github_releases_map.csv` (internal release_id -> GitHub numeric release id)
+- `github_assets_map.csv` (internal asset_id -> GitHub numeric asset id)
+- `state_manifest.json`
 
-2) Run orchestration:
+Seeds for a fresh release are in `billing-state-seed/`.
 
-```bash
-python -m platform.cli orchestrate --runtime-dir runtime --billing-state-dir .billing-state
-```
+## GitHub Release/Asset internal mapping (anti-enumeration)
 
-3) (Optional) Publish purchased artifacts to GitHub Releases:
+For module artifacts published to GitHub Releases, the platform uses an **internal** random 8-char ID
+(`github_release_asset_id`) as the “release_id” and “asset_id”. The numeric GitHub IDs are stored in billing state:
 
-```bash
-python -m platform.cli orchestrate --runtime-dir runtime --billing-state-dir .billing-state --enable-github-releases
-```
+- `platform/billing-state/github_releases_map.csv`
+- `platform/billing-state/github_assets_map.csv`
 
-## ID matching policy (critical)
+This enables internal folder naming and avoids exposing sequential GitHub IDs.
 
-This repo uses fixed-width numeric IDs (e.g., `tenant_id=0000000001`, `module_id=000003`).
-Some tools (notably Excel) may coerce these into numbers and drop leading zeros.
+## Key commands
 
-To prevent ledger corruption and failed joins, the platform implements a strict policy:
+- Maintenance (regenerates `maintenance-state/`):
+  ```bash
+  python -m platform.cli maintenance
+  ```
 
-- **Matching** uses a numeric *join key*: digits-only values are compared by numeric value
-  (i.e., leading zeros are ignored).
-- **Storage** writes canonical fixed-width IDs whenever the platform mutates accounting state.
+- Orchestrator (runs enabled work orders):
+  ```bash
+  python -m platform.cli orchestrator --billing-state-dir .billing-state --runtime-dir runtime --enable-github-releases
+  ```
 
-Implementation lives in `platform/common/id_codec.py` and is applied across:
-- orchestration credit checks and ledger writes
-- payment reconciliation / manual top-ups
-- dependency planning and reason-code lookups
+- Admin top-up (posts a TOPUP transaction):
+  ```bash
+  python -m platform.cli admin-topup --billing-state-dir .billing-state --tenant-id <TENANT> --topup-method-id <TM> --amount-credits 1000 --reference "wire-123"
+  ```
 
-## CI / verification
+## Workflows
 
-GitHub Actions runs end-to-end verification via `scripts/ci_verify.py`.
-If you change schemas, outputs, or workflow behavior, extend verification accordingly.
+- **maintenance.yml**: regenerates maintenance-state + verifies repo
+- **orchestrator.yml**: runs work orders and updates the billing-state release assets
+- **admin-topup.yml**: applies a top-up and updates the billing-state release assets
+- **verify-e2e.yml**: runs an end-to-end pass of maintenance + orchestrator + verification
+- **cache-prune.yml**: standalone cache cleanup (unchanged)
 
----
-
-License: see `LICENSE`.

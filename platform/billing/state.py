@@ -23,6 +23,8 @@ DEFAULT_REQUIRED_FILES: List[str] = [
     "cache_index.csv",
     "workorders_log.csv",
     "module_runs_log.csv",
+    "github_releases_map.csv",
+    "github_assets_map.csv",
 ]
 
 
