@@ -1,0 +1,82 @@
+name: Sync Releases
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Daily at 04:17 UTC (adjust as needed)
+    - cron: "17 4 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-releases-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Rebase onto latest main (avoid non-fast-forward push)
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git rebase origin/main
+
+      # IMPORTANT:
+      # Do NOT use: cli/cli@v2  (it is not a valid GitHub Action ref and will fail resolution)
+      # GitHub-hosted runners already include the `gh` CLI.
+      - name: Validate GitHub CLI availability
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh --version
+          gh auth status || true
+
+      - name: Run release sync
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Your sync entrypoint; adjust if your repo uses a different script path.
+          python scripts/release_sync.py
+
+      - name: Commit and push (retry on race)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: sync releases" || true
+
+          # Main can advance while this job runs. Retry by rebasing then pushing again.
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "Push succeeded."
+              exit 0
+            fi
+            echo "Push rejected (non-fast-forward). Fetch + rebase and retry: attempt ${attempt}"
+            git fetch origin main
+            git rebase origin/main
+          done
+
+          echo "Push failed after retries."
+          exit 1
