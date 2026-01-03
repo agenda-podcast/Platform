@@ -12,13 +12,26 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout (full history for rebase)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Guard: no cli/cli@v2 anywhere in .github
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -R "cli/cli@v2" -n .github >/dev/null 2>&1; then
+            echo "Found invalid action reference cli/cli@v2 in .github." >&2
+            grep -R "cli/cli@v2" -n .github >&2 || true
+            exit 1
+          fi
 
       # IMPORTANT: Do NOT use `cli/cli@v2` (cli/cli is not a GitHub Action tag).
       # GitHub-hosted runners already include `gh`. If you are in a container/self-hosted image
@@ -37,16 +50,37 @@ jobs:
           set -euo pipefail
           python -m scripts.release_sync
 
-      - name: Commit changes (if any)
+      - name: Commit & push changes (with rebase)
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -n "$(git status --porcelain)" ]]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -A
-            git commit -m "chore: sync releases"
-            git push
-          else
+
+          if [[ -z "$(git status --porcelain)" ]]; then
             echo "No changes to commit."
+            exit 0
           fi
+
+          BRANCH="${GITHUB_REF_NAME:-main}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Rebase on the latest remote state to avoid non-fast-forward push errors.
+          git fetch origin "$BRANCH"
+          git rebase "origin/$BRANCH"
+
+          git add -A
+          git commit -m "chore: sync releases"
+
+          # Retry a couple times in case another workflow pushes at the same time.
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:$BRANCH"; then
+              exit 0
+            fi
+            echo "Push rejected (attempt $attempt). Rebasing and retrying..." >&2
+            git fetch origin "$BRANCH"
+            git rebase "origin/$BRANCH"
+          done
+
+          echo "Push failed after retries." >&2
+          exit 1

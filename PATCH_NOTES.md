@@ -1,43 +1,23 @@
-# PLATFORM Patch — Tenant Not Found Error Continuation (Release Sync + Base62 IDs)
+# PLATFORM patch v2 — release sync workflow fixes
 
-This patch addresses the failure:
+This patch addresses two failures seen in GitHub Actions:
 
-- `Error: Unable to resolve action \`cli/cli@v2\`, unable to find version \`v2\``
+1) **`Error: Unable to resolve action cli/cli@v2`**
+- `cli/cli@v2` is **not** a valid GitHub Action reference.
+- GitHub-hosted runners already include the **`gh`** CLI, so the workflow now **verifies `gh` exists** and uses it directly.
 
-Root cause: **`cli/cli` is not a GitHub Action that can be referenced as `uses: cli/cli@v2`**.
-GitHub-hosted runners already include the GitHub CLI (`gh`), and GitHub recommends using it
-directly in workflows (with `GH_TOKEN`). See GitHub docs for using `gh` in workflows.
+2) **`main -> main (fetch first)` push rejection**
+- This happens when the remote branch advanced (e.g., another workflow run committed) after your checkout.
+- The workflow now:
+  - checks out with **full history** (`fetch-depth: 0`) so rebase is possible
+  - **fetches + rebases** on `origin/<branch>` before committing
+  - **retries push** up to 3 times with rebase in between
 
-## What is included
+## Files included
+- `.github/workflows/sync-releases.yml`
+- `scripts/` (Base62 IDs, internal release-alias mapping, release sync logic)
 
-1. `scripts/base62.py`  
-   Cryptographically-random Base62 generator (`0-9,A-Z,a-z`).
+## Notes
+- Billing release folder remains fixed: `releases/billing-state-v1/`
+- Mapping table is stored at: `.platform/internal/release_id_map.csv`
 
-2. `scripts/id_manager.py`  
-   - Generates fixed-length IDs with persistent deduplication  
-   - Stores used IDs in `.platform/internal/id_registry.json`
-   - Maintains the internal release mapping table:
-     `.platform/internal/release_id_map.csv`  
-     Mapping: **8-char Base62 alias** → **GitHub numeric release id** (+ tag)
-
-3. `scripts/release_sync.py`  
-   - Syncs GitHub releases to `/releases/` folders
-   - Billing release tag is **fixed** to: `billing-state-v1` (folder `releases/billing-state-v1/`)
-   - All other releases are stored under `releases/<release_alias_id>/`
-
-4. `.github/workflows/sync-releases.yml`  
-   - Removes the invalid `cli/cli@v2` reference
-   - Uses preinstalled `gh` and runs `python -m scripts.release_sync`
-
-## If you run in a container job or self-hosted runner without gh
-
-Use a marketplace action that installs gh (example):
-
-- `actions4gh/setup-gh@v1` (third-party) — see GitHub Marketplace listing
-  "Setup the GitHub CLI".
-
-Or install gh via apt (Ubuntu).
-
-## How to apply
-
-Unzip into repo root (preserving paths), commit, and run workflow **Sync Releases Into Repo**.
