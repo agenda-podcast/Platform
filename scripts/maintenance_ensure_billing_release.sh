@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Ensures GitHub Release billing-state-v1 exists and has required CSV assets.
-# Requires: python, requests dependency (already used by Platform scripts), and GITHUB_TOKEN env.
+: "${GITHUB_TOKEN:?GITHUB_TOKEN is required}"
+: "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 
-python -m platform.billing.publish_default_release
+export BILLING_TAG="${BILLING_TAG:-billing-state-v1}"
+export BILLING_TEMPLATE_DIR="${BILLING_TEMPLATE_DIR:-releases/billing-state-v1}"
+
+python -m platform.billing.publish_default_billing_release
