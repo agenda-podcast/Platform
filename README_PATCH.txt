@@ -1,15 +1,20 @@
-PATCH: Fresh-start workflow (removes cli/cli@v2)
+PLATFORM Billing Fresh-Start Bootstrap Patch
 
-What to do:
-1) Find the workflow file in your repo that currently contains:
-   uses: cli/cli@v2
-2) Delete that step entirely, or replace the whole workflow with:
-   .github/workflows/sync_releases.yml from this patch zip.
+This package adds platform/billing/bootstrap.py and provides patch diffs
+to wire it into:
+- platform/orchestration/orchestrator.py (wrap validate_minimal)
+- platform/billing/maintenance.py (ensure bootstrap at Maintenance start)
 
-Why:
-- `cli/cli@v2` is NOT a valid GitHub Action ref, so Actions fails during "Getting action download info".
-- GitHub-hosted runners already ship with the `gh` CLI, so you can call `gh ...` directly.
+Rationale:
+- If you delete the GitHub Release assets for billing-state-v1 or start fresh,
+  CI and orchestrator will fail early.
+- This patch makes the system self-healing:
+  * bootstraps local billing-state directory from repo template
+  * republishes missing assets to GitHub Releases (best-effort)
 
-Also included:
-- A push-safe pattern: fetch + rebase before commit, and retry push up to 3 times to avoid
-  non-fast-forward failures when main advances during the run.
+FILES INCLUDED:
+- platform/billing/bootstrap.py (NEW)
+- PATCH_orchestrator.diff
+- PATCH_maintenance.diff
+
+You must apply the *.diff patches to your repo files (they are small, safe edits).
