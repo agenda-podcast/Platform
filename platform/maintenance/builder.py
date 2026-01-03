@@ -8,7 +8,25 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..utils.csvio import read_csv, write_csv
 from ..utils.ids import reason_code, validate_category_id, validate_module_id, validate_reason_id
 from ..utils.time import utcnow_iso
-from ..utils.yamlio import read_yaml
+from ..utils.yamlio import read_yaml, write_yaml
+
+
+# -------------------------
+# Contract defaults enforced by Maintenance
+# -------------------------
+
+_ARTIFACT_REASON_DEFS: List[Dict[str, str]] = [
+    {
+        "reason_key": "artifacts_download_not_allowed_by_module",
+        "category_id": "14",
+        "description": "Artifacts download was requested, but this module does not support downloadable artifacts.",
+    },
+    {
+        "reason_key": "artifacts_download_not_allowed_by_platform",
+        "category_id": "14",
+        "description": "Artifacts download was requested, but platform policy disables artifacts for this module.",
+    },
+]
 
 
 @dataclass
@@ -57,6 +75,71 @@ def _scan_module_ids(ctx: MaintenanceContext) -> List[str]:
             continue
         module_ids.append(mid)
     return module_ids
+
+
+def _ensure_platform_policy(ctx: MaintenanceContext) -> Dict[str, str]:
+    """Ensure an explicit platform-level artifacts policy exists.
+
+    Contract:
+      - config/platform_policy.yml must exist
+      - maintenance-state/platform_policy.csv must exist
+
+    Platform artifacts are *allowed by default* unless explicitly disabled.
+    """
+
+    # 1) Repo config (human-managed, defaulted if missing)
+    cfg_path = ctx.repo_root / "config" / "platform_policy.yml"
+    if not cfg_path.exists():
+        write_yaml(cfg_path, {"platform_artifacts_enabled_default": True})
+    y = read_yaml(cfg_path)
+    default_enabled = bool(y.get("platform_artifacts_enabled_default", True))
+
+    # 2) Maintenance-state export (machine-consumed)
+    out_path = ctx.ms_dir / "platform_policy.csv"
+    rows = [{
+        "platform_artifacts_enabled_default": "true" if default_enabled else "false",
+        "updated_at": utcnow_iso(),
+    }]
+    write_csv(out_path, rows, ["platform_artifacts_enabled_default", "updated_at"])
+    return rows[0]
+
+
+def _ensure_module_artifacts_contract(ctx: MaintenanceContext, module_ids: List[str]) -> None:
+    """Enforce per-module artifacts contract.
+
+    Requirements:
+      1) Every modules/<id>/module.yml must contain supports_downloadable_artifacts (bool).
+         If missing, it is added with default False.
+      2) Every modules/<id>/validation.yml must include deterministic reasons for artifact
+         download denial (module-level and platform-level).
+    """
+
+    for mid in module_ids:
+        module_yml_path = ctx.modules_dir / mid / "module.yml"
+        if module_yml_path.exists():
+            m = read_yaml(module_yml_path)
+            if "supports_downloadable_artifacts" not in m:
+                m["supports_downloadable_artifacts"] = False
+                write_yaml(module_yml_path, m)
+
+        # Ensure validation.yml exists and includes artifact reasons.
+        val_path = ctx.modules_dir / mid / "validation.yml"
+        v = read_yaml(val_path) if val_path.exists() else {}
+        reasons = v.get("reasons") or []
+        if not isinstance(reasons, list):
+            reasons = []
+
+        existing = {str(r.get("reason_key", "")).strip() for r in reasons if isinstance(r, dict)}
+        for meta in _ARTIFACT_REASON_DEFS:
+            if meta["reason_key"] in existing:
+                continue
+            reasons.append({
+                "reason_key": meta["reason_key"],
+                "category_id": meta["category_id"],
+                "description": meta["description"],
+            })
+        v["reasons"] = reasons
+        write_yaml(val_path, v)
 
 
 def _ensure_module_registry(ctx: MaintenanceContext, module_ids: List[str]) -> List[Dict[str, str]]:
@@ -402,6 +485,11 @@ def run_maintenance(repo_root: Path) -> None:
     ctx = MaintenanceContext(repo_root=repo_root)
     categories = _load_categories(ctx)
     module_ids = _scan_module_ids(ctx)
+
+    # Enforce contract defaults *before* emitting registries and catalogs.
+    _ensure_platform_policy(ctx)
+    _ensure_module_artifacts_contract(ctx, module_ids)
+
     module_registry = _ensure_module_registry(ctx, module_ids)
     reason_registry = _ensure_reason_registry(ctx, module_registry)
     reason_catalog = _build_reason_catalog(ctx, categories, module_registry, reason_registry)

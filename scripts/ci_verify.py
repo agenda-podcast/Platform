@@ -6,6 +6,7 @@ import csv
 import re
 import sys
 import json
+import yaml
 from pathlib import Path
 from typing import Dict, List
 
@@ -158,6 +159,7 @@ def _verify_maintenance_state(repo_root: Path) -> None:
         ms / "reason_policy.csv",
         ms / "module_dependency_index.csv",
         ms / "module_artifacts_policy.csv",
+        ms / "platform_policy.csv",
         ms / "tenant_relationships.csv",
         ms / "ids" / "module_registry.csv",
     ]
@@ -166,6 +168,41 @@ def _verify_maintenance_state(repo_root: Path) -> None:
             _die(f"Missing maintenance-state required file: {p}")
 
     _ok("Maintenance-state: required files present")
+
+
+def _verify_module_artifacts_contract(repo_root: Path) -> None:
+    """Ensure every module declares artifacts support and denial reasons."""
+    modules_dir = repo_root / "modules"
+    if not modules_dir.exists():
+        _die("Missing modules/ folder")
+
+    for p in sorted(modules_dir.iterdir()):
+        if not p.is_dir():
+            continue
+        mid = p.name
+        if not MODULE_ID_RE.match(mid):
+            continue
+
+        module_yml = p / "module.yml"
+        if not module_yml.exists():
+            _die(f"Missing module.yml for module {mid}")
+        with module_yml.open("r", encoding="utf-8") as f:
+            y = yaml.safe_load(f) or {}
+        if "supports_downloadable_artifacts" not in y:
+            _die(f"Module {mid} missing supports_downloadable_artifacts in module.yml")
+
+        vpath = p / "validation.yml"
+        if not vpath.exists():
+            _die(f"Module {mid} missing validation.yml")
+        with vpath.open("r", encoding="utf-8") as f:
+            vy = yaml.safe_load(f) or {}
+        reasons = vy.get("reasons") or []
+        keys = {str(r.get("reason_key", "")).strip() for r in reasons if isinstance(r, dict)}
+        for req in ("artifacts_download_not_allowed_by_module", "artifacts_download_not_allowed_by_platform"):
+            if req not in keys:
+                _die(f"Module {mid} missing required reason_key in validation.yml: {req}")
+
+    _ok("Modules: artifacts contract enforced (supports flag + denial reasons)")
 
 
 def _parse_dep_list(raw: str) -> List[str]:
@@ -274,6 +311,7 @@ def main() -> int:
 
     _verify_platform_billing(repo_root)
     _verify_maintenance_state(repo_root)
+    _verify_module_artifacts_contract(repo_root)
     _verify_dependency_index(repo_root)
 
     if args.phase in ("post", "release"):

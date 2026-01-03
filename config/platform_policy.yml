@@ -1,0 +1,5 @@
+# Platform-level policy defaults (admin-managed)
+#
+# Artifacts are allowed by default for all modules unless disabled
+# in maintenance-state/module_artifacts_policy.csv.
+platform_artifacts_enabled_default: true

@@ -29,6 +29,7 @@ class MaintenanceState:
     reason_by_key: Dict[Tuple[str, str, str], str]  # (scope, module_id, reason_key) -> reason_code
     policy_by_code: Dict[str, Dict[str, str]]
     artifacts_policy: Dict[str, bool]
+    platform_artifacts_enabled_default: bool
     tenant_relationships: set[Tuple[str, str]]
     dependency_index: Dict[str, List[str]]
 
@@ -67,6 +68,14 @@ def load_maintenance_state(repo_root: Path) -> MaintenanceState:
         if r.get("module_id")
     }
 
+    # platform policy (explicit): if file is missing, default allow
+    platform_default = True
+    platform_policy_path = ms_root / "platform_policy.csv"
+    if platform_policy_path.exists():
+        pp_rows = read_csv(platform_policy_path)
+        if pp_rows:
+            platform_default = str(pp_rows[0].get("platform_artifacts_enabled_default", "true")).lower() == "true"
+
     rel_rows = read_csv(ms_root / "tenant_relationships.csv")
     rel = set()
     for r in rel_rows:
@@ -82,6 +91,7 @@ def load_maintenance_state(repo_root: Path) -> MaintenanceState:
         reason_by_key=reason_by_key,
         policy_by_code=policy_by_code,
         artifacts_policy=artifacts_policy,
+        platform_artifacts_enabled_default=platform_default,
         tenant_relationships=rel,
         dependency_index=dep_index,
     )
@@ -395,8 +405,8 @@ def _module_supports_artifacts(module_cfg: Dict[str, Any]) -> bool:
 
 
 def _platform_allows_artifacts(ms: MaintenanceState, module_id: str) -> bool:
-    # Missing row => allow
-    return ms.artifacts_policy.get(module_id, True)
+    # Missing row => default policy
+    return ms.artifacts_policy.get(module_id, ms.platform_artifacts_enabled_default)
 
 
 def _cache_index_lookup(cache_index: List[Dict[str, str]], cache_key: str) -> Optional[Dict[str, str]]:
@@ -432,11 +442,11 @@ def _execute_module(
 
     # Artifact eligibility checks only apply when purchased.
     if bool(module_spec.get("purchase_release_artifacts", False)):
-        if not _module_supports_artifacts(module_cfg) or not _platform_allows_artifacts(ms, module_id):
-            try:
-                rc = _reason_code(ms, "MODULE", module_id, "artifacts_not_eligible")
-            except KeyError:
-                rc = _reason_code(ms, "GLOBAL", "000000", "internal_error")
+        if not _module_supports_artifacts(module_cfg):
+            rc = _reason_code(ms, "MODULE", module_id, "artifacts_download_not_allowed_by_module")
+            return ModuleExecResult(status="FAILED", reason_code=rc)
+        if not _platform_allows_artifacts(ms, module_id):
+            rc = _reason_code(ms, "MODULE", module_id, "artifacts_download_not_allowed_by_platform")
             return ModuleExecResult(status="FAILED", reason_code=rc)
 
     # Validate required params from module.yml
@@ -677,6 +687,29 @@ def orchestrate_workorder(cfg: OrchestratorConfig, ms: MaintenanceState, billing
             "work_order_id","tenant_id","status","reason_code","started_at","finished_at","github_run_id","workorder_mode","requested_modules","metadata_json"
         ])
         return
+
+    # Preflight: if artifacts are requested but disallowed, fail early with a clear reason
+    # (avoid charging + refunding for an execution that can never proceed).
+    spec_by_id = {canon_module_id(s.get("module_id")): s for s in requested_specs}
+    for mid in ordered:
+        spec = spec_by_id.get(mid, {}) or {}
+        if not bool(spec.get("purchase_release_artifacts", False)):
+            continue
+        module_cfg = _load_module_config(cfg.repo_root, mid)
+        if not _module_supports_artifacts(module_cfg):
+            rc = _reason_code(ms, "MODULE", mid, "artifacts_download_not_allowed_by_module")
+            _write_workorder_log(workorders_log, workorder, "FAILED", rc, started_at, utcnow_iso(), ordered)
+            billing.save_table("workorders_log.csv", workorders_log, list(workorders_log[0].keys()) if workorders_log else [
+                "work_order_id","tenant_id","status","reason_code","started_at","finished_at","github_run_id","workorder_mode","requested_modules","metadata_json"
+            ])
+            return
+        if not _platform_allows_artifacts(ms, mid):
+            rc = _reason_code(ms, "MODULE", mid, "artifacts_download_not_allowed_by_platform")
+            _write_workorder_log(workorders_log, workorder, "FAILED", rc, started_at, utcnow_iso(), ordered)
+            billing.save_table("workorders_log.csv", workorders_log, list(workorders_log[0].keys()) if workorders_log else [
+                "work_order_id","tenant_id","status","reason_code","started_at","finished_at","github_run_id","workorder_mode","requested_modules","metadata_json"
+            ])
+            return
 
     # Estimate + credit check
     est_total, spend_items = estimate_spend(module_prices, workorder, promotions_catalog, promotion_redemptions)
