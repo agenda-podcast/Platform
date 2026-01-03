@@ -1,17 +1,12 @@
-name: Sync Releases
+name: Sync releases
 
 on:
   workflow_dispatch:
   schedule:
-    # Daily at 04:17 UTC (adjust as needed)
-    - cron: "17 4 * * *"
+    - cron: "17 3 * * *"
 
 permissions:
   contents: write
-
-concurrency:
-  group: sync-releases-main
-  cancel-in-progress: false
 
 jobs:
   sync:
@@ -24,59 +19,42 @@ jobs:
 
       - name: Configure git identity
         run: |
-          set -euo pipefail
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Rebase onto latest main (avoid non-fast-forward push)
-        run: |
-          set -euo pipefail
-          git fetch origin main
-          git rebase origin/main
+      - name: Verify GitHub CLI is available
+        run: gh --version
 
-      # IMPORTANT:
-      # Do NOT use: cli/cli@v2  (it is not a valid GitHub Action ref and will fail resolution)
-      # GitHub-hosted runners already include the `gh` CLI.
-      - name: Validate GitHub CLI availability
+      - name: Update internal release id map
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          gh --version
-          gh auth status || true
+          python3 scripts/release_map_sync.py
 
-      - name: Run release sync
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Commit changes (if any)
         run: |
-          set -euo pipefail
-          # Your sync entrypoint; adjust if your repo uses a different script path.
-          python scripts/release_sync.py
-
-      - name: Commit and push (retry on race)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          git add -A
+          git add .platform/internal/release_id_map.csv
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
           fi
+          git commit -m "chore: sync releases"
 
-          git commit -m "chore: sync releases" || true
-
-          # Main can advance while this job runs. Retry by rebasing then pushing again.
-          for attempt in 1 2 3; do
+      - name: Rebase and push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git pull --rebase origin main
+          for i in 1 2 3 4 5; do
             if git push origin HEAD:main; then
-              echo "Push succeeded."
               exit 0
             fi
-            echo "Push rejected (non-fast-forward). Fetch + rebase and retry: attempt ${attempt}"
+            echo "Push failed (attempt $i). Rebasing and retrying..."
             git fetch origin main
-            git rebase origin/main
+            git pull --rebase origin main
+            sleep 2
           done
-
           echo "Push failed after retries."
           exit 1
