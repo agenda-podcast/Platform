@@ -1,0 +1,52 @@
+name: Sync Releases Into Repo
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *" # daily 03:17 UTC
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # IMPORTANT: Do NOT use `cli/cli@v2` (cli/cli is not a GitHub Action tag).
+      # GitHub-hosted runners already include `gh`. If you are in a container/self-hosted image
+      # without gh, install it explicitly (see notes in PATCH_NOTES.md).
+      - name: Verify gh present
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v gh >/dev/null 2>&1 || (echo "gh not found on runner" && exit 1)
+          gh --version
+
+      - name: Sync releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -m scripts.release_sync
+
+      - name: Commit changes (if any)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "chore: sync releases"
+            git push
+          else
+            echo "No changes to commit."
+          fi
