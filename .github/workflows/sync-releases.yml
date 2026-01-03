@@ -1,86 +1,52 @@
-name: Sync Releases Into Repo
+name: Sync releases
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 3 * * *" # daily 03:17 UTC
+    - cron: '13 * * * *'
 
 permissions:
   contents: write
+
+concurrency:
+  group: sync-releases-main
+  cancel-in-progress: true
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (full history for rebase)
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: true
 
-      - name: Setup Python
+      - name: Guard (no cli/cli@* and no @v2)
+        run: |
+          bash scripts/ci_no_v2_scan.sh
+
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
-      - name: Guard: no cli/cli@v2 anywhere in .github
-        shell: bash
+      - name: Install dependencies
         run: |
-          set -euo pipefail
-          if grep -R "cli/cli@v2" -n .github >/dev/null 2>&1; then
-            echo "Found invalid action reference cli/cli@v2 in .github." >&2
-            grep -R "cli/cli@v2" -n .github >&2 || true
-            exit 1
-          fi
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          # If this is a package repo, allow editable install
+          if [ -f pyproject.toml ] || [ -f setup.py ]; then pip install -e .; fi
 
-      # IMPORTANT: Do NOT use `cli/cli@v2` (cli/cli is not a GitHub Action tag).
-      # GitHub-hosted runners already include `gh`. If you are in a container/self-hosted image
-      # without gh, install it explicitly (see notes in PATCH_NOTES.md).
-      - name: Verify gh present
-        shell: bash
-        run: |
-          set -euo pipefail
-          command -v gh >/dev/null 2>&1 || (echo "gh not found on runner" && exit 1)
-          gh --version
-
-      - name: Sync releases
+      - name: Sync releases (implementation entrypoint)
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          python -m scripts.release_sync
+          bash scripts/run_release_sync.sh
 
-      - name: Commit & push changes (with rebase)
-        shell: bash
+      - name: Commit & push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-
-          if [[ -z "$(git status --porcelain)" ]]; then
-            echo "No changes to commit."
-            exit 0
-          fi
-
-          BRANCH="${GITHUB_REF_NAME:-main}"
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          # Rebase on the latest remote state to avoid non-fast-forward push errors.
-          git fetch origin "$BRANCH"
-          git rebase "origin/$BRANCH"
-
-          git add -A
-          git commit -m "chore: sync releases"
-
-          # Retry a couple times in case another workflow pushes at the same time.
-          for attempt in 1 2 3; do
-            if git push origin "HEAD:$BRANCH"; then
-              exit 0
-            fi
-            echo "Push rejected (attempt $attempt). Rebasing and retrying..." >&2
-            git fetch origin "$BRANCH"
-            git rebase "origin/$BRANCH"
-          done
-
-          echo "Push failed after retries." >&2
-          exit 1
+          # Ensure credentials for push
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+          bash scripts/ci_commit_push.sh "chore: sync releases" main
