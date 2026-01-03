@@ -33,6 +33,34 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f pyproject.toml ] || [ -f setup.py ]; then pip install -e .; fi
 
+
+      - name: Hydrate billing-state from GitHub Release (billing-state-v1)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          rm -rf .billing-state
+          mkdir -p .billing-state
+
+          # Prefer authoritative billing-state from GitHub Releases
+          if gh release view billing-state-v1 --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Downloading billing-state-v1 assets into .billing-state/ ..."
+            gh release download billing-state-v1 --repo "${{ github.repository }}" --dir .billing-state --clobber
+          else
+            echo "WARNING: billing-state-v1 release not found. Falling back to repo seed .billing-state-ci/."
+            cp -a .billing-state-ci/. .billing-state/
+          fi
+
+          # Sanity-check required files (orchestrator validate_minimal)
+          req=(tenants_credits.csv transactions.csv transaction_items.csv promotion_redemptions.csv cache_index.csv workorders_log.csv module_runs_log.csv github_releases_map.csv github_assets_map.csv)
+          for f in "${req[@]}"; do
+            if [ ! -f ".billing-state/$f" ]; then
+              echo "ERROR: Missing required billing-state file: .billing-state/$f"
+              echo "Contents of .billing-state:"
+              ls -la .billing-state || true
+              exit 2
+            fi
+          done
       - name: Pre-verify (if verifier exists)
         run: |
           if [ -f scripts/ci_verify.py ]; then
