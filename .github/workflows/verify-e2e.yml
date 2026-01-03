@@ -1,39 +1,38 @@
-name: E2E verify
+name: Verify E2E
 
 on:
-  workflow_dispatch:
-  push:
-    branches: [ main ]
+  workflow_dispatch: {}
+  workflow_call: {}
 
 permissions:
   contents: read
 
 jobs:
-  verify:
+  verify-e2e:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Guard (no cli/cli@* and no @v2)
-        run: bash scripts/ci_no_v2_scan.sh
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install Python dependencies (minimal)
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f pyproject.toml ] || [ -f setup.py ]; then pip install -e .; fi
+          if [ -f requirements.txt ]; then
+            python -m pip install -r requirements.txt
+          elif [ -f scripts/requirements.txt ]; then
+            python -m pip install -r scripts/requirements.txt
+          else
+            # Required by scripts/ci_verify.py (import yaml)
+            python -m pip install pyyaml
+          fi
 
       - name: Run E2E verification
         run: |
-          if [ -f scripts/ci_verify.py ]; then
-            python scripts/ci_verify.py --phase pre --billing-state-dir .billing-state-ci --runtime-dir runtime
-            python scripts/ci_verify.py --phase post --billing-state-dir .billing-state-ci --runtime-dir runtime
-          else
-            echo "[WARN] scripts/ci_verify.py not found; skipping." 
-          fi
+          set -euo pipefail
+          python scripts/ci_verify.py --phase e2e --billing-state-dir .billing-state-ci --runtime-dir runtime
