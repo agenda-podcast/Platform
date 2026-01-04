@@ -21,3 +21,7 @@ runtime-e2e/
 .billing-state-e2e/
 runtime/secure/
 runtime/
+
+# Allow runtime package under platform (this is source code, not ephemeral artifacts)
+!platform/runtime/
+!platform/runtime/**
