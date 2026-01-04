@@ -14,7 +14,7 @@ from ..common.id_codec import canon_module_id, canon_tenant_id, canon_work_order
 from ..common.id_policy import generate_unique_id, validate_id
 from ..github.releases import ensure_release, upload_release_assets, get_release_numeric_id, get_release_assets_numeric_ids
 from ..orchestration.module_exec import execute_module_runner
-from ..runtime.secretstore import Secretstore, inject_module_env, SecretstoreError
+from ..runtime.secretstore import Secretstore, inject_module_env, SecretstoreError, decrypt_secretstore_gpg
 from ..utils.csvio import read_csv
 from ..utils.fs import ensure_dir
 from ..utils.hashing import sha256_bytes, sha256_file, short_hash
@@ -524,10 +524,30 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
 
     billing = BillingState(billing_state_dir)
 
-    # Secretstore (optional) - decrypted JSON injected at runtime by workflow
+    # Secretstore (optional)
+    # - Workflows may decrypt to runtime/secure/secretstore.json
+    # - Admins may also commit only platform/secretstore/secretstore.json.gpg
+    #   and provide SECRETSTORE_PASSPHRASE to decrypt at runtime.
     secretstore: Optional[Secretstore] = None
-    if secretstore_path is not None:
-        secretstore = Secretstore.load(secretstore_path)
+    if secretstore_path:
+        ss_path = Path(secretstore_path)
+
+        # If user passed a .gpg path, decrypt it to runtime/secure and load JSON.
+        if ss_path.suffix == ".gpg":
+            out_json = repo_root / "runtime" / "secure" / "secretstore.json"
+            decrypt_secretstore_gpg(ss_path, out_json)
+            secretstore = Secretstore.load(out_json)
+
+        else:
+            # If decrypted JSON isn't present (e.g., decrypt step skipped),
+            # attempt to decrypt the repo-encrypted file into the requested path.
+            if not ss_path.exists():
+                fallback_gpg = repo_root / "platform" / "secretstore" / "secretstore.json.gpg"
+                if fallback_gpg.exists():
+                    decrypt_secretstore_gpg(fallback_gpg, ss_path)
+                # else: let Secretstore.load raise a clear error below
+            secretstore = Secretstore.load(ss_path)
+
     billing_state_dir.mkdir(parents=True, exist_ok=True)
 
     # Orchestrator needs full state including mapping tables

@@ -8,6 +8,46 @@ from typing import Dict, Optional, Any, List
 class SecretstoreError(RuntimeError):
     pass
 
+import os
+import subprocess
+from typing import Any
+
+def decrypt_secretstore_gpg(encrypted_path: str | Path, out_json_path: str | Path, passphrase_env: str = "SECRETSTORE_PASSPHRASE") -> None:
+    """Decrypt a symmetric GPG file to a JSON path using passphrase from env.
+
+    This is intended for CI/runtime use. It does not log the passphrase.
+    """
+    enc = Path(encrypted_path)
+    outp = Path(out_json_path)
+
+    if not enc.exists():
+        raise SecretstoreError(f"Encrypted secretstore not found: {enc}")
+
+    passphrase = os.environ.get(passphrase_env)
+    if not passphrase:
+        raise SecretstoreError(
+            f"{passphrase_env} is not set; cannot decrypt secretstore. "
+            f"Set it as a GitHub Secret/Environment Secret."
+        )
+
+    outp.parent.mkdir(parents=True, exist_ok=True)
+
+    # Run gpg with passphrase on stdin (loopback pinentry)
+    try:
+        subprocess.run(
+            ["gpg", "--batch", "--yes", "--pinentry-mode", "loopback", "--passphrase-fd", "0",
+             "--output", str(outp), "--decrypt", str(enc)],
+            input=passphrase.encode("utf-8"),
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+    except FileNotFoundError as e:
+        raise SecretstoreError("gpg binary not found on PATH; cannot decrypt secretstore") from e
+    except subprocess.CalledProcessError as e:
+        msg = e.stderr.decode("utf-8", errors="replace").strip()
+        raise SecretstoreError(f"Failed to decrypt secretstore via gpg: {msg}") from e
+
 @dataclass(frozen=True)
 class ModuleConfig:
     secrets: Dict[str, str]
