@@ -1,56 +1,87 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 
 def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
-    """Placeholder downstream module.
+    """Demo module that generates search queries.
 
-    Reads module U2T output from the same work order runtime folder and emits
-    a deterministic derived artifact.
+    Demonstration chain:
+      9SD (generate queries) -> wxz (Google CSE) -> U2T (consume first result)
+
+    Input convention
+    ---------------
+    Inputs may be passed either directly (legacy) or under params["inputs"]
+    (workflow/steps mode).
+
+    Expected inputs
+    ---------------
+    - seed_topic: required string
+    - language: optional string (default: "en")
+    - max_queries: optional int (default: 5; clamped 1..5)
+
+    Outputs
+    -------
+    - queries.json (JSON array of strings)
+    - queries.txt  (one query per line)
+    - report.json  (present only on failure)
     """
 
-    summary_style = str(params.get("summary_style") or "bullets").strip().lower()
-    if summary_style not in ("bullets", "paragraph"):
-        summary_style = "bullets"
+    inputs = params.get("inputs") if isinstance(params.get("inputs"), dict) else params
 
-    # outputs_dir = .../<tenant>/<work_order>/module-002
-    workorder_dir = outputs_dir.parent
-    upstream_file = workorder_dir / "module-001" / "source_text.txt"
-
-    out_file = outputs_dir / "derived_notes.txt"
-
-    if not upstream_file.exists():
-        out_file.write_text(
-            "UPSTREAM_MISSING: module-001/source_text.txt was not found.\n",
+    seed_topic = str(inputs.get("seed_topic") or "").strip()
+    if not seed_topic:
+        out_dir = Path(outputs_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "report.json").write_text(
+            json.dumps(
+                {
+                    "module_id": "9SD",
+                    "status": "failed",
+                    "reason_slug": "missing_required_input",
+                    "message": "seed_topic is required",
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
             encoding="utf-8",
         )
-        return {"files": ["derived_notes.txt"]}
+        return {"files": ["report.json"], "status": "FAILED", "reason_slug": "missing_required_input"}
 
-    upstream_text = upstream_file.read_text(encoding="utf-8", errors="replace").strip()
+    language = str(inputs.get("language") or "en").strip() or "en"
+    try:
+        max_queries = int(inputs.get("max_queries") or 5)
+    except Exception:
+        max_queries = 5
+    max_queries = max(1, min(5, max_queries))
 
-    header_lines = []
-    for ln in upstream_text.splitlines():
-        if ln.startswith(("TOPIC:", "LANGUAGE:", "FRESHNESS_DAYS:")):
-            header_lines.append(ln)
+    # Deterministic query expansion (demo-quality, not "AI").
+    base = seed_topic
+    candidates: List[str] = [
+        base,
+        f"{base} latest",
+        f"{base} news",
+        f"{base} analysis",
+        f"{base} official site",
+    ]
+    queries = [q.strip() for q in candidates if q.strip()][:max_queries]
 
-    if summary_style == "paragraph":
-        derived = (
-            "DERIVED_NOTES (module 9SD)\n"
-            + ("\n".join(header_lines) + "\n\n" if header_lines else "")
-            + "This output is derived from module U2T content and exists to validate dependency ordering.\n"
-        )
-    else:
-        bullets = [
-            "DERIVED_NOTES (module 9SD)",
-            *(header_lines if header_lines else []),
-            "",
-            "- Derived from module U2T output (source_text.txt).",
-            "- Validates dependency ordering via maintenance dependency index.",
-            "- Demonstrates downstream artifact generation as a separate module.",
-        ]
-        derived = "\n".join(bullets).rstrip() + "\n"
+    out_dir = Path(outputs_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    out_file.write_text(derived, encoding="utf-8")
-    return {"files": ["derived_notes.txt"]}
+    (out_dir / "queries.json").write_text(
+        json.dumps(queries, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    (out_dir / "queries.txt").write_text("\n".join(queries) + "\n", encoding="utf-8")
+
+    # Include language in metadata for downstream modules, if needed.
+    (out_dir / "metadata.json").write_text(
+        json.dumps({"seed_topic": seed_topic, "language": language, "count": len(queries)}, ensure_ascii=False, indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    return {"files": ["queries.json", "queries.txt", "metadata.json"], "status": "COMPLETED"}

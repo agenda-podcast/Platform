@@ -1,31 +1,75 @@
 module_id: 9SD
-version: 0.1.0
-description: Placeholder transform module that depends on 001, reads its output, and emits derived notes.
+name: demo_generate_queries
+version: 0.2.0
+description: 'Demo: generate deterministic search queries from a seed topic for workflow
+  chaining.'
 supports_downloadable_artifacts: true
 produces_manifest: true
-depends_on:
-- U2T
+depends_on: []
+determinism: deterministic
 cache:
   enabled: true
   retention_default: 1w
   key_inputs:
-  - topic
+  - seed_topic
   - language
-  - freshness_days
-  - summary_style
+  - max_queries
+ports:
+  inputs:
+  - name: seed_topic
+    required: true
+    format: text/plain
+    cardinality: single
+    allowed_sources:
+    - NEW
+    - CACHE
+    - ASSET
+    - RELEASE
+  - name: language
+    required: false
+    format: text/plain
+    cardinality: single
+    allowed_sources:
+    - NEW
+    - CACHE
+    - ASSET
+    - RELEASE
+  - name: max_queries
+    required: false
+    format: text/plain
+    cardinality: single
+    allowed_sources:
+    - NEW
+    - CACHE
+    - ASSET
+    - RELEASE
+  outputs:
+  - name: queries
+    format: application/json
+    cardinality: list
+    filename: queries.json
+  - name: queries_text
+    format: text/plain
+    cardinality: list
+    filename: queries.txt
+  - name: metadata
+    format: application/json
+    cardinality: single
+    filename: metadata.json
 inputs:
-- name: topic
+- name: seed_topic
   required: true
   format: text/plain
 - name: language
-  required: true
+  required: false
   format: text/plain
-- name: freshness_days
-  required: true
-  format: text/plain
-- name: summary_style
+- name: max_queries
   required: false
   format: text/plain
 outputs:
-- name: derived_notes
+- name: queries
+  format: application/json
+- name: queries_text
   format: text/plain
+- name: metadata
+  format: application/json

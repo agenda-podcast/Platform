@@ -42,8 +42,12 @@ def run(params: Dict[str, Any], outputs_dir: str) -> Dict[str, Any]:
     out_dir = Path(outputs_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Platform convention: module parameters may be passed either directly
+    # (legacy) or under params['inputs'] (workflow/steps mode).
+    inputs = params.get('inputs') if isinstance(params.get('inputs'), dict) else params
+
     # Validate required params
-    queries = params.get("queries")
+    queries = inputs.get('queries')
     if not isinstance(queries, list) or not queries or any(not isinstance(q, str) or not q.strip() for q in queries):
         return _error(
             out_dir,
@@ -58,19 +62,19 @@ def run(params: Dict[str, Any], outputs_dir: str) -> Dict[str, Any]:
         )
     queries = [q.strip()[:256] for q in queries]
 
-    max_items_per_query = _int(params.get("max_items_per_query"), default=100)
+    max_items_per_query = _int(inputs.get("max_items_per_query"), default=100)
     if max_items_per_query < 1:
         max_items_per_query = 1
     if max_items_per_query > 100:
         max_items_per_query = 100
 
-    safe = params.get("safe") or "active"
+    safe = inputs.get("safe") or "active"
     if safe not in ("active", "off"):
         safe = "active"
 
-    filter_duplicates = bool(params.get("filter_duplicates", True))
+    filter_duplicates = bool(inputs.get("filter_duplicates", True))
 
-    dedupe_cfg = params.get("dedupe") or {}
+    dedupe_cfg = inputs.get("dedupe") or {}
     dedupe_enabled = bool(dedupe_cfg.get("enabled", True))
     strip_tracking = bool(dedupe_cfg.get("strip_tracking_params", True))
 
@@ -114,7 +118,7 @@ def run(params: Dict[str, Any], outputs_dir: str) -> Dict[str, Any]:
                         start=start,
                         safe=safe,
                         filter_duplicates=filter_duplicates,
-                        params=params,
+                        params=inputs,
                     )
                     items = batch.get("items") or []
                     if not items and batch.get("error"):

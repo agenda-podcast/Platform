@@ -1,0 +1,10 @@
+transaction_item_id,transaction_id,tenant_id,module_id,feature,type,amount_credits,created_at,note,metadata_json
+7lv7hQMa,9lIpLywt,nxlkGI,,TOPUP,TOPUP,1000,2026-01-03T19:13:09Z,Seed example payment,"{""topup_method_id"":""0Y"",""reference"":""INV-1001""}"
+CV0I9wXM,f0NCsCgP,nxlkGI,wxz,RUN,SPEND,-7,2026-01-03T19:14:03Z,,"{""purchase_release_artifacts"":true}"
+YW2LPsjj,iWU8W7gI,nxlkGI,wxz,RUN,REFUND,7,2026-01-03T19:14:03Z,,"{""refund_for"":""IYOrev6V""}"
+LDlsuqQR,Jq4H3m84,nxlkGI,9SD,RUN,SPEND,-5,2026-01-04T05:06:35Z,Run module 9SD - Module 002 Derived Notes,"{""step_id"":""s1"",""purchase_release_artifacts"":false,""feature"":""RUN""}"
+x6UUqZIg,Jq4H3m84,nxlkGI,wxz,RUN,SPEND,-5,2026-01-04T05:06:35Z,Run module wxz - Module 003,"{""step_id"":""s2"",""purchase_release_artifacts"":true,""feature"":""RUN""}"
+ImL33aYb,Jq4H3m84,nxlkGI,wxz,SAVE_ARTIFACTS,SPEND,-2,2026-01-04T05:06:35Z,Save artifacts from module wxz - Module 003,"{""step_id"":""s2"",""purchase_release_artifacts"":true,""feature"":""SAVE_ARTIFACTS""}"
+lQerLVBh,Jq4H3m84,nxlkGI,U2T,RUN,SPEND,-5,2026-01-04T05:06:35Z,Run module U2T - Module 001 Placeholder,"{""step_id"":""s3"",""purchase_release_artifacts"":false,""feature"":""RUN""}"
+pWIkUOuV,FKVuQooL,nxlkGI,wxz,RUN,REFUND,5,2026-01-04T05:06:36Z,Failed run module wxz - Module 003: RCNCl7 - Required env secrets were not provided for Google Custom Search API.,"{""refund_for"":""QxP8moSN"",""feature"":""RUN"",""step_id"":""s2"",""workflow"":""steps""}"
+Kur6U7W3,FKVuQooL,nxlkGI,wxz,SAVE_ARTIFACTS,REFUND,2,2026-01-04T05:06:36Z,Failed save artifacts from module wxz - Module 003: RCNCl7 - Required env secrets were not provided for Google Custom Search API.,"{""refund_for"":""QxP8moSN"",""feature"":""SAVE_ARTIFACTS"",""step_id"":""s2"",""workflow"":""steps""}"

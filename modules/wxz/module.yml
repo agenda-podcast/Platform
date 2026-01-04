@@ -1,6 +1,83 @@
 module_id: wxz
 name: google_search_pages
-version: 0.1.0
-description: 'Google Custom Search (web pages only): fetch up to 100 results per query, up to 5 queries per run.'
+version: 0.2.0
+description: 'Google Custom Search (web pages only): fetch up to 100 results per query,
+  up to 5 queries per run.'
 depends_on: []
 supports_downloadable_artifacts: false
+produces_manifest: false
+determinism: non_deterministic
+cache:
+  enabled: true
+  retention_default: 1d
+  key_inputs:
+  - queries
+  - max_items_per_query
+  - safe
+  - filter_duplicates
+  - dedupe
+ports:
+  inputs:
+  - name: queries
+    required: true
+    format: application/json
+    cardinality: list
+    allowed_sources:
+    - NEW
+    - CACHE
+    - ASSET
+    - RELEASE
+  - name: max_items_per_query
+    required: false
+    format: text/plain
+    cardinality: single
+    allowed_sources:
+    - NEW
+    - CACHE
+    - ASSET
+    - RELEASE
+  - name: safe
+    required: false
+    format: text/plain
+    cardinality: single
+    allowed_sources:
+    - NEW
+    - CACHE
+    - ASSET
+    - RELEASE
+  - name: filter_duplicates
+    required: false
+    format: application/json
+    cardinality: single
+    allowed_sources:
+    - NEW
+    - CACHE
+    - ASSET
+    - RELEASE
+  - name: dedupe
+    required: false
+    format: application/json
+    cardinality: single
+    allowed_sources:
+    - NEW
+    - CACHE
+    - ASSET
+    - RELEASE
+  outputs:
+  - name: results
+    format: application/x-ndjson
+    cardinality: list
+    filename: results.jsonl
+  - name: report
+    format: application/json
+    cardinality: single
+    filename: report.json
+inputs:
+- name: queries
+  required: true
+  format: application/json
+outputs:
+- name: results
+  format: application/x-ndjson
+- name: report
+  format: application/json

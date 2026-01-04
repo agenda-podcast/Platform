@@ -47,7 +47,7 @@ def main() -> int:
     ap.add_argument("--tenant-id", default="nxlkGI")
     ap.add_argument("--work-order-id", default="UbjkpxZO")
     ap.add_argument("--module-id", default="wxz")
-    ap.add_argument("--expected-reason-code", default="ShlFvj")
+    ap.add_argument("--expected-reason-code", default="RCNCl7")
     args = ap.parse_args()
 
     bdir = Path(args.billing_state_dir)

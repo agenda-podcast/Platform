@@ -174,12 +174,32 @@ def _validate_tenants_and_workorders(repo_root: Path) -> None:
             if wp.stem != wid:
                 _fail(f"Workorder filename mismatch: {wp.name} declared work_order_id={wid!r}")
 
-            mods = wo.get("modules") or []
-            if not isinstance(mods, list):
-                _fail(f"Invalid workorder modules list in {wp}")
-            for m in mods:
-                mid = str((m or {}).get("module_id","")).strip()
-                validate_id("module_id", mid, "workorder.module_id")
+            steps = wo.get("steps")
+            mods = wo.get("modules")
+
+            if steps is not None and steps != []:
+                if not isinstance(steps, list):
+                    _fail(f"Invalid workorder steps list in {wp}")
+                seen = set()
+                for s in steps:
+                    sid = str((s or {}).get("step_id","")).strip()
+                    if not sid or any(c.isspace() for c in sid):
+                        _fail(f"Invalid step_id in {wp}: {sid!r}")
+                    if sid in seen:
+                        _fail(f"Duplicate step_id in {wp}: {sid!r}")
+                    seen.add(sid)
+                    mid = str((s or {}).get("module_id","")).strip()
+                    validate_id("module_id", mid, "workorder.step.module_id")
+
+            elif mods is not None and mods != []:
+                if not isinstance(mods, list):
+                    _fail(f"Invalid workorder modules list in {wp}")
+                for m in mods:
+                    mid = str((m or {}).get("module_id","")).strip()
+                    validate_id("module_id", mid, "workorder.module_id")
+
+            else:
+                _fail(f"Workorder must include non-empty steps or modules: {wp}")
 
     _ok("Tenants + workorders: IDs + filenames OK")
 

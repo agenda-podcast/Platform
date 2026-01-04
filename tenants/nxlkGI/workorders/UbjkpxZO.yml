@@ -2,37 +2,45 @@ work_order_id: UbjkpxZO
 enabled: true
 mode: PARTIAL_ALLOWED
 metadata:
-  title: New module verification.
-  created_at: '2025-12-31T12:00:00Z'
-  notes: Module wxz.
-modules:
-- module_id: wxz
-  reuse_output_type: cache
-  purchase_release_artifacts: true
-  inputs:
-    queries:
-    - Word News Today
-    max_items_per_query: 10
-    safe: active
-    date_restrict: null
-    hl: null
-    lr: null
-    gl: null
-    cr: null
-    exact_terms: null
-    exclude_terms: null
-    or_terms: null
-    hq: null
-    file_type: null
-    filter_duplicates: true
-    rights: null
-    site_search: null
-    site_search_filter: null
-    link_site: null
-    low_range: null
-    high_range: null
-    sort: null
-    dedupe:
-      enabled: true
-      strip_tracking_params: true
-promotions: []
+  created_at: 2026-01-03T23:00:00Z
+  description: "Demo IFTTT-style chain: 9SD -> wxz -> U2T"
+
+# Workflow v2 (steps-based) demonstrates outputs->inputs reuse with NEW selectors.
+steps:
+  - step_id: s1
+    module_id: 9SD
+    reuse_output_type: cache
+    purchase_release_artifacts: false
+    inputs:
+      seed_topic: "Global cost of living and rising prices"
+      language: "en"
+      max_queries: "5"
+
+  - step_id: s2
+    module_id: wxz
+    reuse_output_type: cache
+    purchase_release_artifacts: true
+    inputs:
+      queries:
+        mode: list
+        selectors:
+          - from: NEW
+            step_id: s1
+            output: queries
+            extract: json
+      max_items_per_query: "10"
+      safe: "active"
+
+  - step_id: s3
+    module_id: U2T
+    reuse_output_type: cache
+    purchase_release_artifacts: false
+    inputs:
+      selected_result:
+        mode: single
+        selectors:
+          - from: NEW
+            step_id: s2
+            output: results
+            extract: jsonl_first
+      language: "en"
