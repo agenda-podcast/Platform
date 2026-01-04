@@ -1,7 +1,7 @@
 name: Orchestrator
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -16,8 +16,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -56,60 +54,36 @@ jobs:
           for f in "${req[@]}"; do
             if [ ! -f ".billing-state/$f" ]; then
               echo "ERROR: Missing required billing-state file: .billing-state/$f"
+              echo "Contents of .billing-state:"
               ls -la .billing-state || true
               exit 2
             fi
           done
+
+      - name: Capture run start time (UTC)
+        run: |
+          set -euo pipefail
+          echo "RUN_STARTED_AT=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+          echo "Run started at: $RUN_STARTED_AT"
 
       - name: Pre-verify
         run: |
           set -euo pipefail
           python scripts/ci_verify.py --phase pre --billing-state-dir .billing-state-ci --runtime-dir runtime
 
-      - name: Run Orchestrator (publishing enabled)
+      - name: Run Orchestrator
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # Ensure billing-state-dir points to hydrated SoT
-          if bash scripts/run_orchestrator.sh --help 2>/dev/null | grep -q -- "--billing-state-dir"; then
-            bash scripts/run_orchestrator.sh --enable-github-releases --billing-state-dir .billing-state --runtime-dir runtime
-          else
-            # Back-compat: script without args
-            bash scripts/run_orchestrator.sh
-          fi
+          bash scripts/run_orchestrator.sh --enable-github-releases --runtime-dir runtime --billing-state-dir .billing-state
 
-      - name: Publish updated billing-state assets back to Release (SoT)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run-scoped summary (this run only)
         run: |
           set -euo pipefail
-          # Always publish the authoritative accounting state so Releases reflect latest workorders/transactions.
-          gh release view billing-state-v1 --repo "${GITHUB_REPOSITORY}" >/dev/null
-          gh release upload billing-state-v1             .billing-state/tenants_credits.csv             .billing-state/transactions.csv             .billing-state/transaction_items.csv             .billing-state/promotion_redemptions.csv             .billing-state/cache_index.csv             .billing-state/workorders_log.csv             .billing-state/module_runs_log.csv             .billing-state/github_releases_map.csv             .billing-state/github_assets_map.csv             .billing-state/state_manifest.json             --repo "${GITHUB_REPOSITORY}" --clobber
-
-      - name: Orchestrator Summary (if present)
-        run: |
-          set -euo pipefail
-          if [ -f scripts/orchestrator_summary.py ]; then
-            python scripts/orchestrator_summary.py --billing-state-dir .billing-state --runtime-dir runtime --tenants-dir tenants
-          else
-            echo "scripts/orchestrator_summary.py not found; skipping."
-          fi
+          python scripts/orchestrator_summary_run.py --since "$RUN_STARTED_AT" --billing-state-dir .billing-state --runtime-dir runtime --tenants-dir tenants --max-rows 50
 
       - name: Post-verify
         run: |
           set -euo pipefail
           python scripts/ci_verify.py --phase post --billing-state-dir .billing-state-ci --runtime-dir runtime
-
-      - name: Commit & push (if changed)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
-          if [ -f scripts/ci_commit_push.sh ]; then
-            bash scripts/ci_commit_push.sh "chore: orchestrator" main
-          else
-            echo "scripts/ci_commit_push.sh not found; skipping push."
-          fi
