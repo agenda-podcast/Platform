@@ -7,23 +7,26 @@ from pathlib import Path
 
 from .maintenance.builder import run_maintenance
 from .orchestration.orchestrator import run_orchestrator
-from .cache.prune import run_cache_manage, run_cache_prune
+from .cache.prune import run_cache_prune
 from .orchestration.module_exec import execute_module_runner
 
 from .billing.state import BillingState
+from .billing.topup import TopupRequest, apply_admin_topup
 from .billing.payments import (
     reconcile_repo_payments_into_billing_state,
     validate_repo_payments,
 )
-from .billing.admin_topup import append_admin_topup_payment
+
 
 def _repo_root() -> Path:
     # This file is at: <repo_root>/platform/cli.py
     return Path(__file__).resolve().parents[1]
 
+
 def cmd_maintenance(args: argparse.Namespace) -> int:
     run_maintenance(repo_root=_repo_root())
     return 0
+
 
 def cmd_orchestrate(args: argparse.Namespace) -> int:
     repo_root = _repo_root()
@@ -39,9 +42,9 @@ def cmd_orchestrate(args: argparse.Namespace) -> int:
         billing_state_dir=billing_state_dir,
         runtime_dir=runtime_dir,
         enable_github_releases=enable_releases,
-        secretstore_path=Path(args.secretstore).resolve() if str(getattr(args,'secretstore','') or '') else None,
     )
     return 0
+
 
 def cmd_module_exec(args: argparse.Namespace) -> int:
     repo_root = _repo_root()
@@ -69,6 +72,7 @@ def cmd_module_exec(args: argparse.Namespace) -> int:
     print(json.dumps(out))
     return 0
 
+
 def cmd_validate_payments(args: argparse.Namespace) -> int:
     repo_root = _repo_root()
     report = validate_repo_payments(repo_root)
@@ -93,37 +97,6 @@ def cmd_validate_payments(args: argparse.Namespace) -> int:
     )
     return 0
 
-def cmd_admin_topup(args: argparse.Namespace) -> int:
-    repo_root = _repo_root()
-    tenant_id = str(args.tenant_id or "").strip()
-
-    try:
-        amount = int(str(args.amount_credits).strip())
-    except Exception as e:
-        raise SystemExit("amount_credits must be an integer") from e
-
-    res = append_admin_topup_payment(
-        repo_root=repo_root,
-        tenant_id=tenant_id,
-        amount_credits=amount,
-        reference=str(getattr(args, "reference", "") or "").strip(),
-        note=str(getattr(args, "note", "") or "").strip(),
-        status="CONFIRMED",
-    )
-
-    print(
-        json.dumps(
-            {
-                "payment_id": res.payment_id,
-                "tenant_id": res.tenant_id,
-                "topup_method_id": res.topup_method_id,
-                "amount_credits": res.amount_credits,
-                "received_at": res.received_at,
-                "reference": res.reference,
-            }
-        )
-    )
-    return 0
 
 def cmd_reconcile_payments(args: argparse.Namespace) -> int:
     repo_root = _repo_root()
@@ -135,6 +108,7 @@ def cmd_reconcile_payments(args: argparse.Namespace) -> int:
             "transactions.csv",
             "transaction_items.csv",
             "promotion_redemptions.csv",
+            "cache_index.csv",
             "workorders_log.csv",
             "module_runs_log.csv",
             "github_releases_map.csv",
@@ -175,53 +149,52 @@ def cmd_reconcile_payments(args: argparse.Namespace) -> int:
     )
     return 0
 
+
+def cmd_admin_topup(args: argparse.Namespace) -> int:
+    repo_root = _repo_root()
+    billing_state_dir = Path(args.billing_state_dir).resolve()
+    billing_state_dir.mkdir(parents=True, exist_ok=True)
+    billing = BillingState(billing_state_dir)
+    billing.validate_minimal(
+        required_files=[
+            "tenants_credits.csv",
+            "transactions.csv",
+            "transaction_items.csv",
+            "promotion_redemptions.csv",
+            "cache_index.csv",
+            "workorders_log.csv",
+            "module_runs_log.csv",
+            "github_releases_map.csv",
+            "github_assets_map.csv",
+        ]
+    )
+
+    req = TopupRequest(
+        tenant_id=str(args.tenant_id),
+        amount_credits=int(args.amount_credits),
+        topup_method_id=str(args.topup_method_id),
+        reference=str(args.reference),
+        note=str(args.note or ""),
+    )
+    tx_id = apply_admin_topup(repo_root, billing, req)
+    billing.write_state_manifest()
+    print(json.dumps({"transaction_id": tx_id, "tenant_id": req.tenant_id, "amount_credits": req.amount_credits}))
+    return 0
+
+
 def cmd_cache_prune(args: argparse.Namespace) -> int:
-    # Backwards-compatible command name.
-    # Note: cache management is repo-scoped and uses the repo-managed cache index file
-    # under platform/cache/cache_index.csv.
-    res = run_cache_manage(
-        repo_root=_repo_root(),
-        cache_index_path=Path(getattr(args, "cache_index_path", "") or (_repo_root() / "platform" / "cache" / "cache_index.csv")),
-        apply=bool(getattr(args, "apply", False)) and not bool(getattr(args, "dry_run", False)),
-        delete_key=str(getattr(args, "delete_key", "") or "").strip(),
-        delete_prefix=str(getattr(args, "delete_prefix", "") or "").strip(),
-    )
+    res = run_cache_prune(Path(args.billing_state_dir).resolve(), dry_run=bool(args.dry_run))
     print(
         json.dumps(
             {
-                "rules": res.rules,
-                "caches_seen": res.caches_seen,
-                "caches_indexed": res.caches_indexed,
+                "updated_rows": res.updated_rows,
                 "deleted_caches": res.deleted_caches,
-                "would_delete_caches": res.would_delete_caches,
-                "skipped_protected": res.skipped_protected,
+                "registered_orphans": res.registered_orphans,
             }
         )
     )
     return 0
 
-
-def cmd_cache_manage(args: argparse.Namespace) -> int:
-    res = run_cache_manage(
-        repo_root=_repo_root(),
-        cache_index_path=Path(args.cache_index_path).resolve(),
-        apply=bool(args.apply),
-        delete_key=str(args.delete_key or "").strip(),
-        delete_prefix=str(args.delete_prefix or "").strip(),
-    )
-    print(
-        json.dumps(
-            {
-                "rules": res.rules,
-                "caches_seen": res.caches_seen,
-                "caches_indexed": res.caches_indexed,
-                "deleted_caches": res.deleted_caches,
-                "would_delete_caches": res.would_delete_caches,
-                "skipped_protected": res.skipped_protected,
-            }
-        )
-    )
-    return 0
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="platform")
@@ -234,15 +207,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--runtime-dir", default="runtime")
     sp.add_argument("--billing-state-dir", default=".billing-state")
     sp.add_argument("--enable-github-releases", action="store_true")
-    sp.add_argument("--secretstore", default=None, help="Path to decrypted secretstore.json (optional). If provided, env vars declared in module.yml env section are injected per module.")
     sp.set_defaults(func=cmd_orchestrate)
 
     sp = sub.add_parser("orchestrator", help="Alias for orchestrate")
     sp.add_argument("--runtime-dir", default="runtime")
     sp.add_argument("--billing-state-dir", default=".billing-state")
     sp.add_argument("--enable-github-releases", action="store_true")
-    sp.add_argument("--secretstore", default=None, help="Path to decrypted secretstore.json (optional). If provided, env vars declared in module.yml env section are injected per module.")
     sp.set_defaults(func=cmd_orchestrate)
+
 
     sp = sub.add_parser("module-exec", help="Execute a single module runner")
     sp.add_argument("--module-id", required=True)
@@ -256,21 +228,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--github-action-outputs", action="store_true")
     sp.set_defaults(func=cmd_module_exec)
 
-    sp = sub.add_parser("cache-manage", help="Centralized GitHub Actions cache management")
-    sp.add_argument("--cache-index-path", default=str(_repo_root() / "platform" / "cache" / "cache_index.csv"))
-    sp.add_argument("--apply", action="store_true", help="Actually delete caches (otherwise dry-run)")
-    sp.add_argument("--delete-key", default="", help="Surgically delete a specific cache key")
-    sp.add_argument("--delete-prefix", default="", help="Surgically delete all cache keys with this prefix")
-    sp.set_defaults(func=cmd_cache_manage)
-
-    # Backwards compatibility: old command name
-    sp = sub.add_parser("cache-prune", help="Alias for cache-manage")
-    sp.add_argument("--cache-index-path", default=str(_repo_root() / "platform" / "cache" / "cache_index.csv"))
-    sp.add_argument("--apply", action="store_true")
+    sp = sub.add_parser("cache-prune", help="Prune Actions caches and update cache_index")
+    sp.add_argument("--billing-state-dir", default=".billing-state")
     sp.add_argument("--dry-run", action="store_true")
-    sp.add_argument("--delete-key", default="")
-    sp.add_argument("--delete-prefix", default="")
     sp.set_defaults(func=cmd_cache_prune)
+
+    sp = sub.add_parser("admin-topup", help="Admin: apply a ledger top-up to billing-state")
+    sp.add_argument("--tenant-id", required=True)
+    sp.add_argument("--amount-credits", required=True)
+    sp.add_argument("--topup-method-id", required=True)
+    sp.add_argument("--reference", required=True)
+    sp.add_argument("--note", default="")
+    sp.add_argument("--billing-state-dir", default=".billing-state")
+    sp.set_defaults(func=cmd_admin_topup)
 
     sp = sub.add_parser("validate-payments", help="Validate repo payments.csv before reconciliation")
     sp.set_defaults(func=cmd_validate_payments)
@@ -279,19 +249,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--billing-state-dir", default=".billing-state")
     sp.set_defaults(func=cmd_reconcile_payments)
 
-    sp = sub.add_parser("admin-topup", help="Append an Admin Top Up record into platform/billing/payments.csv")
-    sp.add_argument("--tenant-id", required=True)
-    sp.add_argument("--amount-credits", required=True, dest="amount_credits")
-    sp.add_argument("--reference", default="")
-    sp.add_argument("--note", default="")
-    sp.set_defaults(func=cmd_admin_topup)
-
     return p
+
 
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     return int(args.func(args) or 0)
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -1,10 +1,10 @@
-.PHONY: maintenance orchestrate cache-manage
+.PHONY: maintenance orchestrate cache-prune
 
 maintenance:
 	python -m platform.cli maintenance
 
 orchestrate:
-	python -m platform.cli orchestrator
+	python -m platform.cli orchestrate
 
-cache-manage:
-	python -m platform.cli cache-manage
+cache-prune:
+	python -m platform.cli cache-prune --dry-run

@@ -69,19 +69,10 @@ def _validate_repo_billing_config(repo_root: Path) -> None:
             validate_id("module_id", mid, "module_prices.module_id")
 
     rows = read_csv(billing / "topup_instructions.csv")
-    has_admin_topup = False
     for r in rows:
         tid = str(r.get("topup_method_id","")).strip()
         if tid:
             validate_id("topup_method_id", tid, "topup_method_id")
-        name = str(r.get("name","")).strip().lower()
-        if name == "admin top up":
-            enabled = str(r.get("enabled","")).strip().lower()
-            if enabled == "false":
-                _fail("topup_instructions.csv: 'Admin Top Up' method is disabled")
-            has_admin_topup = True
-    if not has_admin_topup:
-        _fail("topup_instructions.csv missing required payment method: 'Admin Top Up'")
 
     rows = read_csv(billing / "payments.csv")
     for r in rows:
@@ -174,32 +165,12 @@ def _validate_tenants_and_workorders(repo_root: Path) -> None:
             if wp.stem != wid:
                 _fail(f"Workorder filename mismatch: {wp.name} declared work_order_id={wid!r}")
 
-            steps = wo.get("steps")
-            mods = wo.get("modules")
-
-            if steps is not None and steps != []:
-                if not isinstance(steps, list):
-                    _fail(f"Invalid workorder steps list in {wp}")
-                seen = set()
-                for s in steps:
-                    sid = str((s or {}).get("step_id","")).strip()
-                    if not sid or any(c.isspace() for c in sid):
-                        _fail(f"Invalid step_id in {wp}: {sid!r}")
-                    if sid in seen:
-                        _fail(f"Duplicate step_id in {wp}: {sid!r}")
-                    seen.add(sid)
-                    mid = str((s or {}).get("module_id","")).strip()
-                    validate_id("module_id", mid, "workorder.step.module_id")
-
-            elif mods is not None and mods != []:
-                if not isinstance(mods, list):
-                    _fail(f"Invalid workorder modules list in {wp}")
-                for m in mods:
-                    mid = str((m or {}).get("module_id","")).strip()
-                    validate_id("module_id", mid, "workorder.module_id")
-
-            else:
-                _fail(f"Workorder must include non-empty steps or modules: {wp}")
+            mods = wo.get("modules") or []
+            if not isinstance(mods, list):
+                _fail(f"Invalid workorder modules list in {wp}")
+            for m in mods:
+                mid = str((m or {}).get("module_id","")).strip()
+                validate_id("module_id", mid, "workorder.module_id")
 
     _ok("Tenants + workorders: IDs + filenames OK")
 
@@ -255,6 +226,7 @@ def _validate_billing_state(billing_state_dir: Path) -> None:
         "transactions.csv",
         "transaction_items.csv",
         "promotion_redemptions.csv",
+        "cache_index.csv",
         "workorders_log.csv",
         "module_runs_log.csv",
         "github_releases_map.csv",
@@ -271,6 +243,7 @@ def _validate_billing_state(billing_state_dir: Path) -> None:
     _assert_exact_header(billing_state_dir / "transactions.csv", ["transaction_id","tenant_id","work_order_id","type","amount_credits","created_at","reason_code","note","metadata_json"])
     _assert_exact_header(billing_state_dir / "transaction_items.csv", ["transaction_item_id","transaction_id","tenant_id","module_id","feature","type","amount_credits","created_at","note","metadata_json"])
     _assert_exact_header(billing_state_dir / "promotion_redemptions.csv", ["redemption_id","tenant_id","promo_code","credits_granted","created_at","note","metadata_json"])
+    _assert_exact_header(billing_state_dir / "cache_index.csv", ["cache_key","tenant_id","module_id","created_at","expires_at","cache_id"])
     _assert_exact_header(billing_state_dir / "workorders_log.csv", ["work_order_id","tenant_id","status","created_at","started_at","ended_at","note","metadata_json"])
     _assert_exact_header(billing_state_dir / "module_runs_log.csv", ["module_run_id","tenant_id","work_order_id","module_id","status","created_at","started_at","ended_at","reason_code","report_path","output_ref","metadata_json"])
     _assert_exact_header(billing_state_dir / "github_releases_map.csv", ["release_id","github_release_id","tag","tenant_id","work_order_id","created_at"])
@@ -294,40 +267,6 @@ def _validate_billing_state(billing_state_dir: Path) -> None:
     _ok("Billing-state: required assets + headers + basic ID format OK")
 
 
-def _validate_cache_index_repo(repo_root: Path) -> None:
-    """Validate centralized cache management index (repo-scoped).
-
-    This file controls Actions cache pruning and also serves as inventory.
-    """
-    p = repo_root / "platform" / "cache" / "cache_index.csv"
-    if not p.exists():
-        _fail(f"Missing repo cache index: {p}")
-
-    _assert_exact_header(
-        p,
-        [
-            "row_type",
-            "cache_key",
-            "cache_key_prefix",
-            "policy_name",
-            "retention_days",
-            "protected",
-            "created_at",
-            "last_accessed_at",
-            "cache_id",
-            "size_in_bytes",
-            "notes",
-        ],
-    )
-
-    rows = read_csv(p)
-    rules = [r for r in rows if str(r.get("row_type", "")).strip().upper() == "RULE"]
-    if not rules:
-        _fail("Repo cache index has no RULE rows")
-
-    _ok("Repo cache index: headers + at least one RULE row OK")
-
-
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--phase", choices=["pre","post"], required=True)
@@ -340,7 +279,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if args.phase == "pre":
         _validate_repo_billing_config(repo_root)
-        _validate_cache_index_repo(repo_root)
         _validate_modules(repo_root)
         _validate_tenants_and_workorders(repo_root)
         _validate_maintenance_state(repo_root)

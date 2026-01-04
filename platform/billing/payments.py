@@ -9,7 +9,7 @@ from ..utils.csvio import read_csv, require_headers
 from ..common.id_codec import canon_payment_id, canon_tenant_id, canon_topup_method_id, id_key
 from ..common.id_policy import validate_id
 from .state import BillingState
-from .topup import TopupApplyRequest, apply_topup_ledger
+from .topup import TopupRequest, apply_admin_topup
 
 
 PAYMENTS_CSV_HEADERS: List[str] = [
@@ -142,10 +142,10 @@ def reconcile_repo_payments_into_billing_state(repo_root: Path, billing: Billing
         reference = str(r.get("reference", "")).strip()
         note = str(r.get("note", "")).strip()
 
-        tx_id = apply_topup_ledger(
+        tx_id = apply_admin_topup(
             repo_root=repo_root,
             billing=billing,
-            req=TopupApplyRequest(
+            req=TopupRequest(
                 tenant_id=tenant_id,
                 topup_method_id=topup_method_id,
                 amount_credits=amount,

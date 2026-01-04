@@ -67,31 +67,7 @@ def build_manifest_item(
     }
 
 
-def execute_module_runner(module_path: Path, params: Dict[str, Any], outputs_dir: Path, env_overrides: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    """Execute a module runner with optional environment overrides.
-
-    Modules are allowed to read configuration from environment variables. To avoid
-    modifying module code, orchestrator can inject required keys for the duration
-    of the module run, and then restore the previous environment.
-    """
-    import os
-
+def execute_module_runner(module_path: Path, params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
     runner = _import_module_runner(module_path)
     outputs_dir.mkdir(parents=True, exist_ok=True)
-
-    if not env_overrides:
-        return runner.run(params=params, outputs_dir=outputs_dir)
-
-    # Apply overrides (save old values and restore after)
-    old: Dict[str, Optional[str]] = {}
-    try:
-        for k, v in env_overrides.items():
-            old[k] = os.environ.get(k)
-            os.environ[k] = str(v)
-        return runner.run(params=params, outputs_dir=outputs_dir)
-    finally:
-        for k, prev in old.items():
-            if prev is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = prev
+    return runner.run(params=params, outputs_dir=outputs_dir)

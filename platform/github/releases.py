@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
+
+
+def _repo_args() -> List[str]:
+    """Return gh CLI args that pin operations to the current repository.
+
+    Using --repo avoids accidental cross-repo operations when multiple remotes exist.
+    """
+    repo = (os.environ.get("GITHUB_REPOSITORY") or "").strip()
+    return ["--repo", repo] if repo and "/" in repo else []
 
 
 def _run(cmd: List[str]) -> subprocess.CompletedProcess:
@@ -11,21 +21,21 @@ def _run(cmd: List[str]) -> subprocess.CompletedProcess:
 
 
 def release_exists(tag: str) -> bool:
-    cp = _run(["gh", "release", "view", tag])
+    cp = _run(["gh", "release", "view", tag, *_repo_args()])
     return cp.returncode == 0
 
 
 def ensure_release(tag: str, title: str, notes: str = "") -> None:
     if release_exists(tag):
         return
-    cp = _run(["gh", "release", "create", tag, "--title", title, "--notes", notes])
+    cp = _run(["gh", "release", "create", tag, "--title", title, "--notes", notes, *_repo_args()])
     if cp.returncode != 0:
         raise RuntimeError(f"Failed to create release {tag}: {cp.stderr.strip()}")
 
 
 def download_release_assets(tag: str, dest_dir: Path, patterns: Optional[List[str]] = None) -> None:
     dest_dir.mkdir(parents=True, exist_ok=True)
-    cmd = ["gh", "release", "download", tag, "--dir", str(dest_dir)]
+    cmd = ["gh", "release", "download", tag, "--dir", str(dest_dir), *_repo_args()]
     if patterns:
         for p in patterns:
             cmd.extend(["--pattern", p])
@@ -35,7 +45,7 @@ def download_release_assets(tag: str, dest_dir: Path, patterns: Optional[List[st
 
 
 def upload_release_assets(tag: str, files: Iterable[Path], clobber: bool = True) -> None:
-    cmd = ["gh", "release", "upload", tag]
+    cmd = ["gh", "release", "upload", tag, *_repo_args()]
     if clobber:
         cmd.append("--clobber")
     cmd.extend([str(p) for p in files])
@@ -45,7 +55,7 @@ def upload_release_assets(tag: str, files: Iterable[Path], clobber: bool = True)
 
 
 def _release_view_json(tag: str) -> Dict[str, object]:
-    cp = _run(["gh", "release", "view", tag, "--json", "id,tagName,assets"])
+    cp = _run(["gh", "release", "view", tag, "--json", "id,tagName,assets", *_repo_args()])
     if cp.returncode != 0:
         raise RuntimeError(f"Failed to view release {tag}: {cp.stderr.strip()}")
     try:

@@ -44,6 +44,7 @@ Billing-state assets (CSV) include:
 - `transactions.csv`
 - `transaction_items.csv`
 - `promotion_redemptions.csv`
+- `cache_index.csv`
 - `workorders_log.csv`
 - `module_runs_log.csv`
 - `github_releases_map.csv` (internal release_id -> GitHub numeric release id)
@@ -52,26 +53,13 @@ Billing-state assets (CSV) include:
 
 Seeds for a fresh release are in `billing-state-seed/`.
 
-## Centralized GitHub Actions cache management
-
-GitHub Actions caches (including `pip` caches created by `actions/setup-python`) are managed in-repo via:
-
-- `platform/cache/cache_index.csv`
-
-This file contains **RULE** rows (retention policy by key prefix) and **CACHE** rows (inventory, auto-synced).
-The manual workflow `Cache Management` (`.github/workflows/cache-management.yml`) can:
-
-- sync inventory into the file
-- prune caches based on retention
-- surgically delete caches by exact key or key prefix
-
 ## GitHub Release/Asset internal mapping (anti-enumeration)
 
 For module artifacts published to GitHub Releases, the platform uses an **internal** random 8-char ID
 (`github_release_asset_id`) as the “release_id” and “asset_id”. The numeric GitHub IDs are stored in billing state:
 
-- `platform/billing-state/github_releases_map.csv`
-- `platform/billing-state/github_assets_map.csv`
+- `.billing-state/github_releases_map.csv`
+- `.billing-state/github_assets_map.csv`
 
 This enables internal folder naming and avoids exposing sequential GitHub IDs.
 
@@ -84,17 +72,22 @@ This enables internal folder naming and avoids exposing sequential GitHub IDs.
 
 - Orchestrator (runs enabled work orders):
   ```bash
-  python -m platform.cli orchestrator --billing-state-dir .billing-state --runtime-dir runtime --enable-github-releases
+  python -m platform.cli orchestrator --billing-state-dir .billing-state --runtime-dir runtime
   ```
 
-- Reconcile repo payments into billing-state (applies CONFIRMED/SETTLED rows from platform/billing/payments.csv):
+  Note: if any workorder sets `purchase_release_artifacts: true` and `GH_TOKEN`/`GITHUB_TOKEN` is available,
+  the orchestrator automatically publishes artifacts to GitHub Releases.
+
+- Admin top-up (posts a TOPUP transaction):
   ```bash
-  python -m platform.cli reconcile-payments --billing-state-dir .billing-state
+  python -m platform.cli admin-topup --billing-state-dir .billing-state --tenant-id <TENANT> --topup-method-id <TM> --amount-credits 1000 --reference "wire-123"
   ```
 
 ## Workflows
 
 - **maintenance.yml**: regenerates maintenance-state + verifies repo
 - **orchestrator.yml**: runs work orders and updates the billing-state release assets
-- **verify-e2e.yml**: runs an end-to-end pass of maintenance + orchestrator + verification
-- **cache-management.yml**: centralized cache inventory + pruning (manual / callable)
+- **admin-topup.yml**: applies a top-up and updates the billing-state release assets
+- **verify-e2e.yml**: runs repository verification (schemas/headers/ID policy)
+- **cache-prune.yml**: standalone cache cleanup (unchanged)
+

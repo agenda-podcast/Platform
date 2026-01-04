@@ -1,5 +1,5 @@
 topup_method_id,name,enabled,instructions
-r8,Admin Top Up,true,"Admin-triggered top-up inside GitHub Actions. Uses payments.csv + reconciliation into billing-state."
-0Y,Bank Transfer,true,"Send a bank transfer per your standard procedure. Include the reference format exactly so the payment can be reconciled."
-6a,Stripe (planned),false,"Planned: automatic via Stripe webhooks."
-Rm,Other (reserved),false,
+r8,,,"Admin verifies incoming transfer, then runs Admin Top-Up workflow with tenant_id, amount_credits, and reference."
+Rm,,,
+6a,,,Planned: automatic via Stripe webhooks.
+0Y,,,Send a bank transfer per your standard procedure. Include the reference format exactly so the payment can be reconciled.

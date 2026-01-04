@@ -1,0 +1,9 @@
+*** Begin Patch
+*** Update File: platform/billing/maintenance.py
+@@
+ def run_maintenance(...):
++    # Fresh-start support: if billing-state release/assets were deleted, bootstrap from repo template
++    # and (best-effort) republish to GitHub Releases under fixed tag billing-state-v1.
++    from platform.billing.bootstrap import bootstrap_billing_state_if_missing
++    bootstrap_billing_state_if_missing(billing_state_dir, repo_root=os.getcwd(), allow_publish=True)
+*** End Patch

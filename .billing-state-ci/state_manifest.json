@@ -1,6 +1,6 @@
 {
   "billing_state_version": "v1",
-  "updated_at": "2026-01-04T02:21:49Z",
+  "updated_at": "2026-01-03T19:14:03Z",
   "assets": [
     {
       "name": "tenants_credits.csv",
@@ -12,11 +12,15 @@
     },
     {
       "name": "transaction_items.csv",
-      "sha256": "dda7536218de8af25998f0c5871ab0ebcdb8e235667098b9e40f4f3b6ada520c"
+      "sha256": "c8d56d0977f311c5dbfe65cd2c1640b74201f857709e9a8cda7700d8c50e5d8c"
     },
     {
       "name": "promotion_redemptions.csv",
       "sha256": "4f4ce0dd312b6383d96da075d8ed2e2b8951275cb691d9f27e6658828a3927bb"
+    },
+    {
+      "name": "cache_index.csv",
+      "sha256": "a441d2ea011ebce1bbb73e1ffa5619cca2d99c36f567279ceb42ab889ada3ac6"
     },
     {
       "name": "workorders_log.csv",

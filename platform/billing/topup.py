@@ -13,7 +13,7 @@ from .state import BillingState
 
 
 @dataclass(frozen=True)
-class TopupApplyRequest:
+class TopupRequest:
     tenant_id: str
     topup_method_id: str
     amount_credits: int
@@ -31,8 +31,8 @@ def _load_topup_methods(repo_root: Path) -> Dict[str, Dict[str, str]]:
     return {str(r.get("topup_method_id", "")).strip(): r for r in rows if r.get("topup_method_id")}
 
 
-def apply_topup_ledger(repo_root: Path, billing: BillingState, req: TopupApplyRequest) -> str:
-    """Apply a top-up by appending ledger entries and updating balance.
+def apply_admin_topup(repo_root: Path, billing: BillingState, req: TopupRequest) -> str:
+    """Apply a manual top-up by appending ledger entries and updating balance.
 
     Billing-state release assets remain the accounting system of record; this function updates the
     local billing-state tables which are later uploaded back to the billing-state release.
@@ -105,7 +105,7 @@ def apply_topup_ledger(repo_root: Path, billing: BillingState, req: TopupApplyRe
         "transaction_id": tx_id,
         "tenant_id": tenant_id,
         "module_id": "",
-        "feature": "TOPUP",
+        "feature": "ADMIN_TOPUP",
         "type": "TOPUP",
         "amount_credits": str(int(req.amount_credits)),
         "created_at": utcnow_iso(),

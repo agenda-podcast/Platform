@@ -1,59 +1,26 @@
 module_id: U2T
-name: demo_consume_first_result
-version: 0.2.0
-description: 'Demo: consume first search result and generate a deterministic text
-  artifact.'
+version: 0.1.0
+description: Placeholder module that generates a deterministic text artifact and a release manifest item.
 supports_downloadable_artifacts: true
 produces_manifest: true
 depends_on: []
-determinism: deterministic
 cache:
   enabled: true
   retention_default: 1w
   key_inputs:
-  - selected_result
+  - topic
   - language
-ports:
-  inputs:
-  - name: selected_result
-    required: true
-    format: application/json
-    cardinality: single
-    allowed_sources:
-    - NEW
-    - CACHE
-    - ASSET
-    - RELEASE
-  - name: language
-    required: false
-    format: text/plain
-    cardinality: single
-    allowed_sources:
-    - NEW
-    - CACHE
-    - ASSET
-    - RELEASE
-  outputs:
-  - name: demo_text
-    format: text/plain
-    cardinality: single
-    filename: demo_text.txt
-  - name: selected_result_json
-    format: application/json
-    cardinality: single
-    filename: selected_result.json
+  - freshness_days
 inputs:
-- name: selected_result
+- name: topic
   required: true
-  format: application/json
+  format: text/plain
 - name: language
-  required: false
+  required: true
+  format: text/plain
+- name: freshness_days
+  required: true
   format: text/plain
 outputs:
-- name: demo_text
+- name: source_text
   format: text/plain
-- name: selected_result_json
-  format: application/json
-env:
-  secrets: []
-  vars: []
