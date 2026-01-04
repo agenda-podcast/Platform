@@ -103,9 +103,14 @@ jobs:
       - name: Run Orchestrator
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Passphrase used to decrypt platform/secretstore/secretstore.json.gpg at runtime.
+          # Store as a GitHub Secret or (recommended) Environment Secret with approvals.
+          SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}
         run: |
           set -euo pipefail
-          bash scripts/run_orchestrator.sh --secretstore runtime/secure/secretstore.json --enable-github-releases --runtime-dir runtime --billing-state-dir .billing-state
+          # Option B: point orchestrator directly at the repo-encrypted secretstore.
+          # Orchestrator will decrypt it to runtime/secure/secretstore.json using SECRETSTORE_PASSPHRASE.
+          bash scripts/run_orchestrator.sh --secretstore platform/secretstore/secretstore.json.gpg --enable-github-releases --runtime-dir runtime --billing-state-dir .billing-state
 
       - name: Run-scoped summary (this run only)
         run: |
