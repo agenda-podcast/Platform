@@ -1,0 +1,20 @@
+# Module manifest
+module_id: "wxz"
+name: "Google Custom Search (wxz)"
+version: "1.0.0"
+
+# Declares what this module expects to find in its environment.
+# Orchestrator will inject these keys from decrypted secretstore JSON before running the module.
+config:
+  secrets:
+    - "GOOGLE_CSE_API_KEY"
+    - "GOOGLE_CSE_CX"
+  vars:
+    - "GOOGLE_CSE_NUM_RESULTS"
+    - "GOOGLE_CSE_SAFE"
+    - "GOOGLE_CSE_GL"
+    - "GOOGLE_CSE_HL"
+
+# Optional: defaults for non-sensitive vars (applied only if not present in secretstore and not already in env)
+defaults:
+  {}

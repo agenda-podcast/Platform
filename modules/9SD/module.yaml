@@ -1,0 +1,17 @@
+# Module manifest
+module_id: "9SD"
+name: "Demo Module: Query Generator (9SD)"
+version: "1.0.0"
+
+# Declares what this module expects to find in its environment.
+# Orchestrator will inject these keys from decrypted secretstore JSON before running the module.
+config:
+  secrets:
+    []
+  vars:
+    - "QUERY_SEED"
+    - "QUERY_MAX_ITEMS"
+
+# Optional: defaults for non-sensitive vars (applied only if not present in secretstore and not already in env)
+defaults:
+  {}
