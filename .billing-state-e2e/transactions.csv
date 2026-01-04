@@ -1,6 +1,0 @@
-transaction_id,tenant_id,work_order_id,type,amount_credits,created_at,reason_code,note,metadata_json
-9lIpLywt,nxlkGI,,TOPUP,1000,2026-01-03T19:13:09Z,,Seed example payment,"{""topup_method_id"":""0Y"",""reference"":""INV-1001"",""payment_id"":""Gq1JFSl9""}"
-f0NCsCgP,nxlkGI,UbjkpxZO,SPEND,-7,2026-01-03T19:14:03Z,,,"{""workorder_path"":""/mnt/data/Platform-main_rewritten/Platform-main/tenants/nxlkGI/workorders/UbjkpxZO.yml""}"
-iWU8W7gI,nxlkGI,UbjkpxZO,REFUND,7,2026-01-03T19:14:03Z,ShlFvj,,"{""module_id"":""wxz"",""refund_for"":""IYOrev6V""}"
-Jq4H3m84,nxlkGI,UbjkpxZO,SPEND,-17,2026-01-04T05:06:35Z,,Work order charge (steps=3),"{""workorder_path"":""/mnt/data/platform_repo/Platform-main/tenants/nxlkGI/workorders/UbjkpxZO.yml"",""workflow"":""steps""}"
-FKVuQooL,nxlkGI,UbjkpxZO,REFUND,7,2026-01-04T05:06:36Z,RCNCl7,Refund for step_id=s2 module_id=wxz: Required env secrets were not provided for Google Custom Search API.,"{""module_run_id"":""QxP8moSN"",""step_id"":""s2"",""workflow"":""steps""}"

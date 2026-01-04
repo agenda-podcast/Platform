@@ -54,3 +54,6 @@ outputs:
   format: text/plain
 - name: selected_result_json
   format: application/json
+env:
+  secrets: []
+  vars: []

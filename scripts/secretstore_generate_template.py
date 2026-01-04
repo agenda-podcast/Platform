@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Generate platform/secretstore/secretstore.template.json from module manifests.
+"""Generate platform/secretstore/secretstore.template.json from module specs.
 
-- Scans ./modules/*/module.yaml
-- Collects config.secrets and config.vars per module_id (case-sensitive)
-- Produces a deterministic JSON template with REPLACE_ME placeholders
+Source of truth: `modules/*/module.yml`
+
+- Reads `env.secrets` and `env.vars` from each module.yml (case-sensitive module_id and key names)
+- Produces deterministic JSON with REPLACE_ME placeholders
 """
 
 from __future__ import annotations
@@ -11,34 +12,29 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
-try:
-    import yaml  # type: ignore
-except Exception as e:
-    raise SystemExit("Missing dependency: pyyaml. Add it to your requirements or install in CI.") from e
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULES_DIR = ROOT / "modules"
 OUT_PATH = ROOT / "platform" / "secretstore" / "secretstore.template.json"
 PLACEHOLDER = "REPLACE_ME"
 
-def _load_module_manifest(path: Path) -> Dict[str, Any]:
+def _load_module_spec(path: Path) -> Dict[str, Any]:
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"Invalid YAML (expected mapping): {path}")
-    for k in ("module_id", "config"):
-        if k not in data:
-            raise ValueError(f"Missing '{k}' in {path}")
-    cfg = data.get("config") or {}
-    if not isinstance(cfg, dict):
-        raise ValueError(f"'config' must be a mapping in {path}")
-    for section in ("secrets", "vars"):
-        if section not in cfg:
-            raise ValueError(f"Missing config.{section} in {path}")
-        if not isinstance(cfg[section], list):
-            raise ValueError(f"config.{section} must be a list in {path}")
+    if "module_id" not in data:
+        raise ValueError(f"Missing module_id in {path}")
     return data
+
+def _as_list(x: Any) -> List[str]:
+    if x is None:
+        return []
+    if not isinstance(x, list):
+        raise ValueError("Expected list")
+    return [str(i) for i in x]
 
 def main() -> int:
     if not MODULES_DIR.exists():
@@ -48,15 +44,18 @@ def main() -> int:
     for module_path in sorted(MODULES_DIR.iterdir()):
         if not module_path.is_dir():
             continue
-        manifest = module_path / "module.yaml"
-        if not manifest.exists():
+        spec_path = module_path / "module.yml"
+        if not spec_path.exists():
             continue
-        data = _load_module_manifest(manifest)
-        module_id = str(data["module_id"])
-        cfg = data["config"]
+        spec = _load_module_spec(spec_path)
+        module_id = str(spec["module_id"])
 
-        secrets: List[str] = sorted(set(str(x) for x in (cfg.get("secrets") or [])))
-        vars_: List[str] = sorted(set(str(x) for x in (cfg.get("vars") or [])))
+        env = spec.get("env") or {}
+        if not isinstance(env, dict):
+            env = {}
+
+        secrets = sorted(set(_as_list(env.get("secrets"))))
+        vars_ = sorted(set(_as_list(env.get("vars"))))
 
         modules[module_id] = {
             "secrets": {k: PLACEHOLDER for k in secrets},

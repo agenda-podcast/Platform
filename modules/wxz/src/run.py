@@ -96,6 +96,41 @@ def run(params: Dict[str, Any], outputs_dir: str) -> Dict[str, Any]:
     results_path = out_dir / "results.jsonl"
     report_path = out_dir / "report.json"
 
+    # Offline E2E support: allow running without real Google credentials in CI.
+    offline = str(os.getenv("PLATFORM_OFFLINE_E2E", "")).strip().lower() in ("1", "true", "yes")
+
+    if not api_key or not engine_id:
+        if offline:
+            # Produce deterministic mock results so downstream demo modules can run.
+            # This is intentionally minimal and does not call external services.
+            queries_in = inputs.get("queries") if isinstance(inputs.get("queries"), list) else []
+            mock_lines: List[str] = []
+            for qi, q in enumerate(queries_in[:5]):
+                q = str(q)
+                mock = {
+                    "query": q,
+                    "rank": 1,
+                    "title": f"Mock result for: {q}",
+                    "url": f"https://example.com/search?q={'+'.join(q.strip().split())}",
+                    "canonical_url": f"https://example.com/search?q={'+'.join(q.strip().split())}",
+                    "snippet": "Offline E2E placeholder (no external call).",
+                }
+                mock_lines.append(json.dumps(mock, ensure_ascii=False))
+            results_path.write_text("\n".join(mock_lines) + ("\n" if mock_lines else ""), encoding="utf-8")
+            report_path.write_text(json.dumps({
+                "status": "OFFLINE_E2E",
+                "written": len(mock_lines),
+                "note": "Generated mock results because GOOGLE_SEARCH credentials were not provided.",
+            }, indent=2), encoding="utf-8")
+            return {"status": "COMPLETED", "files": [str(results_path.name), str(report_path.name)]}
+
+        return {
+            "status": "FAILED",
+            "reason_slug": "missing_secret",
+            "message": f"Missing required env: {MODULE_ID}_GOOGLE_SEARCH_API_KEY and/or {MODULE_ID}_GOOGLE_SEARCH_ENGINE_ID",
+        }
+
+
     seen_urls: set[str] = set()
     total_written = 0
     per_query_stats: List[Dict[str, Any]] = []

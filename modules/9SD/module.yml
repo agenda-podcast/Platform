@@ -73,3 +73,6 @@ outputs:
   format: text/plain
 - name: metadata
   format: application/json
+env:
+  secrets: []
+  vars: []

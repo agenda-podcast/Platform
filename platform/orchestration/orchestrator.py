@@ -14,6 +14,7 @@ from ..common.id_codec import canon_module_id, canon_tenant_id, canon_work_order
 from ..common.id_policy import generate_unique_id, validate_id
 from ..github.releases import ensure_release, upload_release_assets, get_release_numeric_id, get_release_assets_numeric_ids
 from ..orchestration.module_exec import execute_module_runner
+from ..runtime.secretstore import Secretstore, inject_module_env, SecretstoreError
 from ..utils.csvio import read_csv
 from ..utils.fs import ensure_dir
 from ..utils.hashing import sha256_bytes, sha256_file, short_hash
@@ -513,7 +514,7 @@ def _copy_tree(src: Path, dst: Path) -> None:
         shutil.copy2(p, target)
 
 
-def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path, enable_github_releases: bool = False) -> None:
+def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path, enable_github_releases: bool = False, secretstore_path: Optional[Path] = None) -> None:
     reason_idx = _load_reason_index(repo_root)
     module_names = _load_module_display_names(repo_root)
     tenant_rel = _load_tenant_relationships(repo_root)
@@ -522,6 +523,11 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
     artifacts_policy = _load_module_artifacts_policy(repo_root)
 
     billing = BillingState(billing_state_dir)
+
+    # Secretstore (optional) - decrypted JSON injected at runtime by workflow
+    secretstore: Optional[Secretstore] = None
+    if secretstore_path is not None:
+        secretstore = Secretstore.load(secretstore_path)
     billing_state_dir.mkdir(parents=True, exist_ok=True)
 
     # Orchestrator needs full state including mapping tables
@@ -762,7 +768,12 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                         "reuse_output_type": reuse_output_type,
                     }
                     try:
-                        result = execute_module_runner(module_path=module_path, params=params, outputs_dir=out_dir)
+                        env_overrides: Optional[Dict[str, str]] = None
+                        if secretstore is not None:
+                            env_tmp: Dict[str, str] = {}
+                            inject_module_env(mid, module_specs.get(mid) or {}, secretstore, env_tmp)
+                            env_overrides = env_tmp or None
+                        result = execute_module_runner(module_path=module_path, params=params, outputs_dir=out_dir, env_overrides=env_overrides)
                     except Exception as e:
                         result = {"status": "FAILED", "reason_slug": "exception", "message": str(e)}
 
@@ -1048,7 +1059,12 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             out_dir = runtime_dir / "runs" / tenant_id / work_order_id / mid / mr_id
             ensure_dir(out_dir)
 
-            result = execute_module_runner(module_path=module_path, params=params, outputs_dir=out_dir)
+            env_overrides: Optional[Dict[str, str]] = None
+            if secretstore is not None:
+                env_tmp: Dict[str, str] = {}
+                inject_module_env(mid, module_specs.get(mid) or {}, secretstore, env_tmp)
+                env_overrides = env_tmp or None
+            result = execute_module_runner(module_path=module_path, params=params, outputs_dir=out_dir, env_overrides=env_overrides)
 
             status = str(result.get("status","")).strip().upper() or "FAILED"
             reason_slug = str(result.get("reason_slug","")).strip() or str(result.get("reason_key","")).strip()

@@ -81,3 +81,8 @@ outputs:
   format: application/x-ndjson
 - name: report
   format: application/json
+env:
+  secrets:
+  - wxz_GOOGLE_SEARCH_API_KEY
+  - wxz_GOOGLE_SEARCH_ENGINE_ID
+  vars: []

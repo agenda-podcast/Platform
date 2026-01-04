@@ -31,6 +31,16 @@ jobs:
           set -euo pipefail
           PIP_CACHE_DIR="$(python -m pip cache dir 2>/dev/null || echo "$HOME/.cache/pip")"
           mkdir -p "$PIP_CACHE_DIR"
+      - name: Generate secretstore template
+        run: |
+          set -euo pipefail
+          python scripts/secretstore_generate_template.py
+
+      - name: Verify secretstore guardrails (maintenance mode)
+        run: |
+          set -euo pipefail
+          python scripts/ci_verify_secretstore.py
+
       - name: Run Maintenance
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

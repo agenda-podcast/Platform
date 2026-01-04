@@ -39,6 +39,7 @@ def cmd_orchestrate(args: argparse.Namespace) -> int:
         billing_state_dir=billing_state_dir,
         runtime_dir=runtime_dir,
         enable_github_releases=enable_releases,
+        secretstore_path=Path(args.secretstore).resolve() if str(getattr(args,'secretstore','') or '') else None,
     )
     return 0
 
@@ -233,12 +234,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--runtime-dir", default="runtime")
     sp.add_argument("--billing-state-dir", default=".billing-state")
     sp.add_argument("--enable-github-releases", action="store_true")
+    sp.add_argument("--secretstore", default="", help="Path to decrypted secretstore.json (optional). If provided, env vars declared in module.yml env section are injected per module.")
     sp.set_defaults(func=cmd_orchestrate)
 
     sp = sub.add_parser("orchestrator", help="Alias for orchestrate")
     sp.add_argument("--runtime-dir", default="runtime")
     sp.add_argument("--billing-state-dir", default=".billing-state")
     sp.add_argument("--enable-github-releases", action="store_true")
+    sp.add_argument("--secretstore", default="", help="Path to decrypted secretstore.json (optional). If provided, env vars declared in module.yml env section are injected per module.")
     sp.set_defaults(func=cmd_orchestrate)
 
     sp = sub.add_parser("module-exec", help="Execute a single module runner")

@@ -41,6 +41,16 @@ jobs:
             python -m pip install pyyaml
           fi
 
+      - name: Generate secretstore template
+        run: |
+          set -euo pipefail
+          python scripts/secretstore_generate_template.py
+
+      - name: Verify secretstore guardrails (maintenance mode)
+        run: |
+          set -euo pipefail
+          python scripts/ci_verify_secretstore.py
+
       - name: Run verification (pre + post)
         run: |
           set -euo pipefail
@@ -48,6 +58,8 @@ jobs:
           python scripts/ci_verify.py --phase post --billing-state-dir .billing-state-ci --runtime-dir runtime
 
       - name: E2E billing itemization (RUN + SAVE_ARTIFACTS)
+        env:
+          PLATFORM_OFFLINE_E2E: "1"
         run: |
           set -euo pipefail
           rm -rf .billing-state-e2e runtime-e2e

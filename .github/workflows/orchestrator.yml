@@ -105,7 +105,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          bash scripts/run_orchestrator.sh --enable-github-releases --runtime-dir runtime --billing-state-dir .billing-state
+          bash scripts/run_orchestrator.sh --secretstore runtime/secure/secretstore.json --enable-github-releases --runtime-dir runtime --billing-state-dir .billing-state
 
       - name: Run-scoped summary (this run only)
         run: |
