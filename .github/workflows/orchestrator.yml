@@ -41,9 +41,19 @@ jobs:
 
       - name: Run Orchestrator
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           bash scripts/run_orchestrator.sh
+
+      - name: Guard: if artifacts were purchased, ensure they exist in Releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f scripts/artifacts_release_guard.py ]; then
+            python scripts/artifacts_release_guard.py
+          fi
 
       - name: Post-verify (if verifier exists)
         run: |
@@ -51,9 +61,6 @@ jobs:
             python scripts/ci_verify.py --phase post --billing-state-dir .billing-state-ci --runtime-dir runtime
           fi
 
-      - name: Commit & push (if changed)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
-          bash scripts/ci_commit_push.sh "chore: orchestrator" main
+      # IMPORTANT:
+      # Billing-state is the source of truth in GitHub Releases (billing-state-v1).
+      # The orchestrator MUST NOT commit billing-state artifacts back into the repo.
