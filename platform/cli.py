@@ -15,6 +15,7 @@ from .billing.payments import (
     reconcile_repo_payments_into_billing_state,
     validate_repo_payments,
 )
+from .billing.admin_topup import append_admin_topup_payment
 
 def _repo_root() -> Path:
     # This file is at: <repo_root>/platform/cli.py
@@ -86,6 +87,38 @@ def cmd_validate_payments(args: argparse.Namespace) -> int:
                 "payments_seen": report.payments_seen,
                 "eligible_seen": report.eligible_seen,
                 "warnings": report.warnings,
+            }
+        )
+    )
+    return 0
+
+def cmd_admin_topup(args: argparse.Namespace) -> int:
+    repo_root = _repo_root()
+    tenant_id = str(args.tenant_id or "").strip()
+
+    try:
+        amount = int(str(args.amount_credits).strip())
+    except Exception as e:
+        raise SystemExit("amount_credits must be an integer") from e
+
+    res = append_admin_topup_payment(
+        repo_root=repo_root,
+        tenant_id=tenant_id,
+        amount_credits=amount,
+        reference=str(getattr(args, "reference", "") or "").strip(),
+        note=str(getattr(args, "note", "") or "").strip(),
+        status="CONFIRMED",
+    )
+
+    print(
+        json.dumps(
+            {
+                "payment_id": res.payment_id,
+                "tenant_id": res.tenant_id,
+                "topup_method_id": res.topup_method_id,
+                "amount_credits": res.amount_credits,
+                "received_at": res.received_at,
+                "reference": res.reference,
             }
         )
     )
@@ -197,6 +230,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("reconcile-payments", help="Reconcile repo-recorded payments into billing-state")
     sp.add_argument("--billing-state-dir", default=".billing-state")
     sp.set_defaults(func=cmd_reconcile_payments)
+
+    sp = sub.add_parser("admin-topup", help="Append an Admin Top Up record into platform/billing/payments.csv")
+    sp.add_argument("--tenant-id", required=True)
+    sp.add_argument("--amount-credits", required=True, dest="amount_credits")
+    sp.add_argument("--reference", default="")
+    sp.add_argument("--note", default="")
+    sp.set_defaults(func=cmd_admin_topup)
 
     return p
 

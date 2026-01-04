@@ -69,10 +69,19 @@ def _validate_repo_billing_config(repo_root: Path) -> None:
             validate_id("module_id", mid, "module_prices.module_id")
 
     rows = read_csv(billing / "topup_instructions.csv")
+    has_admin_topup = False
     for r in rows:
         tid = str(r.get("topup_method_id","")).strip()
         if tid:
             validate_id("topup_method_id", tid, "topup_method_id")
+        name = str(r.get("name","")).strip().lower()
+        if name == "admin top up":
+            enabled = str(r.get("enabled","")).strip().lower()
+            if enabled == "false":
+                _fail("topup_instructions.csv: 'Admin Top Up' method is disabled")
+            has_admin_topup = True
+    if not has_admin_topup:
+        _fail("topup_instructions.csv missing required payment method: 'Admin Top Up'")
 
     rows = read_csv(billing / "payments.csv")
     for r in rows:
