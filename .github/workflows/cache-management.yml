@@ -53,6 +53,12 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
+      - name: Ensure pip cache dir exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          PIP_CACHE_DIR="$(python -m pip cache dir 2>/dev/null || echo "$HOME/.cache/pip")"
+          mkdir -p "$PIP_CACHE_DIR"
       - name: Install dependencies
         run: |
           set -euo pipefail
