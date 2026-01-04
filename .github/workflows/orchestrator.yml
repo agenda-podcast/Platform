@@ -66,6 +66,12 @@ jobs:
             fi
           done
 
+
+      - name: Reconcile repo payments into billing-state
+        run: |
+          set -euo pipefail
+          python -m platform.cli reconcile-payments --billing-state-dir .billing-state
+
       - name: Capture run start time (UTC)
         run: |
           set -euo pipefail

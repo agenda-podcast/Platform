@@ -11,22 +11,18 @@ from .cache.prune import run_cache_prune
 from .orchestration.module_exec import execute_module_runner
 
 from .billing.state import BillingState
-from .billing.topup import TopupRequest, apply_admin_topup
 from .billing.payments import (
     reconcile_repo_payments_into_billing_state,
     validate_repo_payments,
 )
 
-
 def _repo_root() -> Path:
     # This file is at: <repo_root>/platform/cli.py
     return Path(__file__).resolve().parents[1]
 
-
 def cmd_maintenance(args: argparse.Namespace) -> int:
     run_maintenance(repo_root=_repo_root())
     return 0
-
 
 def cmd_orchestrate(args: argparse.Namespace) -> int:
     repo_root = _repo_root()
@@ -44,7 +40,6 @@ def cmd_orchestrate(args: argparse.Namespace) -> int:
         enable_github_releases=enable_releases,
     )
     return 0
-
 
 def cmd_module_exec(args: argparse.Namespace) -> int:
     repo_root = _repo_root()
@@ -72,7 +67,6 @@ def cmd_module_exec(args: argparse.Namespace) -> int:
     print(json.dumps(out))
     return 0
 
-
 def cmd_validate_payments(args: argparse.Namespace) -> int:
     repo_root = _repo_root()
     report = validate_repo_payments(repo_root)
@@ -96,7 +90,6 @@ def cmd_validate_payments(args: argparse.Namespace) -> int:
         )
     )
     return 0
-
 
 def cmd_reconcile_payments(args: argparse.Namespace) -> int:
     repo_root = _repo_root()
@@ -149,39 +142,6 @@ def cmd_reconcile_payments(args: argparse.Namespace) -> int:
     )
     return 0
 
-
-def cmd_admin_topup(args: argparse.Namespace) -> int:
-    repo_root = _repo_root()
-    billing_state_dir = Path(args.billing_state_dir).resolve()
-    billing_state_dir.mkdir(parents=True, exist_ok=True)
-    billing = BillingState(billing_state_dir)
-    billing.validate_minimal(
-        required_files=[
-            "tenants_credits.csv",
-            "transactions.csv",
-            "transaction_items.csv",
-            "promotion_redemptions.csv",
-            "cache_index.csv",
-            "workorders_log.csv",
-            "module_runs_log.csv",
-            "github_releases_map.csv",
-            "github_assets_map.csv",
-        ]
-    )
-
-    req = TopupRequest(
-        tenant_id=str(args.tenant_id),
-        amount_credits=int(args.amount_credits),
-        topup_method_id=str(args.topup_method_id),
-        reference=str(args.reference),
-        note=str(args.note or ""),
-    )
-    tx_id = apply_admin_topup(repo_root, billing, req)
-    billing.write_state_manifest()
-    print(json.dumps({"transaction_id": tx_id, "tenant_id": req.tenant_id, "amount_credits": req.amount_credits}))
-    return 0
-
-
 def cmd_cache_prune(args: argparse.Namespace) -> int:
     res = run_cache_prune(Path(args.billing_state_dir).resolve(), dry_run=bool(args.dry_run))
     print(
@@ -194,7 +154,6 @@ def cmd_cache_prune(args: argparse.Namespace) -> int:
         )
     )
     return 0
-
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="platform")
@@ -215,7 +174,6 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--enable-github-releases", action="store_true")
     sp.set_defaults(func=cmd_orchestrate)
 
-
     sp = sub.add_parser("module-exec", help="Execute a single module runner")
     sp.add_argument("--module-id", required=True)
     sp.add_argument("--params-json", required=True)
@@ -233,15 +191,6 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--dry-run", action="store_true")
     sp.set_defaults(func=cmd_cache_prune)
 
-    sp = sub.add_parser("admin-topup", help="Admin: apply a ledger top-up to billing-state")
-    sp.add_argument("--tenant-id", required=True)
-    sp.add_argument("--amount-credits", required=True)
-    sp.add_argument("--topup-method-id", required=True)
-    sp.add_argument("--reference", required=True)
-    sp.add_argument("--note", default="")
-    sp.add_argument("--billing-state-dir", default=".billing-state")
-    sp.set_defaults(func=cmd_admin_topup)
-
     sp = sub.add_parser("validate-payments", help="Validate repo payments.csv before reconciliation")
     sp.set_defaults(func=cmd_validate_payments)
 
@@ -251,12 +200,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     return p
 
-
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     return int(args.func(args) or 0)
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

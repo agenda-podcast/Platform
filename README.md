@@ -75,16 +75,14 @@ This enables internal folder naming and avoids exposing sequential GitHub IDs.
   python -m platform.cli orchestrator --billing-state-dir .billing-state --runtime-dir runtime --enable-github-releases
   ```
 
-- Admin top-up (posts a TOPUP transaction):
+- Reconcile repo payments into billing-state (applies CONFIRMED/SETTLED rows from platform/billing/payments.csv):
   ```bash
-  python -m platform.cli admin-topup --billing-state-dir .billing-state --tenant-id <TENANT> --topup-method-id <TM> --amount-credits 1000 --reference "wire-123"
+  python -m platform.cli reconcile-payments --billing-state-dir .billing-state
   ```
 
 ## Workflows
 
 - **maintenance.yml**: regenerates maintenance-state + verifies repo
 - **orchestrator.yml**: runs work orders and updates the billing-state release assets
-- **admin-topup.yml**: applies a top-up and updates the billing-state release assets
 - **verify-e2e.yml**: runs an end-to-end pass of maintenance + orchestrator + verification
 - **cache-prune.yml**: standalone cache cleanup (unchanged)
-
