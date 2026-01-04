@@ -31,18 +31,31 @@ jobs:
           set -euo pipefail
           bash scripts/run_maintenance.sh
 
-  e2e_verify:
-    name: E2E Verify (called)
-    needs: maintenance
-    uses: ./.github/workflows/verify-e2e.yml
-    secrets: inherit
-    permissions:
-      contents: read
+      - name: Verify repository invariants (modules/tenants/maintenance-state)
+        run: |
+          set -euo pipefail
+          python scripts/ci_verify.py --phase pre
+
+      - name: Ensure maintenance-state is committed
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- maintenance-state; then
+            echo "[MAINTENANCE][FAIL] maintenance-state/ is out-of-date. Run: python -m platform.cli maintenance and commit the changes." >&2
+            git --no-pager diff -- maintenance-state | sed -n '1,200p' >&2 || true
+            exit 2
+          fi
+
+      - name: Verify local billing-state bootstrap (headers + ID format)
+        run: |
+          set -euo pipefail
+          python scripts/ci_verify.py --phase post --billing-state-dir .billing-state
 
   cache_prune:
     name: Cache Prune (called)
     needs: maintenance
     uses: ./.github/workflows/cache-prune.yml
+    with:
+      dry_run: true
     secrets: inherit
     permissions:
       actions: write

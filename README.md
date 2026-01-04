@@ -6,8 +6,8 @@ This repository implements a small, modular “platform” runner with:
 - **Tenants + Work Orders** (in `tenants/<tenant_id>/workorders/`)
 - **Release-backed billing state** (GitHub Release tag is the **system of record**)
 - **Maintenance** that regenerates derived indexes in `maintenance-state/`
-- **E2E verification** that enforces schemas, headers, and ID policy
-- A **standalone Cache Prune** workflow (left unchanged)
+- Repository verification is performed as part of **Maintenance** and **Orchestrator** runs
+- A **standalone Cache Prune** workflow (safe by default; deletion only when explicitly requested)
 
 ## ID policy (Base62, fixed length, randomized, de-duplicated)
 
@@ -51,7 +51,7 @@ Billing-state assets (CSV) include:
 - `github_assets_map.csv` (internal asset_id -> GitHub numeric asset id)
 - `state_manifest.json`
 
-Seeds for a fresh release are in `billing-state-seed/`.
+Template assets used to bootstrap the fixed Release (and local fresh-start runs) live in `releases/billing-state-v1/`.
 
 ## GitHub Release/Asset internal mapping (anti-enumeration)
 
@@ -85,9 +85,8 @@ This enables internal folder naming and avoids exposing sequential GitHub IDs.
 
 ## Workflows
 
-- **maintenance.yml**: regenerates maintenance-state + verifies repo
+- **maintenance.yml**: ensures billing-state Release exists, regenerates maintenance-state, and verifies repo invariants
 - **orchestrator.yml**: runs work orders and updates the billing-state release assets
 - **admin-topup.yml**: applies a top-up and updates the billing-state release assets
-- **verify-e2e.yml**: runs repository verification (schemas/headers/ID policy)
-- **cache-prune.yml**: standalone cache cleanup (unchanged)
+- **cache-prune.yml**: updates cache index and (optionally) deletes expired caches; Maintenance calls it in dry-run mode
 

@@ -9,13 +9,14 @@
 
 - Updates `scripts/run_orchestrator.sh` to call the hydration step automatically.
 
-- Adds `scripts/e2e_assert_billing_state_hydration.py` to cover the new behavior.
+
+Note: this repo no longer wires any E2E assertion scripts into CI. Verification workflows will be introduced later
+after the core functionality stabilizes.
 
 ## How to apply
 1) Unzip over repository root (overwrite the listed files).
 2) Ensure your workflows call `bash scripts/run_orchestrator.sh` (recommended).
-3) Add E2E step:
-   `python scripts/e2e_assert_billing_state_hydration.py`
+3) (Optional) run `python scripts/billing_state_hydrate.py --help` to see hydration options.
 
 ## Optional env vars
 - `BILLING_STATE_DIR` (default: ./.billing-state)

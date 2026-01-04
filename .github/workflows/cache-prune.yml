@@ -2,7 +2,17 @@ name: Cache Prune
 
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "If true, do not delete caches; only update cache_index.csv and state_manifest.json"
+        required: false
+        default: "true"
   workflow_call:
+    inputs:
+      dry_run:
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   actions: write
@@ -39,11 +49,20 @@ jobs:
           mkdir -p .billing-state
           gh release download "${BILLING_RELEASE_TAG}" -D .billing-state -p "cache_index.csv" -p "state_manifest.json"
 
-      - name: Cache prune (dry-run)
+      - name: Cache prune
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python -m platform.cli cache-prune --billing-state-dir .billing-state --dry-run
+          set -euo pipefail
+          DRY_RUN_INPUT="${{ inputs.dry_run }}"
+          # workflow_dispatch inputs arrive as strings; workflow_call inputs arrive as boolean.
+          if [ "$DRY_RUN_INPUT" = "false" ] || [ "$DRY_RUN_INPUT" = "False" ] || [ "$DRY_RUN_INPUT" = "0" ]; then
+            echo "[cache-prune] dry_run=false (will delete expired caches)"
+            python -m platform.cli cache-prune --billing-state-dir .billing-state
+          else
+            echo "[cache-prune] dry_run=true (no deletions)"
+            python -m platform.cli cache-prune --billing-state-dir .billing-state --dry-run
+          fi
 
       - name: Upload updated cache index
         env:

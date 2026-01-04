@@ -2,6 +2,23 @@ name: Admin topup reconcile
 
 on:
   workflow_dispatch:
+    inputs:
+      tenant_id:
+        description: "Tenant ID (6-char Base62)"
+        required: true
+      amount_credits:
+        description: "Amount of credits to top up (positive integer)"
+        required: true
+      topup_method_id:
+        description: "Top-up method ID (2-char Base62) from platform/billing/topup_instructions.csv"
+        required: true
+      reference:
+        description: "External reference (wire id, receipt id, etc.)"
+        required: true
+      note:
+        description: "Optional note"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -33,15 +50,36 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f pyproject.toml ] || [ -f setup.py ]; then pip install -e .; fi
 
-      - name: Run Admin topup reconcile
+      - name: Hydrate billing-state from Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          bash scripts/run_admin_topup.sh
+          set -euo pipefail
+          mkdir -p .billing-state
+          python scripts/billing_state_hydrate.py --billing-state-dir .billing-state --release-tag billing-state-v1
 
-      - name: Commit & push (if changed)
+      - name: Apply Admin Top-up (ledger)
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          bash scripts/run_admin_topup.sh \
+            --billing-state-dir .billing-state \
+            --tenant-id "${{ inputs.tenant_id }}" \
+            --amount-credits "${{ inputs.amount_credits }}" \
+            --topup-method-id "${{ inputs.topup_method_id }}" \
+            --reference "${{ inputs.reference }}" \
+            --note "${{ inputs.note }}"
+
+      - name: Verify updated billing-state (headers + ID format)
+        run: |
+          set -euo pipefail
+          python scripts/ci_verify.py --phase post --billing-state-dir .billing-state
+
+      - name: Publish updated billing-state to Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
-          bash scripts/ci_commit_push.sh "chore: reconcile topups" main
+          set -euo pipefail
+          python scripts/billing_state_publish.py --billing-state-dir .billing-state --release-tag billing-state-v1

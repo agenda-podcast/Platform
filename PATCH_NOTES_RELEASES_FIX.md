@@ -21,7 +21,7 @@ This patch addresses two issues observed in GitHub Actions runs:
 - `scripts/billing_state_publish.py`
   - Uploads required CSV assets (and `state_manifest.json` if present) to the `billing-state-v1` Release.
 
-- Adds a CI guard `scripts/artifacts_release_guard.py` (and optional e2e assertion) that fails the run if artifacts were purchased but are not visible in Releases.
+- Adds a CI guard `scripts/artifacts_release_guard.py` that fails the run if artifacts were purchased but are not visible in Releases.
 
 - Updates `.github/workflows/orchestrator.yml` to:
   - Provide both `GITHUB_TOKEN` and `GH_TOKEN`
