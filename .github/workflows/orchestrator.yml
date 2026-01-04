@@ -2,6 +2,12 @@ name: Orchestrator
 
 on:
   workflow_dispatch:
+    inputs:
+      sync_releases:
+        description: "Run GitHub Releases mirroring + release_id_map.csv update"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -88,3 +94,11 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/ci_verify.py --phase post --billing-state-dir .billing-state-ci --runtime-dir runtime
+
+  sync-releases:
+    name: Sync releases (mirror + mapping)
+    needs: orchestrator
+    if: ${{ inputs.sync_releases }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/sync-releases.yml
