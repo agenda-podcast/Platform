@@ -63,7 +63,8 @@ jobs:
       - name: Capture run start time (UTC)
         run: |
           set -euo pipefail
-          echo "RUN_STARTED_AT=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+          RUN_STARTED_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          echo "RUN_STARTED_AT=$RUN_STARTED_AT" >> "$GITHUB_ENV"
           echo "Run started at: $RUN_STARTED_AT"
 
       - name: Pre-verify
