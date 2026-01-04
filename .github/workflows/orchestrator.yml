@@ -19,10 +19,22 @@ concurrency:
 jobs:
   orchestrator:
     runs-on: ubuntu-latest
+    environment: Main
+    env:
+      SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+
+      - name: Validate SECRETSTORE_PASSPHRASE is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${SECRETSTORE_PASSPHRASE:-}" ]]; then
+            echo "ERROR: SECRETSTORE_PASSPHRASE is not available to this job. Check job.environment name, environment approvals, and that this run is not from a fork."
+            exit 2
+          fi
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
