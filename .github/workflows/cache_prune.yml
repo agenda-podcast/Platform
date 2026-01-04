@@ -1,0 +1,9 @@
+name: Cache Prune
+on:
+  workflow_call:
+  workflow_dispatch:
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Prune cache"

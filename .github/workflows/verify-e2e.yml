@@ -2,8 +2,7 @@ name: E2E verify
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
+  workflow_call:
 
 permissions:
   contents: read

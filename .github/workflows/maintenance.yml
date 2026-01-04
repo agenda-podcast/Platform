@@ -1,10 +1,9 @@
 name: Maintenance
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: "17 * * * *"
-  push: {}
+  push:
+    branches:
+      - "**"
 
 permissions:
   contents: write
@@ -31,3 +30,20 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/run_maintenance.sh
+
+  e2e_verify:
+    name: E2E Verify (called)
+    needs: maintenance
+    uses: ./.github/workflows/verify-e2e.yml
+    secrets: inherit
+    permissions:
+      contents: read
+
+  cache_prune:
+    name: Cache Prune (called)
+    needs: maintenance
+    uses: ./.github/workflows/cache-prune.yml
+    secrets: inherit
+    permissions:
+      actions: write
+      contents: write
