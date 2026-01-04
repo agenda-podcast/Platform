@@ -1,9 +1,0 @@
-name: E2E Verify
-on:
-  workflow_call:
-  workflow_dispatch:
-jobs:
-  e2e:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Run E2E verification"

@@ -1,8 +1,0 @@
-name: Admin Top Up
-on:
-  workflow_dispatch:
-jobs:
-  topup:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Admin top up"
