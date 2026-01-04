@@ -1,2 +1,3 @@
 payment_id,tenant_id,topup_method_id,amount_credits,reference,received_at,status,note
 Gq1JFSl9,nxlkGI,0Y,1000,INV-1001,2025-12-31T10:15:00Z,CONFIRMED,Seed example payment
+uh0XcWEC,nxlkGI,r8,5,ADMIN_TOPUP:uh0XcWEC,2026-01-04T01:45:52Z,CONFIRMED,Test note
