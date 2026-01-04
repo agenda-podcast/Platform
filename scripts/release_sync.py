@@ -1,25 +1,25 @@
-"""DEPRECATED.
+"""Release sync utility.
 
-Release sync is now integrated into the orchestrator.
+This script mirrors GitHub Releases assets into the repository's `releases/` folder
+(and maintains internal anti-enumeration ID mappings).
 
-This file intentionally exists only to prevent legacy workflows from failing
-hard with Python import errors. It is expected that CI/workflows stop calling
-this script directly.
+Safe invocations:
+  - python -m scripts.release_sync ...
+  - python scripts/release_sync.py ...   (legacy)
+
+When invoked as a legacy standalone script, we bootstrap sys.path so imports succeed.
 """
 
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
+if __package__ is None or __package__ == "":
+    repo_root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(repo_root))
 
-def main() -> int:
-    sys.stderr.write(
-        "[DEPRECATED] scripts/release_sync.py is no longer supported. "
-        "Release synchronization runs automatically inside the orchestrator "
-        "when the tenant/workorder purchased 'artifacts_download'.\n"
-    )
-    return 0
-
+from scripts.release_sync_impl import main  # noqa: E402
 
 if __name__ == "__main__":
     raise SystemExit(main())
