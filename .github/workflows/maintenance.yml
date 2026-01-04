@@ -31,6 +31,19 @@ jobs:
           set -euo pipefail
           PIP_CACHE_DIR="$(python -m pip cache dir 2>/dev/null || echo "$HOME/.cache/pip")"
           mkdir -p "$PIP_CACHE_DIR"
+
+      - name: Install Python dependencies (minimal)
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            python -m pip install -r requirements.txt
+          elif [ -f scripts/requirements.txt ]; then
+            python -m pip install -r scripts/requirements.txt
+          else
+            python -m pip install pyyaml
+          fi
+
       - name: Generate secretstore template
         run: |
           set -euo pipefail
