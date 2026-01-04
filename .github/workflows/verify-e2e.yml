@@ -57,4 +57,5 @@ jobs:
           # Run orchestrator without GitHub Releases enabled (offline E2E)
           python -m platform.cli orchestrator --runtime-dir runtime-e2e --billing-state-dir .billing-state-e2e
 
-          python scripts/e2e_assert_billing_items.py --billing-state-dir .billing-state-e2e
+          # Run as a module so repo-root is on sys.path (avoids stdlib 'platform' shadowing)
+          python -m scripts.e2e_assert_billing_items --billing-state-dir .billing-state-e2e

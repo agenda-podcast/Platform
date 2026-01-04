@@ -13,8 +13,15 @@ and that refunds also itemize both lines with non-empty notes.
 from __future__ import annotations
 
 import argparse
+import os
+import sys
 from datetime import datetime
 from pathlib import Path
+
+# Ensure repo root is importable even when executed as a file (sys.path[0] would be ./scripts).
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from platform.utils.csvio import read_csv
 
