@@ -27,6 +27,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: Install Python dependencies (minimal)
         run: |
@@ -56,7 +60,7 @@ jobs:
             cp -a .billing-state-ci/. .billing-state/
           fi
 
-          req=(tenants_credits.csv transactions.csv transaction_items.csv promotion_redemptions.csv cache_index.csv workorders_log.csv module_runs_log.csv github_releases_map.csv github_assets_map.csv state_manifest.json)
+          req=(tenants_credits.csv transactions.csv transaction_items.csv promotion_redemptions.csv workorders_log.csv module_runs_log.csv github_releases_map.csv github_assets_map.csv state_manifest.json)
           for f in "${req[@]}"; do
             if [ ! -f ".billing-state/$f" ]; then
               echo "ERROR: Missing required billing-state file: .billing-state/$f"

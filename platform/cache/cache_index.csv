@@ -1,0 +1,6 @@
+row_type,cache_key,cache_key_prefix,policy_name,retention_days,protected,created_at,last_accessed_at,cache_id,size_in_bytes,notes
+RULE,,pip-,pip,30,false,,,,,Cache for Python/pip dependencies (actions/setup-python cache=pip)
+RULE,,tools-,tools,90,false,,,,,Cache for downloaded tools/binaries (actions/cache)
+RULE,,runtime-,runtime,14,false,,,,,Cache for runtime artifacts (module/build intermediates)
+RULE,,tenant-,tenant,14,false,,,,,Cache keyed per tenant (use cautiously; can explode in count)
+RULE,,,default,180,false,,,,,Fallback retention for caches without a matching prefix

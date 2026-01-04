@@ -1,0 +1,87 @@
+name: Cache Management
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Actually delete caches (otherwise dry-run only)"
+        required: false
+        default: false
+        type: boolean
+      delete_key:
+        description: "Surgically delete a specific cache key (optional)"
+        required: false
+        default: ""
+        type: string
+      delete_prefix:
+        description: "Surgically delete all cache keys with this prefix (optional)"
+        required: false
+        default: ""
+        type: string
+  workflow_call:
+    inputs:
+      apply:
+        required: false
+        type: boolean
+        default: false
+      delete_key:
+        required: false
+        type: string
+        default: ""
+      delete_prefix:
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  manage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify GitHub CLI
+        run: gh --version
+
+      - name: Manage caches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python -m platform.cli cache-manage \
+            --cache-index-path platform/cache/cache_index.csv \
+            ${{ inputs.apply && '--apply' || '' }} \
+            ${{ inputs.delete_key != '' && format('--delete-key {0}', inputs.delete_key) || '' }} \
+            ${{ inputs.delete_prefix != '' && format('--delete-prefix {0}', inputs.delete_prefix) || '' }}
+
+      - name: Commit updated cache index (if changed)
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git status --porcelain | grep -q .; then
+            git add platform/cache/cache_index.csv
+            git commit -m "chore: update cache index [skip ci]"
+            git push
+          else
+            echo "No changes to commit."
+          fi

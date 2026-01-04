@@ -20,7 +20,6 @@ DEFAULT_REQUIRED_FILES: List[str] = [
     "transactions.csv",
     "transaction_items.csv",
     "promotion_redemptions.csv",
-    "cache_index.csv",
     "workorders_log.csv",
     "module_runs_log.csv",
     "github_releases_map.csv",
@@ -38,7 +37,7 @@ class BillingState:
     def validate_minimal(self, required_files: Optional[List[str]] = None) -> None:
         """Validate presence of required billing-state assets.
 
-        Some workflows (e.g., cache-prune) operate on a strict subset of billing-state.
+        Some workflows operate on a strict subset of billing-state.
         They may pass required_files=[...].
         """
         required = required_files or DEFAULT_REQUIRED_FILES

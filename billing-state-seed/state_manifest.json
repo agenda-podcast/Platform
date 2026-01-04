@@ -1,34 +1,38 @@
 {
   "billing_state_version": "v1",
-  "updated_at": "2026-01-01T02:38:49Z",
+  "updated_at": "2026-01-04T02:21:49Z",
   "assets": [
     {
       "name": "tenants_credits.csv",
-      "sha256": "e3b980885fa0bae36835294e07dcb17df5f3dfa9023491f04cebc3b85383cb98"
+      "sha256": "0f34058f66aeeaea07296cdf78afc63b4c3ea37ab214ddf443a3298a2be8de65"
     },
     {
       "name": "transactions.csv",
-      "sha256": "6fd8e5a9861e08ecdd1af9469a8468996a994628064f3718c493ccc1018738d9"
+      "sha256": "575c1abe62d3c460071bab4820ae907cb4c8ed9c2c97b1ddfc1116fb7ee2b6f9"
     },
     {
       "name": "transaction_items.csv",
-      "sha256": "a869362f9ac5337e8eba24f92bd0175367a0e049eedfd97fc28e1a077636bfb0"
+      "sha256": "7bc1625a8d6897861e20857a3fa4218c11dfc38686b47c22d51c9ff40a1cb298"
     },
     {
       "name": "promotion_redemptions.csv",
-      "sha256": "76d20d552137a8c88c2dd7c13c0d106a16edb60557ccd2c6b20aed1f2847bbcd"
-    },
-    {
-      "name": "cache_index.csv",
-      "sha256": "a441d2ea011ebce1bbb73e1ffa5619cca2d99c36f567279ceb42ab889ada3ac6"
+      "sha256": "4f4ce0dd312b6383d96da075d8ed2e2b8951275cb691d9f27e6658828a3927bb"
     },
     {
       "name": "workorders_log.csv",
-      "sha256": "cc0d6eda5cb134d4dea65b07c7e2a8cfe99c265b5f4002f588d22842a449094b"
+      "sha256": "46e66dbde8019be5e9855922e5832f7a0d12b30fbdf776c88b5f76d814f5607c"
     },
     {
       "name": "module_runs_log.csv",
-      "sha256": "7f3d4c24d10da12011dfe35054a03b8a3e35d143bbae75d9c9b404fe8afd48dc"
+      "sha256": "a0827e27b7ee6dd1cb2450d50485cffe81a50a47b93d07d2af383bd5253cbacf"
+    },
+    {
+      "name": "github_releases_map.csv",
+      "sha256": "844376cdb1bc9055b27852bdf82774b81123c7f29f978a40d57a0a8321f3d613"
+    },
+    {
+      "name": "github_assets_map.csv",
+      "sha256": "fe6fa58f17e4775424b338418e60734681dd1ea626a97d1cd7630dfea97147cd"
     }
   ]
 }

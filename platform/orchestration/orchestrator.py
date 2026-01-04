@@ -226,7 +226,6 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             "transactions.csv",
             "transaction_items.csv",
             "promotion_redemptions.csv",
-            "cache_index.csv",
             "workorders_log.csv",
             "module_runs_log.csv",
             "github_releases_map.csv",
@@ -239,7 +238,8 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
     transaction_items = billing.load_table("transaction_items.csv")
     workorders_log = billing.load_table("workorders_log.csv")
     module_runs_log = billing.load_table("module_runs_log.csv")
-    cache_index = billing.load_table("cache_index.csv")
+    # Note: GitHub Actions cache management is repo-scoped and handled via
+    # platform/cache/cache_index.csv + cache-management workflow.
     promo_redemptions = billing.load_table("promotion_redemptions.csv")
     rel_map = billing.load_table("github_releases_map.csv")
     asset_map = billing.load_table("github_assets_map.csv")
@@ -533,7 +533,6 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
     billing.save_table("transactions.csv", transactions, TRANSACTIONS_HEADERS)
     billing.save_table("transaction_items.csv", transaction_items, TRANSACTION_ITEMS_HEADERS)
     billing.save_table("promotion_redemptions.csv", promo_redemptions, PROMOTION_REDEMPTIONS_HEADERS)
-    billing.save_table("cache_index.csv", cache_index, CACHE_INDEX_HEADERS)
     billing.save_table("workorders_log.csv", workorders_log, WORKORDERS_LOG_HEADERS)
     billing.save_table("module_runs_log.csv", module_runs_log, MODULE_RUNS_LOG_HEADERS)
     billing.save_table("github_releases_map.csv", rel_map, GITHUB_RELEASES_MAP_HEADERS)

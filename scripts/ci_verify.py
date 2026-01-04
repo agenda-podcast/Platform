@@ -235,7 +235,6 @@ def _validate_billing_state(billing_state_dir: Path) -> None:
         "transactions.csv",
         "transaction_items.csv",
         "promotion_redemptions.csv",
-        "cache_index.csv",
         "workorders_log.csv",
         "module_runs_log.csv",
         "github_releases_map.csv",
@@ -252,7 +251,6 @@ def _validate_billing_state(billing_state_dir: Path) -> None:
     _assert_exact_header(billing_state_dir / "transactions.csv", ["transaction_id","tenant_id","work_order_id","type","amount_credits","created_at","reason_code","note","metadata_json"])
     _assert_exact_header(billing_state_dir / "transaction_items.csv", ["transaction_item_id","transaction_id","tenant_id","module_id","feature","type","amount_credits","created_at","note","metadata_json"])
     _assert_exact_header(billing_state_dir / "promotion_redemptions.csv", ["redemption_id","tenant_id","promo_code","credits_granted","created_at","note","metadata_json"])
-    _assert_exact_header(billing_state_dir / "cache_index.csv", ["cache_key","tenant_id","module_id","created_at","expires_at","cache_id"])
     _assert_exact_header(billing_state_dir / "workorders_log.csv", ["work_order_id","tenant_id","status","created_at","started_at","ended_at","note","metadata_json"])
     _assert_exact_header(billing_state_dir / "module_runs_log.csv", ["module_run_id","tenant_id","work_order_id","module_id","status","created_at","started_at","ended_at","reason_code","report_path","output_ref","metadata_json"])
     _assert_exact_header(billing_state_dir / "github_releases_map.csv", ["release_id","github_release_id","tag","tenant_id","work_order_id","created_at"])
@@ -276,6 +274,40 @@ def _validate_billing_state(billing_state_dir: Path) -> None:
     _ok("Billing-state: required assets + headers + basic ID format OK")
 
 
+def _validate_cache_index_repo(repo_root: Path) -> None:
+    """Validate centralized cache management index (repo-scoped).
+
+    This file controls Actions cache pruning and also serves as inventory.
+    """
+    p = repo_root / "platform" / "cache" / "cache_index.csv"
+    if not p.exists():
+        _fail(f"Missing repo cache index: {p}")
+
+    _assert_exact_header(
+        p,
+        [
+            "row_type",
+            "cache_key",
+            "cache_key_prefix",
+            "policy_name",
+            "retention_days",
+            "protected",
+            "created_at",
+            "last_accessed_at",
+            "cache_id",
+            "size_in_bytes",
+            "notes",
+        ],
+    )
+
+    rows = read_csv(p)
+    rules = [r for r in rows if str(r.get("row_type", "")).strip().upper() == "RULE"]
+    if not rules:
+        _fail("Repo cache index has no RULE rows")
+
+    _ok("Repo cache index: headers + at least one RULE row OK")
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--phase", choices=["pre","post"], required=True)
@@ -288,6 +320,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if args.phase == "pre":
         _validate_repo_billing_config(repo_root)
+        _validate_cache_index_repo(repo_root)
         _validate_modules(repo_root)
         _validate_tenants_and_workorders(repo_root)
         _validate_maintenance_state(repo_root)

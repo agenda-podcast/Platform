@@ -44,7 +44,6 @@ Billing-state assets (CSV) include:
 - `transactions.csv`
 - `transaction_items.csv`
 - `promotion_redemptions.csv`
-- `cache_index.csv`
 - `workorders_log.csv`
 - `module_runs_log.csv`
 - `github_releases_map.csv` (internal release_id -> GitHub numeric release id)
@@ -52,6 +51,19 @@ Billing-state assets (CSV) include:
 - `state_manifest.json`
 
 Seeds for a fresh release are in `billing-state-seed/`.
+
+## Centralized GitHub Actions cache management
+
+GitHub Actions caches (including `pip` caches created by `actions/setup-python`) are managed in-repo via:
+
+- `platform/cache/cache_index.csv`
+
+This file contains **RULE** rows (retention policy by key prefix) and **CACHE** rows (inventory, auto-synced).
+The manual workflow `Cache Management` (`.github/workflows/cache-management.yml`) can:
+
+- sync inventory into the file
+- prune caches based on retention
+- surgically delete caches by exact key or key prefix
 
 ## GitHub Release/Asset internal mapping (anti-enumeration)
 
@@ -85,4 +97,4 @@ This enables internal folder naming and avoids exposing sequential GitHub IDs.
 - **maintenance.yml**: regenerates maintenance-state + verifies repo
 - **orchestrator.yml**: runs work orders and updates the billing-state release assets
 - **verify-e2e.yml**: runs an end-to-end pass of maintenance + orchestrator + verification
-- **cache-prune.yml**: standalone cache cleanup (unchanged)
+- **cache-management.yml**: centralized cache inventory + pruning (manual / callable)
