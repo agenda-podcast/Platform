@@ -76,6 +76,12 @@ jobs:
             fi
           done
 
+      - name: Snapshot hydrated billing-state (baseline)
+        run: |
+          set -euo pipefail
+          rm -rf .billing-state.before
+          cp -a .billing-state .billing-state.before
+
 
       - name: Reconcile repo payments into billing-state
         run: |
@@ -105,6 +111,48 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/orchestrator_summary_run.py --since "$RUN_STARTED_AT" --billing-state-dir .billing-state --runtime-dir runtime --tenants-dir tenants --max-rows 50
+
+      - name: Publish updated billing-state to GitHub Release (billing-state-v1)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          changed=0
+          req=(tenants_credits.csv transactions.csv transaction_items.csv promotion_redemptions.csv workorders_log.csv module_runs_log.csv github_releases_map.csv github_assets_map.csv state_manifest.json)
+          echo "Billing-state diff vs hydrated baseline:"
+          for f in "${req[@]}"; do
+            if [ ! -f ".billing-state.before/$f" ] || [ ! -f ".billing-state/$f" ]; then
+              echo "  MISSING: $f"
+              changed=1
+              continue
+            fi
+            if ! cmp -s ".billing-state.before/$f" ".billing-state/$f"; then
+              echo "  CHANGED: $f"
+              changed=1
+            else
+              echo "  same:    $f"
+            fi
+          done
+
+          if [ "$changed" -eq 0 ]; then
+            echo "No billing-state changes detected; skipping release upload."
+            exit 0
+          fi
+
+          echo "Uploading updated billing-state assets to release billing-state-v1 ..."
+          gh release upload billing-state-v1 \
+            .billing-state/tenants_credits.csv \
+            .billing-state/transactions.csv \
+            .billing-state/transaction_items.csv \
+            .billing-state/promotion_redemptions.csv \
+            .billing-state/workorders_log.csv \
+            .billing-state/module_runs_log.csv \
+            .billing-state/github_releases_map.csv \
+            .billing-state/github_assets_map.csv \
+            .billing-state/state_manifest.json \
+            --repo "${GITHUB_REPOSITORY}" --clobber
+          echo "Billing-state published to GitHub Release: billing-state-v1"
 
       - name: Post-verify
         run: |

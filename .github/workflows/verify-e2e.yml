@@ -46,3 +46,15 @@ jobs:
           set -euo pipefail
           python scripts/ci_verify.py --phase pre  --billing-state-dir .billing-state-ci --runtime-dir runtime
           python scripts/ci_verify.py --phase post --billing-state-dir .billing-state-ci --runtime-dir runtime
+
+      - name: E2E billing itemization (RUN + SAVE_ARTIFACTS)
+        run: |
+          set -euo pipefail
+          rm -rf .billing-state-e2e runtime-e2e
+          cp -a .billing-state-ci .billing-state-e2e
+          mkdir -p runtime-e2e
+
+          # Run orchestrator without GitHub Releases enabled (offline E2E)
+          python -m platform.cli orchestrator --runtime-dir runtime-e2e --billing-state-dir .billing-state-e2e
+
+          python scripts/e2e_assert_billing_items.py --billing-state-dir .billing-state-e2e

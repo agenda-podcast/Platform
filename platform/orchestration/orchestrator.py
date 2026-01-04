@@ -51,6 +51,7 @@ GITHUB_ASSETS_MAP_HEADERS = ["asset_id","github_asset_id","release_id","asset_na
 class ReasonIndex:
     by_key: Dict[Tuple[str, str, str], str]  # (scope, module_id, reason_slug) -> reason_code
     refundable: Dict[str, bool]              # reason_code -> refundable
+    description: Dict[str, str]              # reason_code -> human description
 
 
 def _repo_yaml(path: Path) -> Dict[str, Any]:
@@ -112,7 +113,30 @@ def _load_reason_index(repo_root: Path) -> ReasonIndex:
             continue
         refundable[code] = str(r.get("refundable", "")).strip().lower() == "true"
 
-    return ReasonIndex(by_key=by_key, refundable=refundable)
+    description: Dict[str, str] = {}
+    for r in catalog:
+        code = str(r.get("reason_code", "")).strip()
+        if not code:
+            continue
+        desc = str(r.get("description", "")).strip()
+        if desc:
+            description[code] = desc
+
+    return ReasonIndex(by_key=by_key, refundable=refundable, description=description)
+
+
+def _load_module_display_names(repo_root: Path) -> Dict[str, str]:
+    """module_id -> display name (maintenance-state/ids/module_registry.csv)."""
+    rows = read_csv(repo_root / "maintenance-state" / "ids" / "module_registry.csv")
+    out: Dict[str, str] = {}
+    for r in rows:
+        mid = canon_module_id(r.get("module_id", ""))
+        if not mid:
+            continue
+        name = str(r.get("display_name", "")).strip()
+        if name:
+            out[mid] = name
+    return out
 
 
 def _reason_code(idx: ReasonIndex, scope: str, module_id: str, reason_slug: str) -> str:
@@ -147,6 +171,48 @@ def _price_for_module(prices: Dict[str, Dict[str, str]], module_id: str, purchas
     except Exception:
         return 0
     return run_price + (rel_price if purchase_release_artifacts else 0)
+
+def _module_line_items(
+    prices: Dict[str, Dict[str, str]],
+    module_id: str,
+    purchase_release_artifacts: bool,
+) -> List[Tuple[str, int]]:
+    """Return billable line-items for a module as (feature, amount_credits_positive)."""
+    row = prices.get(module_id) or {}
+    try:
+        run_price = int(str(row.get("price_run_credits", "0")).strip() or "0")
+        rel_price = int(str(row.get("price_save_to_release_credits", "0")).strip() or "0")
+    except Exception:
+        return []
+
+    items: List[Tuple[str, int]] = []
+    if run_price > 0:
+        items.append(("RUN", run_price))
+    if purchase_release_artifacts and rel_price > 0:
+        items.append(("SAVE_ARTIFACTS", rel_price))
+    return items
+
+
+def _module_label(module_id: str, module_names: Dict[str, str]) -> str:
+    name = module_names.get(module_id, "").strip()
+    return f"{module_id} - {name}" if name else module_id
+
+
+def _note_for_spend_item(feature: str, module_lbl: str) -> str:
+    if feature == "RUN":
+        return f"Run module {module_lbl}"
+    if feature == "SAVE_ARTIFACTS":
+        return f"Save artifacts from module {module_lbl}"
+    return f"Charge {feature} for module {module_lbl}"
+
+
+def _note_for_refund_item(feature: str, module_lbl: str, reason_code: str, reason_desc: str) -> str:
+    reason = f"{reason_code} - {reason_desc}" if reason_desc else reason_code
+    if feature == "RUN":
+        return f"Failed run module {module_lbl}: {reason}"
+    if feature == "SAVE_ARTIFACTS":
+        return f"Failed save artifacts from module {module_lbl}: {reason}"
+    return f"Refund {feature} for module {module_lbl}: {reason}"
 
 
 def _toposort_modules(modules_requested: List[str], deps_index: List[Dict[str, str]]) -> List[str]:
@@ -211,6 +277,7 @@ def _new_id(id_type: str, used: Set[str]) -> str:
 
 def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path, enable_github_releases: bool = False) -> None:
     reason_idx = _load_reason_index(repo_root)
+    module_names = _load_module_display_names(repo_root)
     tenant_rel = _load_tenant_relationships(repo_root)
     deps_index = read_csv(repo_root / "maintenance-state" / "module_dependency_index.csv")
     prices = _load_module_prices(repo_root)
@@ -269,6 +336,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
         ordered = _toposort_modules(requested_modules, deps_index)
 
         module_cfgs: Dict[str, Dict[str, Any]] = {}
+        module_items: Dict[str, List[Tuple[str, int]]] = {}
         est_total = 0
         for m in (w.get("modules") or []):
             mid = canon_module_id(m.get("module_id",""))
@@ -277,7 +345,9 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             module_cfgs[mid] = m
         for mid in ordered:
             cfg = module_cfgs.get(mid, {})
-            est_total += _price_for_module(prices, mid, bool(cfg.get("purchase_release_artifacts", False)))
+            items = _module_line_items(prices, mid, bool(cfg.get("purchase_release_artifacts", False)))
+            module_items[mid] = items
+            est_total += sum(i[1] for i in items)
 
         # current balance
         trow = None
@@ -327,28 +397,36 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             "amount_credits": str(-est_total),
             "created_at": utcnow_iso(),
             "reason_code": "",
-            "note": "",
+            "note": f"Work order charge (items={sum(len(v) for v in module_items.values())})",
             "metadata_json": json.dumps({"workorder_path": item["path"]}, separators=(",", ":")),
         })
 
         # transaction items per module (for audit)
-        per_module_cost: Dict[str, int] = {}
+        per_module_cost: Dict[str, Dict[str, int]] = {}
         for mid in ordered:
             cfg = module_cfgs.get(mid, {})
-            cost = _price_for_module(prices, mid, bool(cfg.get("purchase_release_artifacts", False)))
-            per_module_cost[mid] = cost
-            transaction_items.append({
-                "transaction_item_id": _new_id("transaction_item_id", used_ti),
-                "transaction_id": spend_tx,
-                "tenant_id": tenant_id,
-                "module_id": mid,
-                "feature": "RUN",
-                "type": "SPEND",
-                "amount_credits": str(-cost),
-                "created_at": utcnow_iso(),
-                "note": "",
-                "metadata_json": json.dumps({"purchase_release_artifacts": bool(cfg.get("purchase_release_artifacts", False))}, separators=(",", ":")),
-            })
+            items = module_items.get(mid, [])
+            per_module_cost[mid] = {feat: amt for feat, amt in items}
+            lbl = _module_label(mid, module_names)
+            for feat, amt in items:
+                transaction_items.append({
+                    "transaction_item_id": _new_id("transaction_item_id", used_ti),
+                    "transaction_id": spend_tx,
+                    "tenant_id": tenant_id,
+                    "module_id": mid,
+                    "feature": feat,
+                    "type": "SPEND",
+                    "amount_credits": str(-amt),
+                    "created_at": utcnow_iso(),
+                    "note": _note_for_spend_item(feat, lbl),
+                    "metadata_json": json.dumps(
+                        {
+                            "purchase_release_artifacts": bool(cfg.get("purchase_release_artifacts", False)),
+                            "feature": feat,
+                        },
+                        separators=(",", ":"),
+                    ),
+                })
 
         # update balance
         trow["credits_available"] = str(available - est_total)
@@ -412,9 +490,13 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
 
             # refund if configured refundable and module failed
             if status != "COMPLETED" and reason_code and reason_idx.refundable.get(reason_code, False):
-                refund_amt = per_module_cost.get(mid, 0)
+                costs = per_module_cost.get(mid, {})
+                refund_amt = sum(int(v) for v in costs.values())
                 if refund_amt > 0:
                     refund_tx = _new_id("transaction_id", used_tx)
+                    lbl = _module_label(mid, module_names)
+                    rdesc = reason_idx.description.get(reason_code, "")
+                    reason_full = f"{reason_code} - {rdesc}" if rdesc else reason_code
                     transactions.append({
                         "transaction_id": refund_tx,
                         "tenant_id": tenant_id,
@@ -423,21 +505,22 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                         "amount_credits": str(refund_amt),
                         "created_at": utcnow_iso(),
                         "reason_code": reason_code,
-                        "note": "",
+                        "note": f"Refund due to failed module {lbl}: {reason_full}",
                         "metadata_json": json.dumps({"module_id": mid, "refund_for": mr_id}, separators=(",", ":")),
                     })
-                    transaction_items.append({
-                        "transaction_item_id": _new_id("transaction_item_id", used_ti),
-                        "transaction_id": refund_tx,
-                        "tenant_id": tenant_id,
-                        "module_id": mid,
-                        "feature": "RUN",
-                        "type": "REFUND",
-                        "amount_credits": str(refund_amt),
-                        "created_at": utcnow_iso(),
-                        "note": "",
-                        "metadata_json": json.dumps({"refund_for": mr_id}, separators=(",", ":")),
-                    })
+                    for feat, amt in sorted(costs.items()):
+                        transaction_items.append({
+                            "transaction_item_id": _new_id("transaction_item_id", used_ti),
+                            "transaction_id": refund_tx,
+                            "tenant_id": tenant_id,
+                            "module_id": mid,
+                            "feature": feat,
+                            "type": "REFUND",
+                            "amount_credits": str(int(amt)),
+                            "created_at": utcnow_iso(),
+                            "note": _note_for_refund_item(feat, lbl, reason_code, rdesc),
+                            "metadata_json": json.dumps({"refund_for": mr_id, "feature": feat}, separators=(",", ":")),
+                        })
                     # balance update
                     trow["credits_available"] = str(int(trow["credits_available"]) + refund_amt)
                     trow["updated_at"] = utcnow_iso()
