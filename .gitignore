@@ -15,3 +15,7 @@ build/
 
 # Local billing state cache
 .billing-state/
+
+# E2E ephemeral
+.billing-state-e2e/
+runtime-e2e/
