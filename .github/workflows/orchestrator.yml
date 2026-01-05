@@ -16,6 +16,7 @@ jobs:
     env:
       BILLING_STATE_DIR: .billing-state
       RUNTIME_DIR: runtime
+      BILLING_STATE_RELEASE_TAG: billing-state-v1
 
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +42,13 @@ jobs:
         shell: bash
         run: |
           mkdir -p "${BILLING_STATE_DIR}" "${RUNTIME_DIR}"
+
+      - name: Bootstrap billing-state from GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          python scripts/bootstrap_billing_state_from_release.py             --repo "${{ github.repository }}"             --tag "${BILLING_STATE_RELEASE_TAG}"             --billing-state-dir "${BILLING_STATE_DIR}"
 
       - name: Run orchestrator
         shell: bash
