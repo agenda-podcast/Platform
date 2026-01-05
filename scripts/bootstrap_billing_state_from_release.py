@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Bootstrap billing-state working directory from a GitHub Release tag.
-
-Rationale:
-- Orchestrator requires a minimal set of billing-state CSVs to exist locally.
-- Source of truth is the fixed Release tag (default: billing-state-v1).
-
-This script downloads the Release assets into --billing-state-dir and validates required files exist.
-"""
+"""Bootstrap billing-state working directory from a GitHub Release tag."""
 
 import argparse
 import os
@@ -48,7 +41,6 @@ def main() -> int:
         print("[bootstrap_billing_state_from_release][FAIL] GH_TOKEN is not set. On Actions, set env GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}")
         return 2
 
-    # Clean target dir to prevent stale files
     if billing_dir.exists():
         for p in billing_dir.iterdir():
             if p.is_file():
@@ -67,7 +59,7 @@ def main() -> int:
     if missing:
         print(f"[bootstrap_billing_state_from_release][FAIL] Billing-state is missing required files after download: {missing}")
         print("[bootstrap_billing_state_from_release] Directory listing:")
-        for p in sorted(billing_dir.glob("*")):
+        for p in sorted(billing_dir.glob('*')):
             print(" -", p.name)
         return 2
 

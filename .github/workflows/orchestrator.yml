@@ -55,14 +55,15 @@ jobs:
         run: |
           python -m platform.cli orchestrator             --runtime-dir "${RUNTIME_DIR}"             --billing-state-dir "${BILLING_STATE_DIR}"
 
-      - name: Debug billing-state presence
+      - name: Billing-state tail (this run only)
         if: always()
         shell: bash
         run: |
-          echo "=== billing-state dir ==="
-          ls -la "${BILLING_STATE_DIR}" || true
-          echo "=== billing-state files (maxdepth=2) ==="
-          find "${BILLING_STATE_DIR}" -maxdepth 2 -type f -print || true
+          if [ -f scripts/billing_state_tail.py ]; then
+            python scripts/billing_state_tail.py --billing-state-dir "${BILLING_STATE_DIR}" --since "${{ steps.start.outputs.since }}"
+          else
+            echo "scripts/billing_state_tail.py not found; skipping tail."
+          fi
 
       # Purchased + successfully generated outputs must be uploaded to GitHub Releases (not workflow artifacts).
       - name: Package + publish purchased artifacts to Releases
