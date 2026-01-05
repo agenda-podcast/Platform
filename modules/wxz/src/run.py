@@ -75,14 +75,14 @@ def run(params: Dict[str, Any], outputs_dir: str) -> Dict[str, Any]:
     strip_tracking = bool(dedupe_cfg.get("strip_tracking_params", True))
 
     # Secrets
-    api_key = os.getenv(f"{MODULE_ID}_GOOGLE_SEARCH_API_KEY", "").strip()
-    engine_id = os.getenv(f"{MODULE_ID}_GOOGLE_SEARCH_ENGINE_ID", "").strip()
+    api_key = os.getenv(f"GOOGLE_SEARCH_API_KEY", "").strip()
+    engine_id = os.getenv(f"GOOGLE_SEARCH_ENGINE_ID", "").strip()
     if not api_key or not engine_id:
         return _error(
             out_dir,
             reason_slug="missing_secret",
             message=(
-                f"Missing required env secrets: {MODULE_ID}_GOOGLE_SEARCH_API_KEY and/or {MODULE_ID}_GOOGLE_SEARCH_ENGINE_ID"
+                f"Missing required env secrets: GOOGLE_SEARCH_API_KEY and/or GOOGLE_SEARCH_ENGINE_ID"
             ),
         )
 
