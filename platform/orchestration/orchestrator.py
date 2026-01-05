@@ -509,14 +509,9 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             mr_id = _new_id("module_run_id", used_mr)
             m_started = utcnow_iso()
 
-            # inputs: pass through
-            params = {
-                "tenant_id": tenant_id,
-                "work_order_id": work_order_id,
-                "module_run_id": mr_id,
-                "inputs": cfg.get("inputs") or {},
-                "reuse_output_type": str(cfg.get("reuse_output_type","")).strip(),
-            }
+            # Module runners expect tenant parameters at the top level (per modules/*/tenant_params.schema.json).
+            # Keep platform metadata out of the params payload to avoid breaking schema expectations.
+            params = cfg.get("inputs") or {}
 
             module_path = repo_root / "modules" / mid
             out_dir = runtime_dir / "runs" / tenant_id / work_order_id / mid / mr_id
