@@ -1,21 +1,38 @@
-MIT License
+PROPRIETARY SOURCE AVAILABLE LICENSE
+All Rights Reserved
 
-Copyright (c) 2025
+Copyright (c) 2026 Gregory V. Timofeev
+All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+NOTICE
+This repository, including all source code, documentation, specifications, data files, workflows, configurations, schemas, and any other materials contained herein (collectively, the “Software”), is proprietary and confidential. Access to the Software does not grant any license or other rights.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+NO LICENSE GRANTED
+No license—express, implied, or otherwise—is granted to any person or entity under any intellectual property rights, including without limitation any copyright, patent, trade secret, or trademark rights, to use, copy, modify, merge, publish, distribute, sublicense, create derivative works of, or otherwise exploit the Software, in whole or in part, for any purpose.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+RESTRICTIONS
+You may not:
+1) use the Software for any purpose;
+2) copy, reproduce, or distribute the Software or any portion of it;
+3) modify, adapt, translate, reverse engineer, decompile, or disassemble the Software;
+4) create derivative works based on the Software;
+5) publish, disclose, or otherwise make the Software available to any third party;
+6) remove or alter any proprietary notices contained in the Software.
+
+OWNERSHIP
+The Software is and will remain the exclusive property of the copyright holder(s). All rights not expressly granted are reserved.
+
+CONFIDENTIALITY
+Any access to the Software is conditioned on maintaining its confidentiality. You must not disclose any part of the Software or related information to any third party without prior written authorization from the copyright holder(s).
+
+TERMINATION
+Any unauthorized access or use automatically terminates any permission to view or possess the Software. Upon request, you must promptly delete all copies of the Software in your possession or control.
+
+NO WARRANTY
+THE SOFTWARE IS PROVIDED “AS IS” AND “AS AVAILABLE,” WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT.
+
+LIMITATION OF LIABILITY
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL THE COPYRIGHT HOLDER(S) BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OF OR OTHER DEALINGS IN THE SOFTWARE.
+
+GOVERNING LAW
+This notice and any dispute arising out of or relating to the Software will be governed by the laws of the State of New York, excluding its conflict of laws rules.
