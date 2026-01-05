@@ -32,6 +32,7 @@ DEFAULT_REQUIRED_FILES = [
     "module_runs_log.csv",
     "github_releases_map.csv",
     "github_assets_map.csv",
+    "state_manifest.json",
 ]
 
 DEFAULT_RELEASE_TAG = "billing-state-v1"
@@ -108,10 +109,6 @@ def _download_release_asset(repo: str, tag: str, asset_name: str, out_dir: Path)
     """
     Attempts to download a single asset by name into out_dir using gh.
     Returns True if the file appears in out_dir after download.
-
-    Notes:
-    - We intentionally clobber local files when the asset exists in the Release.
-      The Release is the Source of Truth; local billing-state may be a stale scaffold.
     """
     gh = _which("gh")
     if not gh:
@@ -119,10 +116,8 @@ def _download_release_asset(repo: str, tag: str, asset_name: str, out_dir: Path)
 
     _safe_mkdir(out_dir)
 
-    # gh release download supports --pattern; use exact name to avoid glob surprises.
-    # Prefer --clobber to overwrite any local scaffold copy. If the installed gh doesn't
-    # support --clobber, retry by deleting the destination file first.
-    base_cmd = [
+    # gh release download supports --pattern; to avoid glob surprises, use exact name
+    cmd = [
         gh,
         "release",
         "download",
@@ -134,26 +129,10 @@ def _download_release_asset(repo: str, tag: str, asset_name: str, out_dir: Path)
         "--pattern",
         asset_name,
     ]
-
-    dst = out_dir / asset_name
-
-    # First attempt: --clobber (modern gh)
-    cmd = base_cmd + ["--clobber"]
     p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if p.returncode == 0 and dst.exists():
-        return True
-
-    # Retry: remove existing dst then download without --clobber (older gh)
-    try:
-        if dst.exists():
-            dst.unlink()
-    except Exception:
-        pass
-
-    p2 = subprocess.run(base_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    if p2.returncode != 0:
+    if p.returncode != 0:
         return False
-    return dst.exists()
+    return (out_dir / asset_name).exists()
 
 
 def _copy_missing_from_scaffold(missing: Sequence[str], scaffold_dir: Path, target_dir: Path) -> List[str]:
@@ -200,7 +179,9 @@ def hydrate_billing_state_dir(
         assets = _list_release_assets(repo, release_tag)
         # Attempt to download any missing required files that exist as assets
         for name in required_files:
-            # Always prefer Release assets when present; clobber local scaffold copies.
+            dst = billing_state_dir / name
+            if dst.exists():
+                continue
             if name in assets:
                 _download_release_asset(repo, release_tag, name, billing_state_dir)
 

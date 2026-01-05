@@ -1,4 +1,3 @@
-\
 """
 Publish default billing-state assets to the fixed GitHub Release tag (billing-state-v1)
 if that release (or its required CSV assets) are missing.

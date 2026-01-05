@@ -17,6 +17,7 @@ REQUIRED_FILES = [
     "module_runs_log.csv",
     "github_releases_map.csv",
     "github_assets_map.csv",
+    "state_manifest.json",
 ]
 
 
@@ -32,7 +33,7 @@ def main() -> int:
     ap.add_argument("--repo", required=True, help="owner/repo")
     ap.add_argument("--tag", default="billing-state-v1", help="Release tag name")
     ap.add_argument("--billing-state-dir", required=True)
-    ap.add_argument("--pattern", default="*.csv", help="Asset glob pattern to download (default: *.csv)")
+    ap.add_argument("--pattern", default="", help="Optional extra glob pattern to download in addition to required billing assets (e.g. '*.zip'). Default: none")
     args = ap.parse_args()
 
     billing_dir = pathlib.Path(args.billing_state_dir)
@@ -47,14 +48,25 @@ def main() -> int:
                 p.unlink()
     billing_dir.mkdir(parents=True, exist_ok=True)
 
-    run([
-        "gh", "release", "download", args.tag,
-        "--repo", args.repo,
-        "--dir", str(billing_dir),
-        "--pattern", args.pattern,
-        "--clobber",
-    ])
+      # Download required billing-state assets explicitly (includes non-CSV files such as state_manifest.json)
+    for fn in REQUIRED_FILES:
+        run([
+            "gh", "release", "download", args.tag,
+            "--repo", args.repo,
+            "--dir", str(billing_dir),
+            "--pattern", fn,
+            "--clobber",
+        ])
 
+    # Optionally download extra assets (useful for debugging or ad-hoc retrieval)
+    if getattr(args, "pattern", ""):
+        run([
+            "gh", "release", "download", args.tag,
+            "--repo", args.repo,
+            "--dir", str(billing_dir),
+            "--pattern", args.pattern,
+            "--clobber",
+        ])
     missing = [fn for fn in REQUIRED_FILES if not (billing_dir / fn).exists()]
     if missing:
         print(f"[bootstrap_billing_state_from_release][FAIL] Billing-state is missing required files after download: {missing}")
