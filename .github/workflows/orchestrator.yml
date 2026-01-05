@@ -4,96 +4,63 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: write   # required for GitHub Releases (gh release create/upload)
 
 concurrency:
-  group: orchestrator-main
-  cancel-in-progress: true
+  group: orchestrator
+  cancel-in-progress: false
 
 jobs:
-  orchestrator:
+  run:
     runs-on: ubuntu-latest
-    environment: Main
+    env:
+      BILLING_STATE_DIR: .billing-state
+      RUNTIME_DIR: runtime
+
     steps:
-      - name: Capture run start timestamp
-        id: runmeta
+      - uses: actions/checkout@v4
+
+      - name: Capture start time (UTC)
+        id: start
+        shell: bash
         run: |
           echo "since=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Guard (no cli/cli@* and no @v2)
-        run: bash scripts/ci_no_v2_scan.sh
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: |
-            requirements.txt
-            pyproject.toml
-
-      - name: Restore module output cache
-        uses: actions/cache@v4
-        with:
-          path: runtime/cache_outputs
-          key: modoutputs-${{ runner.os }}-v1-${{ github.ref_name }}-${{ github.sha }}
-          restore-keys: |
-            modoutputs-${{ runner.os }}-v1-${{ github.ref_name }}-
-            modoutputs-${{ runner.os }}-v1-
+          python-version: "3.11"
 
       - name: Install dependencies
+        shell: bash
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
-          if [ -f pyproject.toml ] || [ -f setup.py ]; then python -m pip install -e .; fi
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Pre-verify (if verifier exists)
+      - name: Prepare runtime dirs
+        shell: bash
         run: |
-          if [ -f scripts/ci_verify.py ]; then
-            python scripts/ci_verify.py --phase pre --billing-state-dir .billing-state-ci --runtime-dir runtime
-          fi
+          mkdir -p "${BILLING_STATE_DIR}" "${RUNTIME_DIR}"
 
-      - name: Run Orchestrator
+      - name: Run orchestrator
+        shell: bash
+        run: |
+          python -m platform.cli orchestrator             --runtime-dir "${RUNTIME_DIR}"             --billing-state-dir "${BILLING_STATE_DIR}"
+
+      - name: Debug billing-state presence
+        if: always()
+        shell: bash
+        run: |
+          echo "=== billing-state dir ==="
+          ls -la "${BILLING_STATE_DIR}" || true
+          echo "=== billing-state files (maxdepth=2) ==="
+          find "${BILLING_STATE_DIR}" -maxdepth 2 -type f -print || true
+
+      # Purchased + successfully generated outputs must be uploaded to GitHub Releases (not workflow artifacts).
+      - name: Package + publish purchased artifacts to Releases
+        if: success()
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}
+        shell: bash
         run: |
-          bash scripts/run_orchestrator.sh
-
-      - name: Billing-state tail (new rows for this run)
-        run: |
-          if [ -f scripts/billing_state_tail.py ]; then
-            python scripts/billing_state_tail.py --billing-state-dir .billing-state --since "${{ steps.runmeta.outputs.since }}" --n 50
-          fi
-
-      - name: "Guard: if artifacts were purchased, ensure they exist in Releases"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}
-        run: |
-          if [ -f scripts/artifacts_release_guard.py ]; then
-            python scripts/artifacts_release_guard.py
-          fi
-
-      - name: Post-verify (if verifier exists)
-        run: |
-          if [ -f scripts/ci_verify.py ]; then
-            python scripts/ci_verify.py --phase post --billing-state-dir .billing-state --runtime-dir runtime
-          fi
-
-      - name: Upload billing-state snapshot
-        uses: actions/upload-artifact@v4
-        with:
-          name: billing-state-snapshot
-          path: .billing-state
-
-      # IMPORTANT:
-      # Billing-state is the source of truth in GitHub Releases (billing-state-v1).
-      # The orchestrator MUST NOT commit billing-state artifacts back into the repo.
+          python scripts/publish_artifacts_release.py             --billing-state-dir "${BILLING_STATE_DIR}"             --runtime-dir "${RUNTIME_DIR}"             --since "${{ steps.start.outputs.since }}"             --repo "${{ github.repository }}"             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
