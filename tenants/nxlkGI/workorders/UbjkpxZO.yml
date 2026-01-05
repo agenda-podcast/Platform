@@ -16,7 +16,7 @@ steps:
     step_name: derive_queries
     module_id: 9SD
     reuse_output_type: cache
-    purchase_release_artifacts: false
+    purchase_release_artifacts: true
     inputs:
       topic: "Word News Today"
       language: "en"
@@ -26,7 +26,7 @@ steps:
     step_name: search
     module_id: wxz
     reuse_output_type: cache
-    purchase_release_artifacts: false
+    purchase_release_artifacts: true
     inputs:
       queries:
         from_step: a1
@@ -40,7 +40,7 @@ steps:
     step_name: seed_text
     module_id: U2T
     reuse_output_type: cache
-    purchase_release_artifacts: false
+    purchase_release_artifacts: true
     inputs:
       topic:
         from_step: b2
