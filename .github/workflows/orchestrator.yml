@@ -68,6 +68,17 @@ jobs:
             echo "scripts/billing_state_tail.py not found; skipping tail."
           fi
 
+      - name: Publish billing-state Source of Truth to GitHub Release
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          python scripts/billing_state_publish.py \
+            --billing-state-dir "${BILLING_STATE_DIR}" \
+            --release-tag "${BILLING_STATE_RELEASE_TAG}" \
+            --repo "${{ github.repository }}"
+
       # Purchased + successfully generated outputs must be uploaded to GitHub Releases (not workflow artifacts).
       - name: Package + publish purchased artifacts to Releases
         if: success()
