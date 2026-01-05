@@ -39,6 +39,7 @@ def _row_best_ts(row: dict[str, str]) -> Optional[datetime]:
 class Lookups:
     reason_by_code: dict[str, str]
     module_name_by_id: dict[str, str]
+    workorder_by_transaction_id: dict[str, str]
 
 
 def _load_reason_catalog(repo_root: Path) -> dict[str, str]:
@@ -93,6 +94,7 @@ def _load_lookups(repo_root: Path) -> Lookups:
     return Lookups(
         reason_by_code=_load_reason_catalog(repo_root),
         module_name_by_id=_load_module_names(repo_root),
+        workorder_by_transaction_id={},
     )
 
 
@@ -109,12 +111,19 @@ def _format_compact_row(path: Path, row: dict[str, str], lookups: Lookups) -> st
     if mid:
         enriched["module"] = lookups.module_name_by_id.get(mid, mid)
 
+    if fname == \"transaction_items.csv\":
+        txid = (row.get(\"transaction_id\") or \"\").strip()
+        wo = lookups.workorder_by_transaction_id.get(txid, \"\") if txid else \"\"
+        if wo:
+            enriched[\"work_order_id\"] = wo
+
     # Prefer showing note if present
     keys_preferred = []
     if fname == "transactions.csv":
         keys_preferred = ["transaction_id", "tenant_id", "work_order_id", "type", "amount_credits", "created_at", "note"]
     elif fname == "transaction_items.csv":
-        keys_preferred = ["transaction_item_id", "transaction_id", "tenant_id", "module", "feature", "type", "amount_credits", "note"]
+        # include module_id (schema) and infer work_order_id via transactions.csv join
+        keys_preferred = ["transaction_item_id", "transaction_id", "tenant_id", "work_order_id", "module_id", "module", "feature", "type", "amount_credits", "created_at", "note"]
     elif fname == "workorders_log.csv":
         keys_preferred = ["work_order_id", "tenant_id", "status", "started_at", "ended_at", "note"]
     elif fname == "module_runs_log.csv":
@@ -188,6 +197,17 @@ def main() -> int:
     bdir = Path(args.billing_state_dir).resolve()
     repo_root = Path(__file__).resolve().parents[1]
     lookups = _load_lookups(repo_root)
+
+    # Build transaction_id -> work_order_id map for enriching transaction_items.csv output
+    try:
+        tx_rows = _read_rows(bdir / "transactions.csv")
+        lookups.workorder_by_transaction_id = {
+            (r.get("transaction_id") or "").strip(): (r.get("work_order_id") or "").strip()
+            for r in tx_rows
+            if (r.get("transaction_id") or "").strip() and (r.get("work_order_id") or "").strip()
+        }
+    except Exception:
+        lookups.workorder_by_transaction_id = {}
 
     since_dt = _parse_iso_z(args.since) if args.since else None
     print("\n[BILLING_STATE_TAIL] billing_state_dir=", bdir)

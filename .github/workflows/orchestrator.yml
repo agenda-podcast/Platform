@@ -75,4 +75,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          python scripts/publish_artifacts_release.py             --billing-state-dir "${BILLING_STATE_DIR}"             --runtime-dir "${RUNTIME_DIR}"             --since "${{ steps.start.outputs.since }}"             --repo "${{ github.repository }}"             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          python scripts/publish_artifacts_release.py \
+            --billing-state-dir "${BILLING_STATE_DIR}" \
+            --runtime-dir "${RUNTIME_DIR}" \
+            --since "${{ steps.start.outputs.since }}" \
+            --repo "${{ github.repository }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

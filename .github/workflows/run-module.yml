@@ -12,6 +12,9 @@ on:
         required: true
         default: '{"topic":"Example","language":"en","freshness_days":3}'
 
+permissions:
+  contents: write
+
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -56,6 +59,19 @@ jobs:
             --module-id "${{ inputs.module_id }}" \
             --params-json '${{ inputs.params_json }}' \
             --outputs-dir runtime/manual
+
+
+      - name: Publish module outputs to Release
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="module-${{ inputs.module_id }}-${{ github.run_id }}"
+          TITLE="Module outputs: ${{ inputs.module_id }} (run ${{ github.run_id }})"
+          NOTES="Generated module outputs uploaded from Run Module workflow."
+          zip -r "module_outputs_${{ inputs.module_id }}_${{ github.run_id }}.zip" runtime/manual || true
+          gh release create "${TAG}" --repo "${{ github.repository }}" --title "${TITLE}" --notes "${NOTES}" || true
+          gh release upload "${TAG}" "module_outputs_${{ inputs.module_id }}_${{ github.run_id }}.zip" --repo "${{ github.repository }}" --clobber
 
       - name: Cache hit notice
         if: steps.modcache.outputs.cache-hit == 'true'
