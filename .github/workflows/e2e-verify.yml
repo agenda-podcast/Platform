@@ -38,6 +38,53 @@ jobs:
           rm -rf .billing-state-e2e runtime-e2e
           cp -a .billing-state-ci .billing-state-e2e
           mkdir -p runtime-e2e
+          # Seed a historical sentinel row to ensure billing-state is append-only (SoT).
+          python - <<'PY'
+          import csv
+          from pathlib import Path
+          billing = Path('.billing-state-e2e')
+          tx_path = billing / 'transactions.csv'
+          ti_path = billing / 'transaction_items.csv'
+
+          def append_row(path: Path, row: dict):
+              rows = []
+              with path.open('r', encoding='utf-8', newline='') as f:
+                  r = csv.DictReader(f)
+                  headers = list(r.fieldnames or [])
+                  for rr in r:
+                      rows.append(dict(rr))
+              rows.append(row)
+              with path.open('w', encoding='utf-8', newline='') as f:
+                  w = csv.DictWriter(f, fieldnames=headers)
+                  w.writeheader()
+                  w.writerows(rows)
+
+          sentinel_tx = {
+              'transaction_id': 'SeNt1n3L',
+              'tenant_id': 'nxlkGI',
+              'work_order_id': 'HiSt0Ry1',
+              'type': 'TOPUP',
+              'amount_credits': '1',
+              'created_at': '2020-01-01T00:00:00Z',
+              'reason_code': '',
+              'note': 'E2E sentinel - must persist',
+              'metadata_json': '{"sentinel":true}',
+          }
+          sentinel_item = {
+              'transaction_item_id': 'It3mS3n1',
+              'transaction_id': 'SeNt1n3L',
+              'tenant_id': 'nxlkGI',
+              'module_id': '',
+              'feature': 'ADMIN_TOPUP',
+              'type': 'TOPUP',
+              'amount_credits': '1',
+              'created_at': '2020-01-01T00:00:00Z',
+              'note': 'E2E sentinel - must persist',
+              'metadata_json': '{"sentinel":true}',
+          }
+          append_row(tx_path, sentinel_tx)
+          append_row(ti_path, sentinel_item)
+          PY
           python -m platform.cli orchestrator --runtime-dir runtime-e2e --billing-state-dir .billing-state-e2e
 
       - name: Assert chaining + billing/logging

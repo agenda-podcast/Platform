@@ -199,6 +199,21 @@ def main() -> int:
             except Exception:
                 raise SystemExit("[E2E][FAIL] metadata_json is not valid JSON")
 
+
+    # ------------------------------------------------------------------
+    # Source-of-Truth append-only guard:
+    # Ensure a pre-seeded historical sentinel row was not overwritten.
+    # ------------------------------------------------------------------
+    sentinel_txid = "SeNt1n3L"
+    sentinel_item_id = "It3mS3n1"
+
+    if not any(r.get("transaction_id") == sentinel_txid for r in transactions):
+        raise SystemExit("[E2E][FAIL] Sentinel transaction row missing; billing-state likely overwrote history instead of appending")
+
+    all_items2 = _read_csv(billing_dir / "transaction_items.csv")
+    if not any(r.get("transaction_item_id") == sentinel_item_id and r.get("transaction_id") == sentinel_txid for r in all_items2):
+        raise SystemExit("[E2E][FAIL] Sentinel transaction_item row missing; transaction_items.csv likely overwrote history instead of appending")
+
     print("[E2E][OK] Steps chaining: outputs + billing/logging validated")
     return 0
 
