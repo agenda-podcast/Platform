@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
+import shutil
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -12,11 +15,47 @@ from ..billing.state import BillingState
 from ..common.id_codec import canon_module_id, canon_tenant_id, canon_work_order_id, id_key, dedupe_tenants_credits
 from ..common.id_policy import generate_unique_id, validate_id
 from ..github.releases import ensure_release, upload_release_assets, get_release_numeric_id, get_release_assets_numeric_ids
-from ..orchestration.module_exec import execute_module_runner
+from ..orchestration.module_exec import execute_module_runner, derive_cache_key
 from ..utils.csvio import read_csv
 from ..utils.fs import ensure_dir
 from ..utils.hashing import sha256_file
 from ..utils.time import utcnow_iso
+
+
+def _parse_iso_z(s: str) -> datetime:
+    if not s:
+        return datetime(1970, 1, 1, tzinfo=timezone.utc)
+    if s.endswith("Z"):
+        s = s.replace("Z", "+00:00")
+    return datetime.fromisoformat(s)
+
+
+def _cache_dirname(cache_key: str) -> str:
+    """Stable, filesystem-safe directory name for a cache key."""
+    h = hashlib.sha256(cache_key.encode("utf-8")).hexdigest()[:16]
+    return f"k-{h}"
+
+
+def _dir_has_files(p: Path) -> bool:
+    if not p.exists() or not p.is_dir():
+        return False
+    for _ in p.rglob("*"):
+        return True
+    return False
+
+
+def _copy_tree(src: Path, dst: Path) -> None:
+    """Copy directory tree contents from src to dst (dst recreated)."""
+    if dst.exists():
+        shutil.rmtree(dst)
+    dst.mkdir(parents=True, exist_ok=True)
+    for fp in src.rglob("*"):
+        if fp.is_dir():
+            continue
+        rel = fp.relative_to(src)
+        outp = dst / rel
+        outp.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(fp, outp)
 
 
 WORKORDERS_LOG_HEADERS = [
@@ -253,6 +292,10 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
     runtime_dir.mkdir(parents=True, exist_ok=True)
     ensure_dir(runtime_dir)
 
+    # Local module output cache (persisted across workflow runs via actions/cache).
+    cache_root = runtime_dir / "cache_outputs"
+    ensure_dir(cache_root)
+
     workorders = _discover_workorders(repo_root)
 
 
@@ -388,7 +431,40 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             out_dir = runtime_dir / "runs" / tenant_id / work_order_id / mid / mr_id
             ensure_dir(out_dir)
 
-            result = execute_module_runner(module_path=module_path, params=params, outputs_dir=out_dir)
+            # ------------------------------------------------------------------
+            # Performance cache: reuse module outputs from runtime/cache_outputs
+            # when reuse_output_type == "cache".
+            # ------------------------------------------------------------------
+            reuse_type = str(cfg.get("reuse_output_type", "")).strip().lower()
+            key_inputs = cfg.get("inputs") or {}
+            cache_key = derive_cache_key(module_id=mid, tenant_id=tenant_id, key_inputs=key_inputs)
+            cache_dir = cache_root / _cache_dirname(cache_key)
+
+            cache_row = None
+            for r in cache_index:
+                if str(r.get("cache_key", "")).strip() == cache_key:
+                    cache_row = r
+                    break
+
+            cache_valid = False
+            if cache_row is not None:
+                try:
+                    exp = _parse_iso_z(str(cache_row.get("expires_at", "")))
+                    cache_valid = exp > datetime.now(timezone.utc)
+                except Exception:
+                    cache_valid = False
+
+            if reuse_type == "cache" and _dir_has_files(cache_dir) and (cache_row is None or cache_valid):
+                _copy_tree(cache_dir, out_dir)
+                result = {
+                    "status": "COMPLETED",
+                    "reason_slug": "",
+                    "report_path": "",
+                    "output_ref": f"cache:{cache_key}",
+                    "_cache_hit": True,
+                }
+            else:
+                result = execute_module_runner(module_path=module_path, params=params, outputs_dir=out_dir)
 
             status = str(result.get("status","")).strip().upper() or "FAILED"
             reason_slug = str(result.get("reason_slug","")).strip() or str(result.get("reason_key","")).strip()
@@ -406,6 +482,8 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             report_path = str(result.get("report_path","") or "")
             output_ref = str(result.get("output_ref","") or "")
 
+            cache_hit = bool(result.get("_cache_hit", False))
+
             module_runs_log.append({
                 "module_run_id": mr_id,
                 "tenant_id": tenant_id,
@@ -418,8 +496,36 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 "reason_code": reason_code,
                 "report_path": report_path,
                 "output_ref": output_ref,
-                "metadata_json": json.dumps({"outputs_dir": str(out_dir)}, separators=(",", ":")),
+                "metadata_json": json.dumps({"outputs_dir": str(out_dir), "cache_key": cache_key, "cache_hit": cache_hit}, separators=(",", ":")),
             })
+
+            # Persist successful outputs into the local module cache.
+            # Cache is only reused when reuse_output_type == "cache".
+            if status == "COMPLETED":
+                if not cache_hit:
+                    _copy_tree(out_dir, cache_dir)
+
+                now_dt = datetime.now(timezone.utc).replace(microsecond=0)
+                exp_dt = now_dt + timedelta(days=30)
+                if cache_row is None:
+                    cache_index.append({
+                        "cache_key": cache_key,
+                        "tenant_id": tenant_id,
+                        "module_id": mid,
+                        "created_at": now_dt.isoformat().replace("+00:00", "Z"),
+                        "expires_at": exp_dt.isoformat().replace("+00:00", "Z"),
+                        "cache_id": "",
+                    })
+                else:
+                    # Extend expiry forward if needed; keep created_at stable.
+                    try:
+                        old_exp = _parse_iso_z(str(cache_row.get("expires_at", "")))
+                    except Exception:
+                        old_exp = datetime(1970, 1, 1, tzinfo=timezone.utc)
+                    if exp_dt > old_exp:
+                        cache_row["expires_at"] = exp_dt.isoformat().replace("+00:00", "Z")
+                    cache_row["tenant_id"] = tenant_id
+                    cache_row["module_id"] = mid
 
             # refund if configured refundable and module failed
             if status != "COMPLETED" and reason_code and reason_idx.refundable.get(reason_code, False):

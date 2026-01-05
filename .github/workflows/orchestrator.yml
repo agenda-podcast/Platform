@@ -26,6 +26,19 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
+
+      - name: Restore module output cache
+        uses: actions/cache@v4
+        with:
+          path: runtime/cache_outputs
+          key: modoutputs-${{ runner.os }}-v1-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            modoutputs-${{ runner.os }}-v1-${{ github.ref_name }}-
+            modoutputs-${{ runner.os }}-v1-
 
       - name: Install dependencies
         run: |

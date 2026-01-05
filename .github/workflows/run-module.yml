@@ -20,17 +20,44 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+
+      - name: Prepare module cache key inputs
+        run: |
+          set -euo pipefail
+          mkdir -p .cachekey
+          # Preserve exact JSON string (including spaces) for stable hashing.
+          printf '%s' '${{ inputs.params_json }}' > .cachekey/params.json
+
+      - name: Restore module outputs cache
+        id: modcache
+        uses: actions/cache@v4
+        with:
+          path: runtime/manual
+          key: module-output-${{ runner.os }}-${{ inputs.module_id }}-${{ hashFiles(format('modules/{0}/**', inputs.module_id), '.cachekey/params.json') }}
+          restore-keys: |
+            module-output-${{ runner.os }}-${{ inputs.module_id }}-
+
       - name: Execute module
+        if: steps.modcache.outputs.cache-hit != 'true'
         run: |
           mkdir -p runtime/manual
           python -m platform.cli module-exec \
             --module-id "${{ inputs.module_id }}" \
             --params-json '${{ inputs.params_json }}' \
             --outputs-dir runtime/manual
+
+      - name: Cache hit notice
+        if: steps.modcache.outputs.cache-hit == 'true'
+        run: |
+          echo "[run-module] Cache hit. Skipping module execution."
       - name: Upload outputs
         uses: actions/upload-artifact@v4
         with:
