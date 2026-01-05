@@ -16,6 +16,7 @@ REQUIRED_FILES = [
     "module_runs_log.csv",
     "github_releases_map.csv",
     "github_assets_map.csv",
+    "state_manifest.json",
 ]
 
 
