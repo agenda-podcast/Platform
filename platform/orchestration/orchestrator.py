@@ -437,12 +437,15 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
         })
 
         # transaction items per module (for audit)
+        # Store both total cost and itemized parts so refunds can be itemized too.
         per_module_cost: Dict[str, int] = {}
+        per_module_parts: Dict[str, tuple[int, int]] = {}
         for mid in ordered:
             cfg = module_cfgs.get(mid, {})
             run_p, rel_p = _price_parts_for_module(prices, mid, bool(cfg.get("purchase_release_artifacts", False)))
             cost = run_p + rel_p
             per_module_cost[mid] = cost
+            per_module_parts[mid] = (run_p, rel_p)
             m_label = f"{module_names.get(mid, mid)} ({mid})" if module_names.get(mid) else mid
             transaction_items.append({
                 "transaction_item_id": _new_id("transaction_item_id", used_ti),
@@ -596,8 +599,16 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                     cache_row["module_id"] = mid
 
             # refund if configured refundable and module failed
+            # IMPORTANT: refunds must be itemized to mirror spend line-items (RUN / RELEASE_ARTIFACTS).
             if status != "COMPLETED" and reason_code and reason_idx.refundable.get(reason_code, False):
-                refund_amt = per_module_cost.get(mid, 0)
+                # Prefer the itemized parts captured at spend time. If missing for any reason,
+                # recompute from pricing so refunds are always recorded and itemized.
+                parts = per_module_parts.get(mid)
+                if parts is None:
+                    run_p, rel_p = _price_parts_for_module(prices, mid, bool(cfg.get("purchase_release_artifacts", False)))
+                else:
+                    run_p, rel_p = parts
+                refund_amt = int(run_p) + int(rel_p)
                 if refund_amt > 0:
                     refund_tx = _new_id("transaction_id", used_tx)
                     m_label = f"{module_names.get(mid, mid)} ({mid})" if module_names.get(mid) else mid
@@ -610,20 +621,39 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                         "created_at": utcnow_iso(),
                         "reason_code": reason_code,
                         "note": f"Refund: {m_label} (reason={reason_code})",
-                        "metadata_json": json.dumps({"module_id": mid, "refund_for": mr_id}, separators=(",", ":")),
+                        "metadata_json": json.dumps({"module_id": mid, "refund_for": mr_id, "spend_transaction_id": spend_tx}, separators=(",", ":")),
                     })
-                    transaction_items.append({
-                        "transaction_item_id": _new_id("transaction_item_id", used_ti),
-                        "transaction_id": refund_tx,
-                        "tenant_id": tenant_id,
-                        "module_id": mid,
-                        "feature": "RUN",
-                        "type": "REFUND",
-                        "amount_credits": str(refund_amt),
-                        "created_at": utcnow_iso(),
-                        "note": f"Refund item: {m_label} (reason={reason_code})",
-                        "metadata_json": json.dumps({"refund_for": mr_id}, separators=(",", ":")),
-                    })
+
+                    # RUN refund item
+                    if int(run_p) > 0:
+                        transaction_items.append({
+                            "transaction_item_id": _new_id("transaction_item_id", used_ti),
+                            "transaction_id": refund_tx,
+                            "tenant_id": tenant_id,
+                            "module_id": mid,
+                            "feature": "RUN",
+                            "type": "REFUND",
+                            "amount_credits": str(int(run_p)),
+                            "created_at": utcnow_iso(),
+                            "note": f"Refund item (RUN): {m_label} (reason={reason_code})",
+                            "metadata_json": json.dumps({"refund_for": mr_id, "feature": "RUN", "spend_transaction_id": spend_tx}, separators=(",", ":")),
+                        })
+
+                    # RELEASE_ARTIFACTS refund item (only if it was purchased as part of pricing)
+                    if int(rel_p) > 0:
+                        transaction_items.append({
+                            "transaction_item_id": _new_id("transaction_item_id", used_ti),
+                            "transaction_id": refund_tx,
+                            "tenant_id": tenant_id,
+                            "module_id": mid,
+                            "feature": "RELEASE_ARTIFACTS",
+                            "type": "REFUND",
+                            "amount_credits": str(int(rel_p)),
+                            "created_at": utcnow_iso(),
+                            "note": f"Refund item (RELEASE_ARTIFACTS): {m_label} (reason={reason_code})",
+                            "metadata_json": json.dumps({"refund_for": mr_id, "feature": "RELEASE_ARTIFACTS", "spend_transaction_id": spend_tx}, separators=(",", ":")),
+                        })
+
                     # balance update
                     trow["credits_available"] = str(int(trow["credits_available"]) + refund_amt)
                     trow["updated_at"] = utcnow_iso()
