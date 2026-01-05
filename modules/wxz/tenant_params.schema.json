@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:platform:module:003:tenant_params",
-  "title": "003 Google Search Pages - Tenant Parameters",
+  "title": "Google Search Pages - Tenant Parameters",
   "type": "object",
   "additionalProperties": false,
   "properties": {
