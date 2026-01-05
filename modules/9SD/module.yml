@@ -1,31 +1,61 @@
 module_id: 9SD
 name: demo_derive_queries
-version: 0.1.0
+version: 0.2.0
 description: "Demo transform module: derive search queries from a seed topic."
+
+# Module-level dependencies are not supported. All wiring is expressed in workorders via steps/bindings.
+
 supports_downloadable_artifacts: true
 produces_manifest: true
-depends_on: []
+
 cache:
   enabled: true
   retention_default: 1w
   key_inputs:
-  - topic
-  - language
-  - freshness_days
-  - summary_style
-inputs:
-- name: topic
-  required: true
-  format: text/plain
-- name: language
-  required: true
-  format: text/plain
-- name: freshness_days
-  required: true
-  format: text/plain
-- name: summary_style
-  required: false
-  format: text/plain
-outputs:
-- name: derived_queries
-  format: text/plain
+    - topic
+    - language
+    - freshness_days
+    - summary_style
+
+ports:
+  inputs:
+    - id: topic
+      type: string
+      required: true
+      visibility: tenant
+      format: text/plain
+      description: "Seed topic used to derive a set of Google search queries."
+    - id: language
+      type: string
+      required: false
+      visibility: tenant
+      default: "en"
+      format: text/plain
+      description: "Language hint used for derived queries."
+    - id: freshness_days
+      type: string
+      required: false
+      visibility: tenant
+      default: "7"
+      format: text/plain
+      description: "Freshness window for query wording (used only in text generation)."
+    - id: summary_style
+      type: string
+      required: false
+      visibility: platform
+      default: "headlines"
+      format: text/plain
+      description: "Platform-only tuning knob; not tenant-editable."
+  outputs:
+    - id: derived_queries
+      type: file
+      visibility: tenant
+      path: derived_queries.txt
+      format: text/plain
+      description: "One search query per line."
+    - id: report
+      type: file
+      visibility: tenant
+      path: report.json
+      format: application/json
+      description: "Structured report about derived queries."

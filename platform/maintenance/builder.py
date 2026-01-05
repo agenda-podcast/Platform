@@ -104,13 +104,9 @@ def _scan_modules(ctx: MaintenanceContext) -> List[Dict[str, Any]]:
         declared = str(data.get("module_id", "")).strip()
         if declared and declared != mid:
             raise ValueError(f"module.yml module_id mismatch: folder={mid} declared={declared}")
-        depends = [str(x).strip() for x in (data.get("depends_on") or []) if str(x).strip()]
-        for d in depends:
-            validate_id("module_id", d, "depends_on_module_id")
         supports_downloadable = bool(data.get("supports_downloadable_artifacts", True))
         out.append({
             "module_id": mid,
-            "depends_on": depends,
             "supports_downloadable_artifacts": supports_downloadable,
         })
     return out
@@ -328,19 +324,6 @@ def _write_tenant_relationships(ctx: MaintenanceContext, tenants: List[Dict[str,
     _write_csv(ctx.ms_dir / "tenant_relationships.csv", deduped, ["source_tenant_id","target_tenant_id"])
 
 
-def _write_module_dependency_index(ctx: MaintenanceContext, modules: List[Dict[str, Any]]) -> None:
-    rows: List[Dict[str, str]] = []
-    module_ids = {m["module_id"] for m in modules}
-    for m in modules:
-        mid = m["module_id"]
-        for dep in m.get("depends_on") or []:
-            if dep not in module_ids:
-                raise ValueError(f"module {mid} depends_on unknown module_id {dep}")
-            rows.append({"module_id": mid, "depends_on_module_id": dep})
-    rows = sorted(rows, key=lambda x: (x["module_id"], x["depends_on_module_id"]))
-    _write_csv(ctx.ms_dir / "module_dependency_index.csv", rows, ["module_id","depends_on_module_id"])
-
-
 def _write_module_requirements_index(ctx: MaintenanceContext, modules: List[Dict[str, Any]]) -> None:
     src = ctx.repo_root / "platform" / "modules" / "requirements.csv"
     rows = read_csv(src)
@@ -405,7 +388,6 @@ def _write_manifest(ctx: MaintenanceContext) -> None:
         "reason_catalog.csv",
         "reason_policy.csv",
         "tenant_relationships.csv",
-        "module_dependency_index.csv",
         "module_requirements_index.csv",
         "module_artifacts_policy.csv",
         "platform_policy.csv",
@@ -438,7 +420,6 @@ def run_maintenance(repo_root: Path) -> None:
     _ensure_reason_policy(ctx, reason_registry)
 
     _write_tenant_relationships(ctx, tenants)
-    _write_module_dependency_index(ctx, modules)
     _write_module_requirements_index(ctx, modules)
     _write_module_artifacts_policy(ctx, modules)
     _write_platform_policy(ctx)

@@ -69,16 +69,25 @@ def main() -> int:
     search_run = _latest_run_dir(base / "search")
     seed_run = _latest_run_dir(base / "seed_text")
 
-    if not (derive_run and search_run and seed_run):
-        raise SystemExit(
-            "[E2E][FAIL] Expected step output directories not found. "
-            f"derive={derive_run}, search={search_run}, seed={seed_run}"
-        )
+    if not derive_run:
+        raise SystemExit(f"[E2E][FAIL] Missing derive_queries step output directory: {base}")
 
+    # Step 1 must always succeed in the demo chain.
     _assert_file_exists(derive_run / "derived_queries.txt")
-    _assert_file_exists(search_run / "results.jsonl")
-    _assert_file_exists(seed_run / "source_text.txt")
-    _assert_contains(seed_run / "source_text.txt", "TOPIC:")
+
+    # Steps 2/3 may fail in CI/offline environments (e.g., missing API keys). When that
+    # happens, the orchestrator must still produce correct logs + billing refunds.
+    has_search_results = bool(search_run and (search_run / "results.jsonl").exists())
+    if has_search_results:
+        if not seed_run:
+            raise SystemExit("[E2E][FAIL] seed_text step missing output directory despite successful search")
+        _assert_file_exists(search_run / "results.jsonl")
+        _assert_file_exists(seed_run / "source_text.txt")
+        _assert_contains(seed_run / "source_text.txt", "TOPIC:")
+    else:
+        # If search failed, we expect a binding_error.json or error report in seed_text.
+        if seed_run:
+            _assert_file_exists(seed_run / "binding_error.json")
 
     # ------------------------------------------------------------------
     # Billing/logging: validate module runs + transaction itemization
@@ -88,10 +97,21 @@ def main() -> int:
     if not mrows:
         raise SystemExit("[E2E][FAIL] No module_runs_log rows found for the workorder")
 
-    completed_mods = {r.get("module_id") for r in mrows if (r.get("status") or "").upper() == "COMPLETED"}
-    missing = [m for m in ("9SD", "wxz", "U2T") if m not in completed_mods]
-    if missing:
-        raise SystemExit(f"[E2E][FAIL] Missing COMPLETED module runs for: {missing}")
+    statuses = {}
+    for r in mrows:
+        mid = (r.get("module_id") or "").strip()
+        st = (r.get("status") or "").upper().strip()
+        if mid:
+            statuses[mid] = st
+
+    if statuses.get("9SD") != "COMPLETED":
+        raise SystemExit(f"[E2E][FAIL] Expected 9SD COMPLETED; got {statuses.get('9SD')!r}")
+
+    # If search results exist, wxz and U2T should complete; otherwise they may fail.
+    if has_search_results:
+        for mid in ("wxz", "U2T"):
+            if statuses.get(mid) != "COMPLETED":
+                raise SystemExit(f"[E2E][FAIL] Expected {mid} COMPLETED; got {statuses.get(mid)!r}")
 
     transactions = _read_csv(billing_dir / "transactions.csv")
     tx = _pick_latest_spend_tx(transactions, tenant_id, work_order_id)
@@ -107,12 +127,40 @@ def main() -> int:
     if not irows:
         raise SystemExit("[E2E][FAIL] No transaction_items found for latest SPEND transaction")
 
-    # For chaining, we require at least one RUN item per module.
+    # For chaining, we require at least one RUN SPEND item per module, and refunds for failed modules.
     run_items = [r for r in irows if (r.get("feature") or "").upper() == "RUN"]
-    run_mods = {r.get("module_id") for r in run_items}
-    missing_items = [m for m in ("9SD", "wxz", "U2T") if m not in run_mods]
-    if missing_items:
-        raise SystemExit(f"[E2E][FAIL] Missing RUN transaction_items for modules: {missing_items}")
+    spend_items = [r for r in run_items if (r.get("type") or "").upper() == "SPEND"]
+
+    spend_mods = {r.get("module_id") for r in spend_items}
+    missing_spend_items = [m for m in ("9SD", "wxz", "U2T") if m not in spend_mods]
+    if missing_spend_items:
+        raise SystemExit(f"[E2E][FAIL] Missing RUN SPEND transaction_items for modules: {missing_spend_items}")
+
+    # Refunds are separate transactions. Validate that every FAILED module has a REFUND
+    # transaction and a corresponding RUN refund item.
+    all_items = _read_csv(billing_dir / "transaction_items.csv")
+    refund_txs = [r for r in transactions if r.get("tenant_id") == tenant_id and r.get("work_order_id") == work_order_id and (r.get("type") or "").upper() == "REFUND"]
+    refund_mods = set()
+    for r in refund_txs:
+        txid2 = r.get("transaction_id") or ""
+        md = (r.get("metadata_json") or "").strip()
+        mid = ""
+        if md:
+            try:
+                mid = (json.loads(md).get("module_id") or "").strip()
+            except Exception:
+                mid = ""
+        if not mid:
+            continue
+        # Find a matching RUN refund item for this refund transaction.
+        item_rows = [it for it in all_items if it.get("transaction_id") == txid2 and (it.get("feature") or "").upper() == "RUN" and (it.get("type") or "").upper() == "REFUND"]
+        if not item_rows:
+            raise SystemExit(f"[E2E][FAIL] Refund transaction missing RUN refund items: tx={txid2} module={mid}")
+        refund_mods.add(mid)
+
+    for mid in ("wxz", "U2T"):
+        if statuses.get(mid) == "FAILED" and mid not in refund_mods:
+            raise SystemExit(f"[E2E][FAIL] Expected REFUND transaction + item for failed module: {mid}")
 
     # Ensure metadata_json is parseable JSON (guards logging regressions).
     for r in (mrows[-5:] + irows[-5:]):

@@ -1,6 +1,58 @@
 module_id: wxz
 name: google_search_pages
-version: 0.1.0
-description: 'Google Custom Search (web pages only): fetch up to 100 results per query, up to 5 queries per run.'
-depends_on: []
+version: 0.2.0
+description: "Google Custom Search (web pages only): fetch up to 100 results per query, up to 5 queries per run."
+
 supports_downloadable_artifacts: false
+
+cache:
+  enabled: true
+  retention_default: 1w
+  key_inputs:
+    - queries
+    - safe
+    - max_items_per_query
+    - lang
+
+ports:
+  inputs:
+    - id: queries
+      type: array
+      required: true
+      visibility: tenant
+      format: application/json
+      description: "List of web search queries."
+    - id: safe
+      type: string
+      required: false
+      visibility: tenant
+      default: "active"
+      format: text/plain
+      description: "SafeSearch: off|active."
+    - id: max_items_per_query
+      type: integer
+      required: false
+      visibility: tenant
+      default: 10
+      format: text/plain
+      description: "Max results per query (1-10 per request; module paginates up to 100 per query)."
+    - id: lang
+      type: string
+      required: false
+      visibility: platform
+      default: "en"
+      format: text/plain
+      description: "Platform-only language hint used for output annotations."
+  outputs:
+    - id: results
+      type: file
+      visibility: tenant
+      path: results.jsonl
+      format: application/x-jsonlines
+      description: "One JSON object per line: query + search result item."
+    - id: report
+      type: file
+      visibility: tenant
+      path: report.json
+      format: application/json
+      description: "Run summary (timing, counts, errors)."

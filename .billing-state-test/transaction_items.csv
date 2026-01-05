@@ -1,0 +1,9 @@
+transaction_item_id,transaction_id,tenant_id,module_id,feature,type,amount_credits,created_at,note,metadata_json
+7lv7hQMa,9lIpLywt,nxlkGI,,ADMIN_TOPUP,TOPUP,1000,2026-01-03T19:13:09Z,Seed example payment,"{""topup_method_id"":""0Y"",""reference"":""INV-1001""}"
+CV0I9wXM,f0NCsCgP,nxlkGI,wxz,RUN,SPEND,-7,2026-01-03T19:14:03Z,,"{""purchase_release_artifacts"":true}"
+YW2LPsjj,iWU8W7gI,nxlkGI,wxz,RUN,REFUND,7,2026-01-03T19:14:03Z,,"{""refund_for"":""IYOrev6V""}"
+6suO8Kqs,74tgo9a4,nxlkGI,9SD,RUN,SPEND,-5,2026-01-05T05:35:30Z,Module run spend: demo_derive_queries (9SD) [derive_queries],"{""step_id"":""derive_queries"",""purchase_release_artifacts"":false}"
+xfJKvyPt,74tgo9a4,nxlkGI,wxz,RUN,SPEND,-5,2026-01-05T05:35:30Z,Module run spend: google_search_pages (wxz) [search],"{""step_id"":""search"",""purchase_release_artifacts"":false}"
+IfGQIqMx,74tgo9a4,nxlkGI,U2T,RUN,SPEND,-5,2026-01-05T05:35:30Z,Module run spend: demo_seed_outputs (U2T) [seed_text],"{""step_id"":""seed_text"",""purchase_release_artifacts"":false}"
+W27iNNvJ,NQf1bLC8,nxlkGI,wxz,RUN,REFUND,5,2026-01-05T05:35:30Z,Refund item (RUN): google_search_pages (wxz) [search] [search] (reason=RCNCl7),"{""step_id"":""search"",""module_id"":""wxz"",""refund_for"":""WicvLCXJ"",""feature"":""RUN"",""spend_transaction_id"":""74tgo9a4""}"
+oXmQPC1P,nJDiMzdZ,nxlkGI,U2T,RUN,REFUND,5,2026-01-05T05:35:30Z,Refund item (RUN): demo_seed_outputs (U2T) [seed_text] [seed_text] (reason=gSgN1Q),"{""step_id"":""seed_text"",""module_id"":""U2T"",""refund_for"":""IZ2bcesO"",""feature"":""RUN"",""spend_transaction_id"":""74tgo9a4""}"

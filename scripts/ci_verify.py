@@ -112,12 +112,49 @@ def _validate_modules(repo_root: Path) -> None:
         declared = str(cfg.get("module_id","")).strip()
         if declared and declared != mid:
             _fail(f"module.yml module_id mismatch for {mid}: declared={declared!r}")
-        deps = [str(x).strip() for x in (cfg.get("depends_on") or []) if str(x).strip()]
-        for dep in deps:
-            try:
-                validate_id("module_id", dep, "depends_on")
-            except Exception as e:
-                _fail(f"Invalid depends_on in module {mid}: {dep!r}: {e}")
+        # Dependencies are not allowed at the module layer. All wiring must be expressed in workorders via steps/bindings.
+        if "depends_on" in cfg and (cfg.get("depends_on") not in (None, [], "")):
+            _fail(f"Module {mid} defines depends_on, but module dependencies are not supported")
+
+        ports = cfg.get("ports") or {}
+        if not isinstance(ports, dict):
+            _fail(f"Module {mid}: ports must be an object")
+        ins = ports.get("inputs") or []
+        outs = ports.get("outputs") or []
+        if not isinstance(ins, list) or not isinstance(outs, list):
+            _fail(f"Module {mid}: ports.inputs and ports.outputs must be lists")
+
+        seen_in = set()
+        for p in ins:
+            if not isinstance(p, dict):
+                _fail(f"Module {mid}: invalid input port (expected object)")
+            pid = str(p.get("id", "")).strip()
+            if not pid:
+                _fail(f"Module {mid}: input port missing id")
+            if pid in seen_in:
+                _fail(f"Module {mid}: duplicate input port id {pid!r}")
+            seen_in.add(pid)
+            vis = str(p.get("visibility", "tenant")).strip().lower() or "tenant"
+            if vis not in ("tenant", "platform"):
+                _fail(f"Module {mid}: input port {pid!r} has invalid visibility {vis!r}")
+
+        seen_out = set()
+        for p in outs:
+            if not isinstance(p, dict):
+                _fail(f"Module {mid}: invalid output port (expected object)")
+            pid = str(p.get("id", "")).strip()
+            if not pid:
+                _fail(f"Module {mid}: output port missing id")
+            if pid in seen_out:
+                _fail(f"Module {mid}: duplicate output port id {pid!r}")
+            seen_out.add(pid)
+            vis = str(p.get("visibility", "tenant")).strip().lower() or "tenant"
+            if vis not in ("tenant", "platform"):
+                _fail(f"Module {mid}: output port {pid!r} has invalid visibility {vis!r}")
+            if vis == "tenant":
+                path = str(p.get("path", "")).lstrip("/").strip()
+                if not path:
+                    _fail(f"Module {mid}: tenant-visible output port {pid!r} must define non-empty path")
 
     # platform/modules/modules.csv must match folders
     pm = repo_root / "platform" / "modules" / "modules.csv"
@@ -142,6 +179,62 @@ def _validate_tenants_and_workorders(repo_root: Path) -> None:
     if not tenants_dir.exists():
         _fail("tenants/ directory missing")
 
+    module_ports_cache: Dict[str, Dict[str, Any]] = {}
+
+    def _load_ports(mid: str) -> Tuple[Set[str], Set[str], Set[str], Set[str]]:
+        """Return (tenant_inputs, platform_inputs, required_tenant_inputs, tenant_output_paths)."""
+        mid = str(mid).strip()
+        if mid in module_ports_cache:
+            ports = module_ports_cache[mid]
+        else:
+            myml = repo_root / "modules" / mid / "module.yml"
+            if not myml.exists():
+                _fail(f"Workorder references missing module folder: {mid!r}")
+            cfg = _read_yaml(myml)
+            ports = cfg.get("ports") or {}
+            if not isinstance(ports, dict):
+                _fail(f"Module {mid}: ports must be an object")
+            module_ports_cache[mid] = ports
+
+        ins = ports.get("inputs") or []
+        outs = ports.get("outputs") or []
+        if not isinstance(ins, list) or not isinstance(outs, list):
+            _fail(f"Module {mid}: ports.inputs/ports.outputs must be lists")
+
+        tenant_inputs: Set[str] = set()
+        platform_inputs: Set[str] = set()
+        required_tenant: Set[str] = set()
+        tenant_output_paths: Set[str] = set()
+
+        for p in ins:
+            if not isinstance(p, dict):
+                continue
+            pid = str(p.get("id", "")).strip()
+            if not pid:
+                continue
+            vis = str(p.get("visibility", "tenant")).strip().lower() or "tenant"
+            if vis == "platform":
+                platform_inputs.add(pid)
+            else:
+                tenant_inputs.add(pid)
+                if bool(p.get("required", False)):
+                    required_tenant.add(pid)
+
+        for p in outs:
+            if not isinstance(p, dict):
+                continue
+            vis = str(p.get("visibility", "tenant")).strip().lower() or "tenant"
+            if vis != "tenant":
+                continue
+            path = str(p.get("path", "")).lstrip("/").strip()
+            if path:
+                tenant_output_paths.add(path)
+
+        return tenant_inputs, platform_inputs, required_tenant, tenant_output_paths
+
+    def _is_binding(v: Any) -> bool:
+        return isinstance(v, dict) and bool(v.get("from_step")) and bool(v.get("from_file"))
+
     for td in sorted(tenants_dir.iterdir(), key=lambda p: p.name):
         if not td.is_dir():
             continue
@@ -165,67 +258,73 @@ def _validate_tenants_and_workorders(repo_root: Path) -> None:
             if wp.stem != wid:
                 _fail(f"Workorder filename mismatch: {wp.name} declared work_order_id={wid!r}")
 
-            # Workorder can be defined either as a simple module list, or as a steps-based
-            # chaining plan (IFTTT-like wiring).
+            if "modules" in wo and (wo.get("modules") not in (None, [], "")):
+                _fail(f"Legacy workorders with 'modules' are not supported: {wp}")
+
+            # Steps-only workorders: all chaining/wiring is expressed here.
+            if "modules" in wo and wo.get("modules") not in (None, [], ""):
+                _fail(f"Legacy workorder 'modules' is not supported: {wp}")
+
             steps = wo.get("steps")
-            if steps is not None:
-                if not isinstance(steps, list):
-                    _fail(f"Invalid workorder steps list in {wp}")
+            if not (isinstance(steps, list) and steps):
+                _fail(f"Workorder must define non-empty steps list: {wp}")
 
-                step_ids: List[str] = []
-                step_id_set = set()
-                from_refs: List[str] = []
+            step_id_set: Set[str] = set()
+            step_to_module: Dict[str, str] = {}
+            step_outputs: Dict[str, Set[str]] = {}
 
-                def _walk_refs(v: Any) -> None:
-                    if isinstance(v, dict):
-                        if "from_step" in v:
-                            fr = str(v.get("from_step", "")).strip()
-                            if fr:
-                                from_refs.append(fr)
-                        for vv in v.values():
-                            _walk_refs(vv)
-                    elif isinstance(v, list):
-                        for vv in v:
-                            _walk_refs(vv)
+            # First pass: ids, module ids, input keys, required inputs
+            for s in steps:
+                if not isinstance(s, dict):
+                    _fail(f"Invalid step entry in {wp}: expected mapping")
+                sid = str(s.get("step_id", "")).strip()
+                if not sid or not re.match(r"^[0-9A-Za-z][0-9A-Za-z_-]{0,31}$", sid):
+                    _fail(f"Invalid step_id {sid!r} in {wp}")
+                if sid in step_id_set:
+                    _fail(f"Duplicate step_id {sid!r} in {wp}")
+                step_id_set.add(sid)
 
-                for s in steps:
-                    if not isinstance(s, dict):
-                        _fail(f"Invalid step entry in {wp}: expected mapping")
-                    sid = str(s.get("step_id", "")).strip()
-                    if not sid or not re.match(r"^[0-9A-Za-z][0-9A-Za-z_-]{0,31}$", sid):
-                        _fail(f"Invalid step_id {sid!r} in {wp}")
-                    if sid in step_id_set:
-                        _fail(f"Duplicate step_id {sid!r} in {wp}")
-                    step_id_set.add(sid)
-                    step_ids.append(sid)
+                mid = str(s.get("module_id", "")).strip()
+                validate_id("module_id", mid, "workorder.step.module_id")
+                step_to_module[sid] = mid
 
-                    mid = str(s.get("module_id", "")).strip()
-                    validate_id("module_id", mid, "workorder.step.module_id")
+                tenant_ins, platform_ins, required_ins, tenant_out_paths = _load_ports(mid)
+                step_outputs[sid] = tenant_out_paths
 
-                    inputs = s.get("inputs") or {}
-                    if not isinstance(inputs, dict):
-                        _fail(f"Invalid step.inputs in {wp}: step_id={sid!r}")
-                    _walk_refs(inputs)
+                inputs = s.get("inputs") or {}
+                if not isinstance(inputs, dict):
+                    _fail(f"Invalid step.inputs in {wp}: step_id={sid!r}")
 
-                for fr in from_refs:
+                for k in inputs.keys():
+                    if k in platform_ins:
+                        _fail(f"Step {sid!r} in {wp}: input {k!r} is platform-only for module {mid}")
+                    if tenant_ins and k not in tenant_ins:
+                        _fail(f"Step {sid!r} in {wp}: unknown input {k!r} for module {mid}")
+
+                for req in required_ins:
+                    if req not in inputs:
+                        _fail(f"Step {sid!r} in {wp}: missing required input {req!r} for module {mid}")
+
+            # Second pass: validate bindings (from_step existence + output exposure)
+            def _walk_bindings(v: Any) -> None:
+                if _is_binding(v):
+                    fr = str(v.get("from_step", "")).strip()
+                    ff = str(v.get("from_file", "")).lstrip("/").strip()
                     if fr not in step_id_set:
                         _fail(f"Invalid binding from_step {fr!r} in {wp}: not in steps")
+                    allowed = step_outputs.get(fr) or set()
+                    if ff and allowed and ff not in allowed:
+                        _fail(f"Invalid binding from_file {ff!r} in {wp}: not exposed by step {fr!r}")
+                if isinstance(v, dict):
+                    for vv in v.values():
+                        _walk_bindings(vv)
+                elif isinstance(v, list):
+                    for vv in v:
+                        _walk_bindings(vv)
 
-            mods = wo.get("modules") or []
-            if steps is None:
-                if not isinstance(mods, list):
-                    _fail(f"Invalid workorder modules list in {wp}")
-                for m in mods:
-                    mid = str((m or {}).get("module_id", "")).strip()
-                    validate_id("module_id", mid, "workorder.module_id")
-            else:
-                # If both are present, we still validate the module ids (but the runner will use steps).
-                if not isinstance(mods, list):
-                    _fail(f"Invalid workorder modules list in {wp}")
-                for m in mods:
-                    mid = str((m or {}).get("module_id", "")).strip()
-                    if mid:
-                        validate_id("module_id", mid, "workorder.module_id")
+            for s in steps:
+                inputs = s.get("inputs") or {}
+                _walk_bindings(inputs)
 
     _ok("Tenants + workorders: IDs + filenames OK")
 
@@ -236,7 +335,6 @@ def _validate_maintenance_state(repo_root: Path) -> None:
         "reason_catalog.csv",
         "reason_policy.csv",
         "tenant_relationships.csv",
-        "module_dependency_index.csv",
         "module_requirements_index.csv",
         "module_artifacts_policy.csv",
         "platform_policy.csv",
@@ -266,11 +364,6 @@ def _validate_maintenance_state(repo_root: Path) -> None:
             validate_id("module_id", mid, "module_id")
         elif mid:
             _fail("Global reason has non-empty module_id")
-
-    dep = read_csv(ms / "module_dependency_index.csv")
-    for r in dep:
-        validate_id("module_id", str(r.get("module_id","")).strip(), "module_dependency_index.module_id")
-        validate_id("module_id", str(r.get("depends_on_module_id","")).strip(), "module_dependency_index.depends_on_module_id")
 
     _ok("Maintenance-state: required files + ID format OK")
 

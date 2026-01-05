@@ -1,27 +1,51 @@
 module_id: U2T
 name: demo_seed_outputs
-version: 0.1.0
-description: Placeholder module that generates a deterministic text artifact and a release manifest item.
+version: 0.2.0
+description: "Placeholder module that generates a deterministic text artifact and a release manifest item."
+
 supports_downloadable_artifacts: true
 produces_manifest: true
-depends_on: []
+
 cache:
   enabled: true
   retention_default: 1w
   key_inputs:
-  - topic
-  - language
-  - freshness_days
-inputs:
-- name: topic
-  required: true
-  format: text/plain
-- name: language
-  required: true
-  format: text/plain
-- name: freshness_days
-  required: true
-  format: text/plain
-outputs:
-- name: source_text
-  format: text/plain
+    - topic
+    - language
+    - freshness_days
+
+ports:
+  inputs:
+    - id: topic
+      type: string
+      required: true
+      visibility: tenant
+      format: text/plain
+      description: "Seed topic for the generated artifact."
+    - id: language
+      type: string
+      required: false
+      visibility: platform
+      default: "en"
+      format: text/plain
+      description: "Platform-only default; not tenant-editable."
+    - id: freshness_days
+      type: string
+      required: false
+      visibility: platform
+      default: "7"
+      format: text/plain
+      description: "Platform-only default; not tenant-editable."
+  outputs:
+    - id: source_text
+      type: file
+      visibility: tenant
+      path: source_text.txt
+      format: text/plain
+      description: "Deterministic text output."
+    - id: report
+      type: file
+      visibility: tenant
+      path: report.json
+      format: application/json
+      description: "Structured run report."

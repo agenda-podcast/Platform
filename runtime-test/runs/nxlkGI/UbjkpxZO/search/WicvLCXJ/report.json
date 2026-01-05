@@ -1,0 +1,6 @@
+{
+  "module_id": "wxz",
+  "status": "failed",
+  "reason_slug": "missing_secret",
+  "message": "Missing required env secrets: wxz_GOOGLE_SEARCH_API_KEY and/or wxz_GOOGLE_SEARCH_ENGINE_ID"
+}

@@ -1,0 +1,42 @@
+{
+  "billing_state_version": "v1",
+  "updated_at": "2026-01-05T05:35:30Z",
+  "assets": [
+    {
+      "name": "tenants_credits.csv",
+      "sha256": "87bc7eb5ab02de89ca473878b97f373aa383bfd0d26f17aa3e7cc59f1c9175a5"
+    },
+    {
+      "name": "transactions.csv",
+      "sha256": "92f8dad8bd5847efa82d16e6a96db713b677c79d99c3dfafcc3ff3d83f37f142"
+    },
+    {
+      "name": "transaction_items.csv",
+      "sha256": "949c1a112b7151028419a0777b8400f5f73c1a77ef0d9639c7e14d22a086f9fc"
+    },
+    {
+      "name": "promotion_redemptions.csv",
+      "sha256": "4f4ce0dd312b6383d96da075d8ed2e2b8951275cb691d9f27e6658828a3927bb"
+    },
+    {
+      "name": "cache_index.csv",
+      "sha256": "edfe0938960f9c2287f7c223808f5d6e0d374ac067cce8dcd9e61e4e3445b9b6"
+    },
+    {
+      "name": "workorders_log.csv",
+      "sha256": "4e4861b2d1c7a569db1c41cb71f89af32af574d8b9abdf45b77826da686ef2e9"
+    },
+    {
+      "name": "module_runs_log.csv",
+      "sha256": "16a7da016c6f6aec4b206cca7f16485edce0c2c5de84b6123e14b59644e15cd3"
+    },
+    {
+      "name": "github_releases_map.csv",
+      "sha256": "844376cdb1bc9055b27852bdf82774b81123c7f29f978a40d57a0a8321f3d613"
+    },
+    {
+      "name": "github_assets_map.csv",
+      "sha256": "fe6fa58f17e4775424b338418e60734681dd1ea626a97d1cd7630dfea97147cd"
+    }
+  ]
+}

@@ -304,38 +304,64 @@ def _load_module_display_names(repo_root: Path) -> Dict[str, str]:
     return out
 
 
-def _toposort_modules(modules_requested: List[str], deps_index: List[Dict[str, str]]) -> List[str]:
-    requested = [canon_module_id(m) for m in modules_requested if canon_module_id(m)]
-    requested_set = set(requested)
+def _load_module_ports(repo_root: Path, module_id: str) -> Dict[str, Any]:
+    """Load module port definitions from modules/<module_id>/module.yml.
 
-    deps: Dict[str, Set[str]] = {m: set() for m in requested}
-    for r in deps_index:
-        mid = canon_module_id(r.get("module_id", ""))
-        dep = canon_module_id(r.get("depends_on_module_id", ""))
-        if not (mid and dep):
+    Expected structure:
+      ports:
+        inputs:  [{id, type, required?, visibility?, default?, description?}, ...]
+        outputs: [{id, type, visibility?, path, mime_type?}, ...]
+
+    visibility:
+      - tenant: tenant may set the input / consume the output
+      - platform: platform-only (defaults injected; not settable by tenant)
+    """
+    mid = canon_module_id(module_id)
+    if not mid:
+        raise ValueError(f"Invalid module_id for ports: {module_id!r}")
+    yml = repo_root / "modules" / mid / "module.yml"
+    data = yaml.safe_load(yml.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid module.yml format for {mid}")
+    ports = data.get("ports") or {}
+    if not isinstance(ports, dict):
+        raise ValueError(f"Invalid ports block in module.yml for {mid}")
+    inputs = ports.get("inputs") or []
+    outputs = ports.get("outputs") or []
+    if not isinstance(inputs, list) or not isinstance(outputs, list):
+        raise ValueError(f"ports.inputs/ports.outputs must be lists in module.yml for {mid}")
+    return {"inputs": inputs, "outputs": outputs}
+
+
+def _ports_index(ports: Dict[str, Any]) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]], Set[str]]:
+    """Return (tenant_inputs, platform_inputs, tenant_output_paths)."""
+    tenant_inputs: Dict[str, Dict[str, Any]] = {}
+    platform_inputs: Dict[str, Dict[str, Any]] = {}
+    tenant_output_paths: Set[str] = set()
+
+    for p in ports.get("inputs") or []:
+        if not isinstance(p, dict):
             continue
-        if mid in requested_set and dep in requested_set:
-            deps[mid].add(dep)
+        pid = str(p.get("id") or "").strip()
+        if not pid:
+            continue
+        vis = str(p.get("visibility") or "tenant").strip().lower() or "tenant"
+        if vis == "platform":
+            platform_inputs[pid] = p
+        else:
+            tenant_inputs[pid] = p
 
-    ordered: List[str] = []
-    temp: Set[str] = set()
-    perm: Set[str] = set()
+    for p in ports.get("outputs") or []:
+        if not isinstance(p, dict):
+            continue
+        vis = str(p.get("visibility") or "tenant").strip().lower() or "tenant"
+        if vis != "tenant":
+            continue
+        path = str(p.get("path") or "").lstrip("/").strip()
+        if path:
+            tenant_output_paths.add(path)
 
-    def visit(n: str) -> None:
-        if n in perm:
-            return
-        if n in temp:
-            raise ValueError(f"Cycle in module dependencies at {n}")
-        temp.add(n)
-        for d in sorted(deps.get(n, set())):
-            visit(d)
-        temp.remove(n)
-        perm.add(n)
-        ordered.append(n)
-
-    for m in requested:
-        visit(m)
-    return ordered
+    return tenant_inputs, platform_inputs, tenant_output_paths
 
 
 def _toposort_nodes(nodes: List[str], edges: Dict[str, Set[str]]) -> List[str]:
@@ -448,7 +474,7 @@ def _extract_step_edges(steps: List[Dict[str, Any]]) -> Dict[str, Set[str]]:
     return edges
 
 
-def _resolve_inputs(inputs_spec: Any, step_outputs: Dict[str, Path]) -> Any:
+def _resolve_inputs(inputs_spec: Any, step_outputs: Dict[str, Path], allowed_outputs: Dict[str, Set[str]]) -> Any:
     """Resolve bindings within an inputs spec.
 
     Rules:
@@ -461,53 +487,46 @@ def _resolve_inputs(inputs_spec: Any, step_outputs: Dict[str, Path]) -> Any:
             raise ValueError("binding.from_step is required")
         if from_step not in step_outputs:
             raise FileNotFoundError(f"Upstream step outputs not found: {from_step}")
+        from_file = str(inputs_spec.get("from_file") or "").lstrip("/").strip()
+        allowed = allowed_outputs.get(from_step) or set()
+        if from_file and allowed and from_file not in allowed:
+            raise PermissionError(
+                f"binding.from_file '{from_file}' is not exposed by upstream step '{from_step}' (allowed: {sorted(allowed)})"
+            )
         return _load_binding_value(step_outputs[from_step], inputs_spec)
     if isinstance(inputs_spec, dict):
-        return {k: _resolve_inputs(v, step_outputs) for k, v in inputs_spec.items()}
+        return {k: _resolve_inputs(v, step_outputs, allowed_outputs) for k, v in inputs_spec.items()}
     if isinstance(inputs_spec, list):
-        return [_resolve_inputs(v, step_outputs) for v in inputs_spec]
+        return [_resolve_inputs(v, step_outputs, allowed_outputs) for v in inputs_spec]
     return inputs_spec
 
 
-def _build_execution_plan(workorder: Dict[str, Any], deps_index: List[Dict[str, str]]) -> Tuple[str, List[Dict[str, Any]]]:
+def _build_execution_plan(workorder: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Normalize a workorder into an ordered execution plan.
 
     Returns:
-      - plan_type: "steps" or "modules"
       - plan: list of dicts with keys: step_id, module_id, cfg
     """
     steps = workorder.get("steps")
-    if isinstance(steps, list) and steps:
-        plan_steps: List[Dict[str, Any]] = []
-        for s in steps:
-            if not isinstance(s, dict):
-                continue
-            sid = str(s.get("step_id") or "").strip()
-            mid = canon_module_id(s.get("module_id") or "")
-            if not sid or not mid:
-                continue
-            plan_steps.append({"step_id": sid, "module_id": mid, "cfg": s})
-        edges = _extract_step_edges([p["cfg"] for p in plan_steps])
-        # edges keys refer to step_id; ensure node list order is stable as in YAML
-        nodes = [p["step_id"] for p in plan_steps]
-        ordered_sids = _toposort_nodes(nodes, edges)
-        by_id = {p["step_id"]: p for p in plan_steps}
-        return "steps", [by_id[sid] for sid in ordered_sids if sid in by_id]
+    if not (isinstance(steps, list) and steps):
+        raise ValueError("Workorder must define non-empty 'steps' list (legacy modules-only workorders are not supported)")
 
-    # fallback: classic modules list (dependency-index driven)
-    requested_modules = [str(m.get("module_id","")).strip() for m in (workorder.get("modules") or []) if isinstance(m, dict) and m.get("module_id")]
-    ordered = _toposort_modules(requested_modules, deps_index)
-    module_cfgs: Dict[str, Dict[str, Any]] = {}
-    for m in (workorder.get("modules") or []):
-        if not isinstance(m, dict):
+    plan_steps: List[Dict[str, Any]] = []
+    for s in steps:
+        if not isinstance(s, dict):
             continue
-        mid = canon_module_id(m.get("module_id", ""))
-        if mid:
-            module_cfgs[mid] = m
-    plan: List[Dict[str, Any]] = []
-    for mid in ordered:
-        plan.append({"step_id": mid, "module_id": mid, "cfg": module_cfgs.get(mid, {})})
-    return "modules", plan
+        sid = str(s.get("step_id") or "").strip()
+        mid = canon_module_id(s.get("module_id") or "")
+        if not sid or not mid:
+            continue
+        plan_steps.append({"step_id": sid, "module_id": mid, "cfg": s})
+
+    edges = _extract_step_edges([p["cfg"] for p in plan_steps])
+    # edges keys refer to step_id; ensure node list order is stable as in YAML
+    nodes = [p["step_id"] for p in plan_steps]
+    ordered_sids = _toposort_nodes(nodes, edges)
+    by_id = {p["step_id"]: p for p in plan_steps}
+    return [by_id[sid] for sid in ordered_sids if sid in by_id]
 
 
 def _load_tenant_relationships(repo_root: Path) -> Set[Tuple[str, str]]:
@@ -540,7 +559,6 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
     run_since = utcnow_iso()
     reason_idx = _load_reason_index(repo_root)
     tenant_rel = _load_tenant_relationships(repo_root)
-    deps_index = read_csv(repo_root / "maintenance-state" / "module_dependency_index.csv")
     prices = _load_module_prices(repo_root)
     artifacts_policy = _load_module_artifacts_policy(repo_root)
     module_names = _load_module_display_names(repo_root)
@@ -611,7 +629,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 w = dict(it.get("workorder") or {})
                 if not bool(w.get("enabled", True)):
                     continue
-                _ptype, _plan = _build_execution_plan(w, deps_index)
+                _plan = _build_execution_plan(w)
                 for step in _plan:
                     mid = canon_module_id(step.get("module_id", ""))
                     cfg = dict(step.get("cfg") or {})
@@ -636,7 +654,8 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
         started_at = utcnow_iso()
 
         # pricing + execution plan
-        plan_type, plan = _build_execution_plan(w, deps_index)
+        plan_type = "steps"
+        plan = _build_execution_plan(w)
         print(f"[orchestrator] work_order_id={work_order_id} tenant_id={tenant_id} plan_type={plan_type} steps={[p.get('step_id') for p in plan]}")
 
         est_total = 0
@@ -741,6 +760,19 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
         completed_modules: List[str] = []
         step_outputs: Dict[str, Path] = {}
 
+        # Ports (tenant-visible vs platform-only) and output exposure rules.
+        ports_cache: Dict[str, Dict[str, Any]] = {}
+        step_allowed_outputs: Dict[str, Set[str]] = {}
+        for st in plan:
+            st_step_id = str(st.get("step_id") or "").strip()
+            st_module_id = canon_module_id(st.get("module_id") or "")
+            if not st_step_id or not st_module_id:
+                continue
+            if st_module_id not in ports_cache:
+                ports_cache[st_module_id] = _load_module_ports(repo_root, st_module_id)
+            _t_in, _p_in, _t_out = _ports_index(ports_cache[st_module_id])
+            step_allowed_outputs[st_step_id] = set(_t_out)
+
         # Execute steps (modules-only workorders and steps-based chaining workorders)
         for step in plan:
             sid = str(step.get("step_id") or "").strip()
@@ -749,10 +781,49 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             mr_id = _new_id("module_run_id", used_mr)
             m_started = utcnow_iso()
 
-            # Resolve chained inputs (supports bindings: {from_step, from_file, selector, json_path, take}).
+            # Resolve step inputs (supports bindings: {from_step, from_file, selector, json_path, take}).
+            # Enforce module ports: tenants can only set tenant-visible inputs; platform-only inputs are injected via defaults.
             inputs_spec = cfg.get("inputs") or {}
             try:
-                resolved_inputs = _resolve_inputs(inputs_spec, step_outputs)
+                if not isinstance(inputs_spec, dict):
+                    raise ValueError("step.inputs must be an object")
+
+                if mid not in ports_cache:
+                    ports_cache[mid] = _load_module_ports(repo_root, mid)
+                tenant_inputs, platform_inputs, _tenant_out = _ports_index(ports_cache[mid])
+
+                if tenant_inputs or platform_inputs:
+                    # Reject any attempt to set platform-only inputs.
+                    for k in inputs_spec.keys():
+                        if k in platform_inputs:
+                            raise PermissionError(f"Input '{k}' is platform-only for module {mid}")
+                        if k not in tenant_inputs:
+                            raise KeyError(f"Unknown input '{k}' for module {mid}")
+
+                    # Inject defaults (tenant + platform) before binding resolution.
+                    merged_spec: Dict[str, Any] = dict(inputs_spec)
+                    for pid, pspec in tenant_inputs.items():
+                        if pid not in merged_spec and "default" in pspec:
+                            merged_spec[pid] = pspec.get("default")
+                    for pid, pspec in platform_inputs.items():
+                        if pid not in merged_spec and "default" in pspec:
+                            merged_spec[pid] = pspec.get("default")
+
+                    resolved_inputs = _resolve_inputs(merged_spec, step_outputs, step_allowed_outputs)
+
+                    # Required tenant inputs must be present and non-empty after resolution.
+                    for pid, pspec in tenant_inputs.items():
+                        if not bool(pspec.get("required", False)):
+                            continue
+                        if pid not in resolved_inputs:
+                            raise ValueError(f"Missing required input '{pid}' for module {mid}")
+                        v = resolved_inputs.get(pid)
+                        if v is None or (isinstance(v, str) and not v.strip()):
+                            raise ValueError(f"Missing required input '{pid}' for module {mid}")
+                else:
+                    # Legacy permissive behavior: if module has no ports, accept any inputs.
+                    resolved_inputs = _resolve_inputs(inputs_spec, step_outputs, step_allowed_outputs)
+
                 resolve_error = ""
             except Exception as e:
                 resolved_inputs = {}
@@ -980,10 +1051,13 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 ensure_dir(staging)
 
                 items: List[Dict[str, Any]] = []
+                allowed_paths = step_allowed_outputs.get(sid) or set()
                 for fp in sorted(out_dir.rglob("*")):
                     if not fp.is_file():
                         continue
                     rel = fp.relative_to(out_dir).as_posix()
+                    if allowed_paths and rel not in allowed_paths:
+                        continue
                     rel_name = rel
                     if sid and sid != mid:
                         rel_name = f"{sid}/{rel}"
