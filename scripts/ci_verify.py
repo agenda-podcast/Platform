@@ -278,11 +278,25 @@ def _validate_tenants_and_workorders(repo_root: Path) -> None:
                 if not isinstance(s, dict):
                     _fail(f"Invalid step entry in {wp}: expected mapping")
                 sid = str(s.get("step_id", "")).strip()
-                if not sid or not re.match(r"^[0-9A-Za-z][0-9A-Za-z_-]{0,31}$", sid):
-                    _fail(f"Invalid step_id {sid!r} in {wp}")
+                try:
+                    validate_id("step_id", sid, "workorder.step.step_id")
+                except Exception:
+                    _fail(f"Invalid step_id {sid!r} in {wp} (expected Base62 length 2)")
                 if sid in step_id_set:
                     _fail(f"Duplicate step_id {sid!r} in {wp}")
                 step_id_set.add(sid)
+
+                # Human-friendly name (must not be used for logic).
+                sname = s.get("step_name", None)
+                if sname is None:
+                    sname = s.get("name", None)
+                sname = "" if sname is None else str(sname)
+                if not sname.strip():
+                    _fail(f"Missing required step_name for step_id={sid!r} in {wp}")
+                if "\n" in sname or "\r" in sname:
+                    _fail(f"Invalid step_name (newline) for step_id={sid!r} in {wp}")
+                if len(sname.strip()) > 80:
+                    _fail(f"Invalid step_name (too long) for step_id={sid!r} in {wp} (max 80 chars)")
 
                 mid = str(s.get("module_id", "")).strip()
                 validate_id("module_id", mid, "workorder.step.module_id")

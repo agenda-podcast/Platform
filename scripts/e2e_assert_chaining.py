@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import yaml
+
 
 def _read_csv(path: Path) -> List[Dict[str, str]]:
     if not path.exists():
@@ -62,15 +64,41 @@ def main() -> int:
     work_order_id = args.work_order_id
 
     # ------------------------------------------------------------------
+    # Discover step_ids from the workorder (step_name is UX-only)
+    # ------------------------------------------------------------------
+    workorder_path = Path("tenants") / tenant_id / "workorders" / f"{work_order_id}.yml"
+    if not workorder_path.exists():
+        raise SystemExit(f"[E2E][FAIL] Workorder YAML not found: {workorder_path}")
+    wo = yaml.safe_load(workorder_path.read_text(encoding="utf-8")) or {}
+    steps = wo.get("steps") or []
+    if not isinstance(steps, list) or not steps:
+        raise SystemExit(f"[E2E][FAIL] Workorder has no steps: {workorder_path}")
+
+    module_to_step: Dict[str, Tuple[str, str]] = {}
+    for s in steps:
+        if not isinstance(s, dict):
+            continue
+        sid = str(s.get("step_id") or "").strip()
+        mid = str(s.get("module_id") or "").strip()
+        sname = str(s.get("step_name") or s.get("name") or "").strip()
+        if sid and mid:
+            module_to_step[mid] = (sid, sname)
+
+    def _sid(mid: str) -> str:
+        if mid not in module_to_step:
+            raise SystemExit(f"[E2E][FAIL] Workorder missing required module step: {mid}")
+        return module_to_step[mid][0]
+
+    # ------------------------------------------------------------------
     # Runtime outputs: verify chaining artifacts exist and are non-empty
     # ------------------------------------------------------------------
     base = runtime_dir / "runs" / tenant_id / work_order_id
-    derive_run = _latest_run_dir(base / "derive_queries")
-    search_run = _latest_run_dir(base / "search")
-    seed_run = _latest_run_dir(base / "seed_text")
+    derive_run = _latest_run_dir(base / _sid("9SD"))
+    search_run = _latest_run_dir(base / _sid("wxz"))
+    seed_run = _latest_run_dir(base / _sid("U2T"))
 
     if not derive_run:
-        raise SystemExit(f"[E2E][FAIL] Missing derive_queries step output directory: {base}")
+        raise SystemExit(f"[E2E][FAIL] Missing 9SD step output directory: {base}")
 
     # Step 1 must always succeed in the demo chain.
     _assert_file_exists(derive_run / "derived_queries.txt")

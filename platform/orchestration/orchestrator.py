@@ -519,6 +519,7 @@ def _build_execution_plan(workorder: Dict[str, Any]) -> List[Dict[str, Any]]:
         mid = canon_module_id(s.get("module_id") or "")
         if not sid or not mid:
             continue
+        validate_id("step_id", sid, "workorder.step.step_id")
         plan_steps.append({"step_id": sid, "module_id": mid, "cfg": s})
 
     edges = _extract_step_edges([p["cfg"] for p in plan_steps])
@@ -693,12 +694,24 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
         # spend transaction (debit)
         spend_tx = _new_id("transaction_id", used_tx)
 
-        def _label(mid: str, sid: str) -> str:
+        def _label(mid: str, sid: str, sname: str = "") -> str:
             base = f"{module_names.get(mid, mid)} ({mid})" if module_names.get(mid) else mid
-            # Only show step suffix when it differs from module_id (or when steps mode is used)
-            return f"{base} [{sid}]" if sid and sid != mid else base
+            human = (sname or "").strip()
+            # step_id is the stable identifier used for wiring/IO; step_name is only for UX/logs
+            if sid and human:
+                return f"{base} {human} [{sid}]"
+            if sid and sid != mid:
+                return f"{base} [{sid}]"
+            return base
 
-        plan_human = ", ".join([_label(str(p.get("module_id")), str(p.get("step_id"))) for p in plan])
+        plan_human = ", ".join([
+            _label(
+                str(p.get("module_id")),
+                str(p.get("step_id")),
+                str((p.get("cfg") or {}).get("step_name") or (p.get("cfg") or {}).get("name") or ""),
+            )
+            for p in plan
+        ])
         transactions.append({
             "transaction_id": spend_tx,
             "tenant_id": tenant_id,
@@ -718,11 +731,12 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             sid = str(step.get("step_id") or "").strip()
             mid = canon_module_id(step.get("module_id") or "")
             cfg = dict(step.get("cfg") or {})
+            sname = str(cfg.get("step_name") or cfg.get("name") or "").strip()
             run_p, rel_p = _price_parts_for_module(prices, mid, bool(cfg.get("purchase_release_artifacts", False)))
             cost = run_p + rel_p
             per_step_cost[sid] = cost
             per_step_parts[sid] = (run_p, rel_p)
-            m_label = _label(mid, sid)
+            m_label = _label(mid, sid, sname)
             transaction_items.append({
                 "transaction_item_id": _new_id("transaction_item_id", used_ti),
                 "transaction_id": spend_tx,
@@ -733,7 +747,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 "amount_credits": str(-run_p),
                 "created_at": utcnow_iso(),
                 "note": f"Module run spend: {m_label}",
-                "metadata_json": json.dumps({"step_id": sid, "purchase_release_artifacts": bool(cfg.get("purchase_release_artifacts", False))}, separators=(",", ":")),
+                "metadata_json": json.dumps({"step_id": sid, "step_name": sname, "purchase_release_artifacts": bool(cfg.get("purchase_release_artifacts", False))}, separators=(",", ":")),
             })
 
             if rel_p > 0:
@@ -747,7 +761,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                     "amount_credits": str(-rel_p),
                     "created_at": utcnow_iso(),
                     "note": f"Artifacts-to-Release spend: {m_label}",
-                    "metadata_json": json.dumps({"step_id": sid, "purchase_release_artifacts": True}, separators=(",", ":")),
+                    "metadata_json": json.dumps({"step_id": sid, "step_name": sname, "purchase_release_artifacts": True}, separators=(",", ":")),
                 })
 
         # update balance
@@ -829,13 +843,15 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 resolved_inputs = {}
                 resolve_error = str(e)
 
+            sname = str(cfg.get("step_name") or cfg.get("name") or "").strip()
+
             params: Dict[str, Any] = {
                 "tenant_id": tenant_id,
                 "work_order_id": work_order_id,
                 "module_run_id": mr_id,
                 "inputs": resolved_inputs,
                 "reuse_output_type": str(cfg.get("reuse_output_type","")).strip(),
-                "_platform": {"plan_type": plan_type, "step_id": sid, "module_id": mid},
+                "_platform": {"plan_type": plan_type, "step_id": sid, "step_name": sname, "module_id": mid},
             }
             # Backward compatibility: also expose resolved inputs at top-level (without overriding reserved keys).
             if isinstance(resolved_inputs, dict):
@@ -940,7 +956,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 "reason_code": reason_code,
                 "report_path": report_path,
                 "output_ref": output_ref,
-                "metadata_json": json.dumps({"plan_type": plan_type, "step_id": sid, "outputs_dir": str(out_dir), "cache_key": cache_key, "cache_hit": cache_hit}, separators=(",", ":")),
+                "metadata_json": json.dumps({"plan_type": plan_type, "step_id": sid, "step_name": sname, "outputs_dir": str(out_dir), "cache_key": cache_key, "cache_hit": cache_hit}, separators=(",", ":")),
             })
 
             # Make outputs discoverable for downstream bindings (even if the step failed).
@@ -988,11 +1004,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 refund_amt = int(run_p) + int(rel_p)
                 if refund_amt > 0:
                     refund_tx = _new_id("transaction_id", used_tx)
-                    m_label = f"{module_names.get(mid, mid)} ({mid})" if module_names.get(mid) else mid
-                    if sid and sid != mid:
-                        m_label = f"{m_label} [{sid}]"
-                    if sid != mid:
-                        m_label = f"{m_label} [{sid}]"
+                    m_label = _label(mid, sid, sname)
                     transactions.append({
                         "transaction_id": refund_tx,
                         "tenant_id": tenant_id,
@@ -1002,7 +1014,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                         "created_at": utcnow_iso(),
                         "reason_code": reason_code,
                         "note": f"Refund: {m_label} (reason={reason_code})",
-                        "metadata_json": json.dumps({"step_id": sid, "module_id": mid, "refund_for": mr_id, "spend_transaction_id": spend_tx}, separators=(",", ":")),
+                        "metadata_json": json.dumps({"step_id": sid, "step_name": sname, "module_id": mid, "refund_for": mr_id, "spend_transaction_id": spend_tx}, separators=(",", ":")),
                     })
 
                     # RUN refund item
@@ -1017,7 +1029,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                             "amount_credits": str(int(run_p)),
                             "created_at": utcnow_iso(),
                             "note": f"Refund item (RUN): {m_label} (reason={reason_code})",
-                            "metadata_json": json.dumps({"step_id": sid, "module_id": mid, "refund_for": mr_id, "feature": "RUN", "spend_transaction_id": spend_tx}, separators=(",", ":")),
+                            "metadata_json": json.dumps({"step_id": sid, "step_name": sname, "module_id": mid, "refund_for": mr_id, "feature": "RUN", "spend_transaction_id": spend_tx}, separators=(",", ":")),
                         })
 
                     # RELEASE_ARTIFACTS refund item (only if it was purchased as part of pricing)
@@ -1032,7 +1044,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                             "amount_credits": str(int(rel_p)),
                             "created_at": utcnow_iso(),
                             "note": f"Refund item (RELEASE_ARTIFACTS): {m_label} (reason={reason_code})",
-                            "metadata_json": json.dumps({"step_id": sid, "module_id": mid, "refund_for": mr_id, "feature": "RELEASE_ARTIFACTS", "spend_transaction_id": spend_tx}, separators=(",", ":")),
+                            "metadata_json": json.dumps({"step_id": sid, "step_name": sname, "module_id": mid, "refund_for": mr_id, "feature": "RELEASE_ARTIFACTS", "spend_transaction_id": spend_tx}, separators=(",", ":")),
                         })
 
                     # balance update
@@ -1045,7 +1057,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 release_id = _new_id("github_release_asset_id", used_rel)
                 tag = f"r-{release_id}"
                 title = f"Artifacts {release_id}"
-                ensure_release(tag=tag, title=title, notes=f"tenant_id={tenant_id} work_order_id={work_order_id} module_id={mid} step_id={sid}")
+                ensure_release(tag=tag, title=title, notes=f"tenant_id={tenant_id} work_order_id={work_order_id} module_id={mid} step_id={sid} step_name={sname}")
 
                 staging = runtime_dir / "releases" / release_id
                 ensure_dir(staging)
@@ -1076,6 +1088,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                     "work_order_id": work_order_id,
                     "module_id": mid,
                     "step_id": sid,
+                    "step_name": sname,
                     "module_run_id": mr_id,
                     "created_at": utcnow_iso(),
                     "items": items,

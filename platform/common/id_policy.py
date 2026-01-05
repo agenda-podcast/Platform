@@ -10,6 +10,8 @@ ID_LENGTHS: Dict[str, int] = {
   "tenant_id": 6,
   "work_order_id": 8,
   "module_id": 3,
+  # Workorder-local ID for steps (UI/logging label; not a global identifier)
+  "step_id": 2,
   "transaction_id": 8,
   "transaction_item_id": 8,
   "module_run_id": 8,
