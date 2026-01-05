@@ -387,6 +387,20 @@ def _write_platform_policy(ctx: MaintenanceContext) -> None:
 
 
 def _write_manifest(ctx: MaintenanceContext) -> None:
+    # IMPORTANT: This manifest must be *stable* across runs when underlying
+    # file contents have not changed. Otherwise CI will always detect drift.
+    #
+    # Rule: preserve updated_at if sha256 is unchanged from the prior manifest.
+    existing_path = ctx.ms_dir / "maintenance_manifest.csv"
+    existing_rows = read_csv(existing_path) if existing_path.exists() else []
+    existing_by_file: Dict[str, Dict[str, str]] = {}
+    for r in existing_rows:
+        fn = str(r.get("file", "")).strip()
+        sha = str(r.get("sha256", "")).strip()
+        ts = str(r.get("updated_at", "")).strip()
+        if fn and sha and ts:
+            existing_by_file[fn] = {"sha256": sha, "updated_at": ts}
+
     files = [
         "reason_catalog.csv",
         "reason_policy.csv",
@@ -399,7 +413,13 @@ def _write_manifest(ctx: MaintenanceContext) -> None:
     rows=[]
     for fn in files:
         p = ctx.ms_dir / fn
-        rows.append({"file": fn, "sha256": _sha256_file(p), "updated_at": utcnow_iso()})
+        sha = _sha256_file(p)
+        prior = existing_by_file.get(fn)
+        if prior and prior.get("sha256") == sha:
+            ts = prior.get("updated_at", "")
+        else:
+            ts = utcnow_iso()
+        rows.append({"file": fn, "sha256": sha, "updated_at": ts})
     _write_csv(ctx.ms_dir / "maintenance_manifest.csv", rows, ["file","sha256","updated_at"])
 
 
