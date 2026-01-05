@@ -4,6 +4,7 @@ version: 0.2.0
 description: "Google Custom Search (web pages only): fetch up to 100 results per query, up to 5 queries per run."
 
 supports_downloadable_artifacts: true
+produces_manifest: true
 
 cache:
   enabled: true
