@@ -9,10 +9,13 @@ permissions:
 
 jobs:
   maintenance:
+    if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -51,11 +54,32 @@ jobs:
           set -euo pipefail
           python scripts/ci_verify.py --phase pre
 
+      - name: Auto-commit maintenance-state updates (push-triggered)
+        if: ${{ github.event_name == 'push' }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- maintenance-state; then
+            echo "[MAINTENANCE] maintenance-state/: no changes to commit."
+            exit 0
+          fi
+
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
+          git add maintenance-state
+          if git diff --cached --quiet; then
+            echo "[MAINTENANCE] Nothing staged after git add maintenance-state."
+            exit 0
+          fi
+
+          git commit -m "chore(maintenance): refresh maintenance-state"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
       - name: Ensure maintenance-state is committed
         run: |
           set -euo pipefail
           if ! git diff --quiet -- maintenance-state; then
-            echo "[MAINTENANCE][FAIL] maintenance-state/ is out-of-date. Run: python -m platform.cli maintenance and commit the changes." >&2
+            echo "[MAINTENANCE][FAIL] maintenance-state/ is out-of-date even after maintenance run." >&2
             git --no-pager diff -- maintenance-state | sed -n '1,200p' >&2 || true
             exit 2
           fi
