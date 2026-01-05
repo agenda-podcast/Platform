@@ -20,6 +20,7 @@ from ..utils.csvio import read_csv
 from ..utils.fs import ensure_dir
 from ..utils.hashing import sha256_file
 from ..utils.time import utcnow_iso
+from ..secretstore.loader import load_secretstore, env_for_module
 
 
 def _parse_iso_z(s: str) -> datetime:
@@ -607,6 +608,19 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
 
     workorders = _discover_workorders(repo_root)
 
+    # Load encrypted secretstore once per run (if configured).
+    store = load_secretstore(repo_root)
+    if store.version <= 0:
+        if (os.environ.get('SECRETSTORE_PASSPHRASE') or '').strip():
+            print('[secretstore] WARNING: passphrase provided but store version is 0 (decrypt/parse may have failed).')
+        else:
+            print('[secretstore] INFO: SECRETSTORE_PASSPHRASE not provided; proceeding without injected secrets.')
+    else:
+        mods = store.raw.get('modules') or {}
+        if isinstance(mods, dict):
+            print(f"[secretstore] loaded version={store.version} modules={sorted(mods.keys())}")
+
+
     # Run-scoped summary (useful in CI logs)
     print("\nORCHESTRATOR RUN-SCOPED SUMMARY")
     print(f"billing_state_dir: {billing_state_dir}")
@@ -918,7 +932,8 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                     "_cache_hit": True,
                 }
             else:
-                result = execute_module_runner(module_path=module_path, params=params, outputs_dir=out_dir)
+                module_env = env_for_module(store, mid)
+                result = execute_module_runner(module_path=module_path, params=params, outputs_dir=out_dir, env=module_env)
 
             raw_status = str(result.get("status", "") or "").strip()
             if raw_status:

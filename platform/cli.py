@@ -10,6 +10,8 @@ from .orchestration.orchestrator import run_orchestrator
 from .cache.prune import run_cache_prune
 from .orchestration.module_exec import execute_module_runner
 
+from .secretstore.loader import load_secretstore, env_for_module
+
 from .billing.state import BillingState
 from .billing.topup import TopupRequest, apply_admin_topup
 from .billing.payments import (
@@ -57,7 +59,9 @@ def cmd_module_exec(args: argparse.Namespace) -> int:
 
     params = json.loads(args.params_json)
     outputs_dir = Path(args.outputs_dir).resolve()
-    out = execute_module_runner(module_path, params, outputs_dir)
+    store = load_secretstore(repo_root)
+    module_env = env_for_module(store, module_id)
+    out = execute_module_runner(module_path, params, outputs_dir, env=module_env)
 
     # Composite action compatibility: optionally set GitHub step outputs.
     if bool(getattr(args, "github_action_outputs", False)):

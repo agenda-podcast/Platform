@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,7 +68,33 @@ def build_manifest_item(
     }
 
 
-def execute_module_runner(module_path: Path, params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
+def execute_module_runner(
+    module_path: Path,
+    params: Dict[str, Any],
+    outputs_dir: Path,
+    env: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
     runner = _import_module_runner(module_path)
     outputs_dir.mkdir(parents=True, exist_ok=True)
-    return runner.run(params=params, outputs_dir=outputs_dir)
+
+    # Inject env vars (secrets/vars) for the duration of this module run only.
+    # This keeps secrets out of global process environment once the step finishes.
+    old: Dict[str, Optional[str]] = {}
+    if env:
+        for k, v in env.items():
+            if not k:
+                continue
+            old[k] = os.environ.get(k)
+            os.environ[k] = str(v)
+    try:
+        return runner.run(params=params, outputs_dir=outputs_dir)
+    finally:
+        if env:
+            for k in env.keys():
+                if k not in old:
+                    continue
+                prev = old[k]
+                if prev is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = prev
