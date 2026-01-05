@@ -90,6 +90,12 @@ GITHUB_ASSETS_MAP_HEADERS = ["asset_id","github_asset_id","release_id","asset_na
 class ReasonIndex:
     by_key: Dict[Tuple[str, str, str], str]  # (scope, module_id, reason_slug) -> reason_code
     refundable: Dict[str, bool]              # reason_code -> refundable
+    label_by_code: Dict[str, str]            # reason_code -> human label
+
+
+def _humanize_slug(slug: str) -> str:
+    s = (slug or "").strip().replace("_", " ")
+    return s[:1].upper() + s[1:] if s else ""
 
 
 def _repo_yaml(path: Path) -> Dict[str, Any]:
@@ -133,16 +139,22 @@ def _load_reason_index(repo_root: Path) -> ReasonIndex:
     policy = read_csv(ms / "reason_policy.csv")
 
     by_key: Dict[Tuple[str, str, str], str] = {}
+    label_by_code: Dict[str, str] = {}
     for r in catalog:
         scope = str(r.get("scope", "")).strip().upper()
         module_id = str(r.get("module_id", "")).strip()
         slug = str(r.get("reason_slug", "")).strip()
         code = str(r.get("reason_code", "")).strip()
+        desc = str(r.get("description", "")).strip()
         if not (scope and slug and code):
             continue
         if scope == "GLOBAL":
             module_id = ""
         by_key[(scope, module_id, slug)] = code
+
+        # Human labels for notes/logging. Prefer a short, readable slug; fallback to description.
+        if code not in label_by_code:
+            label_by_code[code] = _humanize_slug(slug) or desc or code
 
     refundable: Dict[str, bool] = {}
     for r in policy:
@@ -151,7 +163,14 @@ def _load_reason_index(repo_root: Path) -> ReasonIndex:
             continue
         refundable[code] = str(r.get("refundable", "")).strip().lower() == "true"
 
-    return ReasonIndex(by_key=by_key, refundable=refundable)
+    return ReasonIndex(by_key=by_key, refundable=refundable, label_by_code=label_by_code)
+
+
+def _reason_label(idx: ReasonIndex, reason_code: str) -> str:
+    rc = (reason_code or "").strip()
+    if not rc:
+        return ""
+    return idx.label_by_code.get(rc, rc)
 
 
 def _reason_code(idx: ReasonIndex, scope: str, module_id: str, reason_slug: str) -> str:
@@ -423,7 +442,8 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
 
         # spend transaction (debit)
         spend_tx = _new_id("transaction_id", used_tx)
-        modules_human = ", ".join([f"{module_names.get(m, m)} ({m})" if module_names.get(m) else m for m in ordered])
+        # Human-readable module list for notes. Prefer module name; never append raw IDs when a name exists.
+        modules_human = ", ".join([module_names.get(m) or m for m in ordered])
         transactions.append({
             "transaction_id": spend_tx,
             "tenant_id": tenant_id,
@@ -446,7 +466,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             cost = run_p + rel_p
             per_module_cost[mid] = cost
             per_module_parts[mid] = (run_p, rel_p)
-            m_label = f"{module_names.get(mid, mid)} ({mid})" if module_names.get(mid) else mid
+            m_label = module_names.get(mid) or mid
             transaction_items.append({
                 "transaction_item_id": _new_id("transaction_item_id", used_ti),
                 "transaction_id": spend_tx,
@@ -611,7 +631,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 refund_amt = int(run_p) + int(rel_p)
                 if refund_amt > 0:
                     refund_tx = _new_id("transaction_id", used_tx)
-                    m_label = f"{module_names.get(mid, mid)} ({mid})" if module_names.get(mid) else mid
+                    m_label = module_names.get(mid) or mid
                     transactions.append({
                         "transaction_id": refund_tx,
                         "tenant_id": tenant_id,
@@ -620,7 +640,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                         "amount_credits": str(refund_amt),
                         "created_at": utcnow_iso(),
                         "reason_code": reason_code,
-                        "note": f"Refund: {m_label} (reason={reason_code})",
+                        "note": f"Refund: {m_label} (reason={_reason_label(reason_idx, reason_code)})",
                         "metadata_json": json.dumps({"module_id": mid, "refund_for": mr_id, "spend_transaction_id": spend_tx}, separators=(",", ":")),
                     })
 
@@ -635,7 +655,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                             "type": "REFUND",
                             "amount_credits": str(int(run_p)),
                             "created_at": utcnow_iso(),
-                            "note": f"Refund item (RUN): {m_label} (reason={reason_code})",
+                            "note": f"Refund item (RUN): {m_label} (reason={_reason_label(reason_idx, reason_code)})",
                             "metadata_json": json.dumps({"refund_for": mr_id, "feature": "RUN", "spend_transaction_id": spend_tx}, separators=(",", ":")),
                         })
 
@@ -650,7 +670,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                             "type": "REFUND",
                             "amount_credits": str(int(rel_p)),
                             "created_at": utcnow_iso(),
-                            "note": f"Refund item (RELEASE_ARTIFACTS): {m_label} (reason={reason_code})",
+                            "note": f"Refund item (RELEASE_ARTIFACTS): {m_label} (reason={_reason_label(reason_idx, reason_code)})",
                             "metadata_json": json.dumps({"refund_for": mr_id, "feature": "RELEASE_ARTIFACTS", "spend_transaction_id": spend_tx}, separators=(",", ":")),
                         })
 
