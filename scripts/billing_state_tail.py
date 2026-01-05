@@ -111,11 +111,11 @@ def _format_compact_row(path: Path, row: dict[str, str], lookups: Lookups) -> st
     if mid:
         enriched["module"] = lookups.module_name_by_id.get(mid, mid)
 
-    if fname == \"transaction_items.csv\":
-        txid = (row.get(\"transaction_id\") or \"\").strip()
-        wo = lookups.workorder_by_transaction_id.get(txid, \"\") if txid else \"\"
+    if fname == "transaction_items.csv":
+        txid = (row.get("transaction_id") or "").strip()
+        wo = lookups.workorder_by_transaction_id.get(txid, "") if txid else ""
         if wo:
-            enriched[\"work_order_id\"] = wo
+            enriched["work_order_id"] = wo
 
     # Prefer showing note if present
     keys_preferred = []
