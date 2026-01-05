@@ -15,6 +15,7 @@ on:
 jobs:
   run:
     runs-on: ubuntu-latest
+    environment: Main
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -47,6 +48,8 @@ jobs:
 
       - name: Execute module
         if: steps.modcache.outputs.cache-hit != 'true'
+        env:
+          SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}
         run: |
           mkdir -p runtime/manual
           python -m platform.cli module-exec \

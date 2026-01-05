@@ -13,6 +13,7 @@ concurrency:
 jobs:
   orchestrator:
     runs-on: ubuntu-latest
+    environment: Main
     steps:
       - name: Capture run start timestamp
         id: runmeta
@@ -61,6 +62,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}
         run: |
           bash scripts/run_orchestrator.sh
 
@@ -74,6 +76,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}
         run: |
           if [ -f scripts/artifacts_release_guard.py ]; then
             python scripts/artifacts_release_guard.py
