@@ -1,4 +1,5 @@
 module_id: U2T
+name: demo_seed_outputs
 version: 0.1.0
 description: Placeholder module that generates a deterministic text artifact and a release manifest item.
 supports_downloadable_artifacts: true

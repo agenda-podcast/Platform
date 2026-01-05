@@ -1,4 +1,5 @@
 module_id: 9SD
+name: demo_derive_queries
 version: 0.1.0
 description: Placeholder transform module that depends on 001, reads its output, and emits derived notes.
 supports_downloadable_artifacts: true

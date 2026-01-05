@@ -84,6 +84,16 @@ def apply_admin_topup(repo_root: Path, billing: BillingState, req: TopupRequest)
     tx_id = _new_id("transaction_id", used_tx)
     ti_id = _new_id("transaction_item_id", used_ti)
 
+    # Human-readable note (kept in CSV); structured identifiers stay in metadata_json.
+    method_name = str(method.get("name") or "").strip()
+    method_label = method_name or topup_method_id
+    if req.note is not None and str(req.note).strip():
+        human_note = str(req.note).strip()
+    else:
+        human_note = f"Admin top-up via {method_label}"
+        if req.reference:
+            human_note += f" (reference={str(req.reference).strip()})"
+
     meta = {"topup_method_id": topup_method_id}
     if req.reference:
         meta["reference"] = str(req.reference)
@@ -96,7 +106,7 @@ def apply_admin_topup(repo_root: Path, billing: BillingState, req: TopupRequest)
         "amount_credits": str(int(req.amount_credits)),
         "created_at": utcnow_iso(),
         "reason_code": "",
-        "note": (req.note or ""),
+        "note": human_note,
         "metadata_json": json.dumps(meta, separators=(",", ":")),
     })
 
@@ -109,7 +119,7 @@ def apply_admin_topup(repo_root: Path, billing: BillingState, req: TopupRequest)
         "type": "TOPUP",
         "amount_credits": str(int(req.amount_credits)),
         "created_at": utcnow_iso(),
-        "note": (req.note or ""),
+        "note": human_note,
         "metadata_json": json.dumps(meta, separators=(",", ":")),
     })
 

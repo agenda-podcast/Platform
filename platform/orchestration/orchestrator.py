@@ -176,16 +176,49 @@ def _load_module_prices(repo_root: Path) -> Dict[str, Dict[str, str]]:
     return out
 
 
-def _price_for_module(prices: Dict[str, Dict[str, str]], module_id: str, purchase_release_artifacts: bool) -> int:
+def _price_parts_for_module(prices: Dict[str, Dict[str, str]], module_id: str, purchase_release_artifacts: bool) -> Tuple[int, int]:
+    """Return (run_price, release_artifacts_price) in credits."""
     row = prices.get(module_id)
     if not row:
-        return 0
+        return (0, 0)
     try:
         run_price = int(str(row.get("price_run_credits", "0")).strip() or "0")
         rel_price = int(str(row.get("price_save_to_release_credits", "0")).strip() or "0")
     except Exception:
-        return 0
-    return run_price + (rel_price if purchase_release_artifacts else 0)
+        return (0, 0)
+    return (run_price, rel_price if purchase_release_artifacts else 0)
+
+
+def _price_for_module(prices: Dict[str, Dict[str, str]], module_id: str, purchase_release_artifacts: bool) -> int:
+    run_p, rel_p = _price_parts_for_module(prices, module_id, purchase_release_artifacts)
+    return run_p + rel_p
+
+
+def _load_module_display_names(repo_root: Path) -> Dict[str, str]:
+    """Load optional human-readable module names from modules/*/module.yml (key: module_id)."""
+    out: Dict[str, str] = {}
+    modules_dir = repo_root / "modules"
+    if not modules_dir.exists():
+        return out
+    for d in modules_dir.iterdir():
+        if not d.is_dir():
+            continue
+        yml = d / "module.yml"
+        if not yml.exists():
+            continue
+        try:
+            data = yaml.safe_load(yml.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        mid = canon_module_id(data.get("module_id", "") or d.name)
+        if not mid:
+            continue
+        name = str(data.get("name", "") or "").strip()
+        if name:
+            out[mid] = name
+    return out
 
 
 def _toposort_modules(modules_requested: List[str], deps_index: List[Dict[str, str]]) -> List[str]:
@@ -249,11 +282,13 @@ def _new_id(id_type: str, used: Set[str]) -> str:
 
 
 def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path, enable_github_releases: bool = False) -> None:
+    run_since = utcnow_iso()
     reason_idx = _load_reason_index(repo_root)
     tenant_rel = _load_tenant_relationships(repo_root)
     deps_index = read_csv(repo_root / "maintenance-state" / "module_dependency_index.csv")
     prices = _load_module_prices(repo_root)
     artifacts_policy = _load_module_artifacts_policy(repo_root)
+    module_names = _load_module_display_names(repo_root)
 
     billing = BillingState(billing_state_dir)
     billing_state_dir.mkdir(parents=True, exist_ok=True)
@@ -298,6 +333,18 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
 
     workorders = _discover_workorders(repo_root)
 
+    # Run-scoped summary (useful in CI logs)
+    print("\nORCHESTRATOR RUN-SCOPED SUMMARY")
+    print(f"billing_state_dir: {billing_state_dir}")
+    print(f"runtime_dir:       {runtime_dir}")
+    print(f"tenants_dir:       {repo_root / 'tenants'}")
+    print(f"since:             {run_since}")
+    print("")
+    print(f"Discovered workorders: {len(workorders)}")
+    for it in workorders:
+        print(f" - {it.get('path')}")
+    print("")
+
 
     # Auto-enable GitHub Releases when artifacts were purchased.
     # This keeps offline/local runs stable while ensuring "download artifacts" works in GitHub Actions.
@@ -335,6 +382,8 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
         requested_modules = [str(m.get("module_id","")).strip() for m in (w.get("modules") or []) if m.get("module_id")]
         ordered = _toposort_modules(requested_modules, deps_index)
 
+        print(f"[orchestrator] work_order_id={work_order_id} tenant_id={tenant_id} modules={ordered}")
+
         module_cfgs: Dict[str, Dict[str, Any]] = {}
         est_total = 0
         for m in (w.get("modules") or []):
@@ -359,6 +408,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
 
         if available < est_total:
             rc = _reason_code(reason_idx, "GLOBAL", "", "not_enough_credits")
+            human_note = f"Insufficient credits: available={available}, required={est_total}"
             workorders_log.append({
                 "work_order_id": work_order_id,
                 "tenant_id": tenant_id,
@@ -366,13 +416,14 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 "created_at": created_at,
                 "started_at": started_at,
                 "ended_at": utcnow_iso(),
-                "note": "Insufficient credits",
-                "metadata_json": json.dumps({"workorder_path": item["path"]}, separators=(",", ":")),
+                "note": human_note,
+                "metadata_json": json.dumps({"workorder_path": item["path"], "reason_code": rc, "available": available, "required": est_total}, separators=(",", ":")),
             })
             continue
 
         # spend transaction (debit)
         spend_tx = _new_id("transaction_id", used_tx)
+        modules_human = ", ".join([f"{module_names.get(m, m)} ({m})" if module_names.get(m) else m for m in ordered])
         transactions.append({
             "transaction_id": spend_tx,
             "tenant_id": tenant_id,
@@ -381,16 +432,18 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             "amount_credits": str(-est_total),
             "created_at": utcnow_iso(),
             "reason_code": "",
-            "note": "",
-            "metadata_json": json.dumps({"workorder_path": item["path"]}, separators=(",", ":")),
+            "note": f"Work order spend: {modules_human}",
+            "metadata_json": json.dumps({"workorder_path": item["path"], "modules": ordered}, separators=(",", ":")),
         })
 
         # transaction items per module (for audit)
         per_module_cost: Dict[str, int] = {}
         for mid in ordered:
             cfg = module_cfgs.get(mid, {})
-            cost = _price_for_module(prices, mid, bool(cfg.get("purchase_release_artifacts", False)))
+            run_p, rel_p = _price_parts_for_module(prices, mid, bool(cfg.get("purchase_release_artifacts", False)))
+            cost = run_p + rel_p
             per_module_cost[mid] = cost
+            m_label = f"{module_names.get(mid, mid)} ({mid})" if module_names.get(mid) else mid
             transaction_items.append({
                 "transaction_item_id": _new_id("transaction_item_id", used_ti),
                 "transaction_id": spend_tx,
@@ -398,11 +451,26 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 "module_id": mid,
                 "feature": "RUN",
                 "type": "SPEND",
-                "amount_credits": str(-cost),
+                "amount_credits": str(-run_p),
                 "created_at": utcnow_iso(),
-                "note": "",
+                "note": f"Module run spend: {m_label}",
                 "metadata_json": json.dumps({"purchase_release_artifacts": bool(cfg.get("purchase_release_artifacts", False))}, separators=(",", ":")),
             })
+
+            # If saving artifacts to Releases was purchased, itemize it separately.
+            if rel_p > 0:
+                transaction_items.append({
+                    "transaction_item_id": _new_id("transaction_item_id", used_ti),
+                    "transaction_id": spend_tx,
+                    "tenant_id": tenant_id,
+                    "module_id": mid,
+                    "feature": "RELEASE_ARTIFACTS",
+                    "type": "SPEND",
+                    "amount_credits": str(-rel_p),
+                    "created_at": utcnow_iso(),
+                    "note": f"Artifacts-to-Release spend: {m_label}",
+                    "metadata_json": json.dumps({"purchase_release_artifacts": True}, separators=(",", ":")),
+                })
 
         # update balance
         trow["credits_available"] = str(available - est_total)
@@ -532,6 +600,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 refund_amt = per_module_cost.get(mid, 0)
                 if refund_amt > 0:
                     refund_tx = _new_id("transaction_id", used_tx)
+                    m_label = f"{module_names.get(mid, mid)} ({mid})" if module_names.get(mid) else mid
                     transactions.append({
                         "transaction_id": refund_tx,
                         "tenant_id": tenant_id,
@@ -540,7 +609,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                         "amount_credits": str(refund_amt),
                         "created_at": utcnow_iso(),
                         "reason_code": reason_code,
-                        "note": "",
+                        "note": f"Refund: {m_label} (reason={reason_code})",
                         "metadata_json": json.dumps({"module_id": mid, "refund_for": mr_id}, separators=(",", ":")),
                     })
                     transaction_items.append({
@@ -552,7 +621,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                         "type": "REFUND",
                         "amount_credits": str(refund_amt),
                         "created_at": utcnow_iso(),
-                        "note": "",
+                        "note": f"Refund item: {m_label} (reason={reason_code})",
                         "metadata_json": json.dumps({"refund_for": mr_id}, separators=(",", ":")),
                     })
                     # balance update
@@ -634,6 +703,8 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
         elif any_failed and not completed_modules:
             final_status = "FAILED"
 
+        print(f"[orchestrator] work_order_id={work_order_id} status={final_status} completed_modules={completed_modules}")
+
         workorders_log.append({
             "work_order_id": work_order_id,
             "tenant_id": tenant_id,
@@ -641,8 +712,8 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             "created_at": created_at,
             "started_at": started_at,
             "ended_at": ended_at,
-            "note": "",
-            "metadata_json": json.dumps({"requested_modules": ordered}, separators=(",", ":")),
+            "note": f"{final_status}: {modules_human}",
+            "metadata_json": json.dumps({"requested_modules": ordered, "completed_modules": completed_modules, "any_failed": any_failed}, separators=(",", ":")),
         })
 
     # Persist billing state tables

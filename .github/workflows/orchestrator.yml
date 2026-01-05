@@ -14,6 +14,11 @@ jobs:
   orchestrator:
     runs-on: ubuntu-latest
     steps:
+      - name: Capture run start timestamp
+        id: runmeta
+        run: |
+          echo "since=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -59,6 +64,12 @@ jobs:
         run: |
           bash scripts/run_orchestrator.sh
 
+      - name: Billing-state tail (new rows for this run)
+        run: |
+          if [ -f scripts/billing_state_tail.py ]; then
+            python scripts/billing_state_tail.py --billing-state-dir .billing-state --since "${{ steps.runmeta.outputs.since }}" --n 50
+          fi
+
       - name: "Guard: if artifacts were purchased, ensure they exist in Releases"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -74,16 +85,12 @@ jobs:
             python scripts/ci_verify.py --phase post --billing-state-dir .billing-state --runtime-dir runtime
           fi
 
-
-      - name: Billing-state tail (source of proof)
-        run: |
-          python scripts/billing_state_tail.py --billing-state-dir .billing-state --n 20
-
-      - name: Upload billing-state snapshot (artifact)
+      - name: Upload billing-state snapshot
         uses: actions/upload-artifact@v4
         with:
           name: billing-state-snapshot
           path: .billing-state
+
       # IMPORTANT:
       # Billing-state is the source of truth in GitHub Releases (billing-state-v1).
       # The orchestrator MUST NOT commit billing-state artifacts back into the repo.
