@@ -31,4 +31,4 @@ def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
     out_file = outputs_dir / "source_text.txt"
     out_file.write_text(text, encoding="utf-8")
 
-    return {"files": ["source_text.txt"]}
+    return {"status": "COMPLETED", "files": ["source_text.txt"]}

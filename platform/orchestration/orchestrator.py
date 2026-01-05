@@ -90,18 +90,95 @@ GITHUB_ASSETS_MAP_HEADERS = ["asset_id","github_asset_id","release_id","asset_na
 class ReasonIndex:
     by_key: Dict[Tuple[str, str, str], str]  # (scope, module_id, reason_slug) -> reason_code
     refundable: Dict[str, bool]              # reason_code -> refundable
-    label_by_code: Dict[str, str]            # reason_code -> human label
-
-
-def _humanize_slug(slug: str) -> str:
-    s = (slug or "").strip().replace("_", " ")
-    return s[:1].upper() + s[1:] if s else ""
 
 
 def _repo_yaml(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def _is_binding(v: Any) -> bool:
+    """Return True if a value is a workorder input binding object."""
+    return isinstance(v, dict) and bool(v.get("from_step"))
+
+
+def _collect_bind_deps(obj: Any) -> Set[str]:
+    """Recursively collect from_step dependencies from an inputs spec."""
+    deps: Set[str] = set()
+    if _is_binding(obj):
+        deps.add(str(obj.get("from_step")).strip())
+        return deps
+    if isinstance(obj, dict):
+        for vv in obj.values():
+            deps |= _collect_bind_deps(vv)
+    elif isinstance(obj, list):
+        for vv in obj:
+            deps |= _collect_bind_deps(vv)
+    return deps
+
+
+def _json_path_get(obj: Any, path: str) -> Any:
+    """Minimal JSONPath-like selector.
+
+    Supported:
+      - $.a.b
+      - $.a[0].b
+      - a.b (leading '$.' optional)
+    """
+    p = str(path or "").strip()
+    if not p:
+        return obj
+    if p.startswith("$"):
+        p = p[1:]
+    if p.startswith("."):
+        p = p[1:]
+    cur: Any = obj
+    if not p:
+        return cur
+    parts: List[str] = []
+    buf = ""
+    in_br = False
+    for ch in p:
+        if ch == "." and not in_br:
+            if buf:
+                parts.append(buf)
+                buf = ""
+            continue
+        if ch == "[":
+            in_br = True
+        elif ch == "]":
+            in_br = False
+        buf += ch
+    if buf:
+        parts.append(buf)
+
+    for part in parts:
+        # handle foo[0][1]... and/or foo
+        key = part
+        idxs: List[int] = []
+        if "[" in part:
+            key = part.split("[", 1)[0]
+            rest = part[len(key):]
+            # parse indices
+            tmp = ""
+            for ch in rest:
+                if ch.isdigit():
+                    tmp += ch
+                elif ch == "]":
+                    if tmp:
+                        idxs.append(int(tmp))
+                        tmp = ""
+            # ignore malformed
+        if key:
+            if not isinstance(cur, dict) or key not in cur:
+                raise KeyError(f"json_path missing key: {key}")
+            cur = cur[key]
+        for i in idxs:
+            if not isinstance(cur, list) or i >= len(cur):
+                raise IndexError(f"json_path index out of range: {i}")
+            cur = cur[i]
+    return cur
 
 
 def _discover_workorders(repo_root: Path) -> List[Dict[str, Any]]:
@@ -139,22 +216,16 @@ def _load_reason_index(repo_root: Path) -> ReasonIndex:
     policy = read_csv(ms / "reason_policy.csv")
 
     by_key: Dict[Tuple[str, str, str], str] = {}
-    label_by_code: Dict[str, str] = {}
     for r in catalog:
         scope = str(r.get("scope", "")).strip().upper()
         module_id = str(r.get("module_id", "")).strip()
         slug = str(r.get("reason_slug", "")).strip()
         code = str(r.get("reason_code", "")).strip()
-        desc = str(r.get("description", "")).strip()
         if not (scope and slug and code):
             continue
         if scope == "GLOBAL":
             module_id = ""
         by_key[(scope, module_id, slug)] = code
-
-        # Human labels for notes/logging. Prefer a short, readable slug; fallback to description.
-        if code not in label_by_code:
-            label_by_code[code] = _humanize_slug(slug) or desc or code
 
     refundable: Dict[str, bool] = {}
     for r in policy:
@@ -163,14 +234,7 @@ def _load_reason_index(repo_root: Path) -> ReasonIndex:
             continue
         refundable[code] = str(r.get("refundable", "")).strip().lower() == "true"
 
-    return ReasonIndex(by_key=by_key, refundable=refundable, label_by_code=label_by_code)
-
-
-def _reason_label(idx: ReasonIndex, reason_code: str) -> str:
-    rc = (reason_code or "").strip()
-    if not rc:
-        return ""
-    return idx.label_by_code.get(rc, rc)
+    return ReasonIndex(by_key=by_key, refundable=refundable)
 
 
 def _reason_code(idx: ReasonIndex, scope: str, module_id: str, reason_slug: str) -> str:
@@ -274,6 +338,178 @@ def _toposort_modules(modules_requested: List[str], deps_index: List[Dict[str, s
     return ordered
 
 
+def _toposort_nodes(nodes: List[str], edges: Dict[str, Set[str]]) -> List[str]:
+    """Topologically sort nodes based on dependency edges.
+
+    Args:
+        nodes: list of node ids to sort (order is preserved where possible)
+        edges: mapping node -> set(dependency nodes)
+
+    Returns:
+        ordered list where dependencies appear before dependents
+    """
+    ordered: List[str] = []
+    temp: Set[str] = set()
+    perm: Set[str] = set()
+
+    def visit(n: str) -> None:
+        if n in perm:
+            return
+        if n in temp:
+            raise ValueError(f"Cycle in dependencies at {n}")
+        temp.add(n)
+        for d in sorted(edges.get(n, set())):
+            visit(d)
+        temp.remove(n)
+        perm.add(n)
+        ordered.append(n)
+
+    for n in nodes:
+        visit(n)
+    return ordered
+
+
+def _load_binding_value(step_outputs_dir: Path, binding: Dict[str, Any]) -> Any:
+    """Load and transform a value from an upstream step output file."""
+    rel_file = str(binding.get("from_file") or binding.get("file") or "").strip()
+    if not rel_file:
+        raise FileNotFoundError("binding.from_file is required")
+    selector = str(binding.get("selector") or "").strip().lower() or "text"
+    take = binding.get("take")
+    take_n: Optional[int] = None
+    try:
+        if take is not None:
+            take_n = int(take)
+    except Exception:
+        take_n = None
+
+    fp = step_outputs_dir / rel_file
+    if not fp.exists() or not fp.is_file():
+        raise FileNotFoundError(str(fp))
+
+    if selector == "text":
+        return fp.read_text(encoding="utf-8", errors="replace")
+
+    if selector == "lines":
+        lines = [ln.strip() for ln in fp.read_text(encoding="utf-8", errors="replace").splitlines()]
+        lines = [ln for ln in lines if ln]
+        if take_n is not None:
+            lines = lines[: max(0, take_n)]
+        return lines
+
+    if selector == "json":
+        data = json.loads(fp.read_text(encoding="utf-8", errors="replace") or "null")
+        jp = str(binding.get("json_path") or "").strip()
+        return _json_path_get(data, jp) if jp else data
+
+    if selector == "jsonl_first":
+        first = None
+        for ln in fp.read_text(encoding="utf-8", errors="replace").splitlines():
+            if ln.strip():
+                first = ln
+                break
+        if first is None:
+            raise ValueError("jsonl_first: file is empty")
+        data = json.loads(first)
+        jp = str(binding.get("json_path") or "").strip()
+        return _json_path_get(data, jp) if jp else data
+
+    if selector == "jsonl":
+        out: List[Any] = []
+        for ln in fp.read_text(encoding="utf-8", errors="replace").splitlines():
+            s = ln.strip()
+            if not s:
+                continue
+            out.append(json.loads(s))
+            if take_n is not None and len(out) >= take_n:
+                break
+        return out
+
+    raise ValueError(f"Unsupported binding selector: {selector}")
+
+
+def _extract_step_edges(steps: List[Dict[str, Any]]) -> Dict[str, Set[str]]:
+    """Infer step dependencies from input bindings (from_step)."""
+    edges: Dict[str, Set[str]] = {}
+    known = {str(s.get("step_id") or "").strip() for s in steps if str(s.get("step_id") or "").strip()}
+    for s in steps:
+        sid = str(s.get("step_id") or "").strip()
+        if not sid:
+            continue
+        deps = {d for d in _collect_bind_deps(s.get("inputs") or {}) if d in known}
+        # Optional explicit dependencies
+        explicit = s.get("depends_on") or s.get("needs")
+        if isinstance(explicit, list):
+            for x in explicit:
+                xs = str(x).strip()
+                if xs and xs in known:
+                    deps.add(xs)
+        edges[sid] = deps
+    return edges
+
+
+def _resolve_inputs(inputs_spec: Any, step_outputs: Dict[str, Path]) -> Any:
+    """Resolve bindings within an inputs spec.
+
+    Rules:
+      - any dict with {from_step, from_file, selector, ...} is treated as a binding
+      - dicts/lists are resolved recursively
+    """
+    if _is_binding(inputs_spec):
+        from_step = str(inputs_spec.get("from_step") or "").strip()
+        if not from_step:
+            raise ValueError("binding.from_step is required")
+        if from_step not in step_outputs:
+            raise FileNotFoundError(f"Upstream step outputs not found: {from_step}")
+        return _load_binding_value(step_outputs[from_step], inputs_spec)
+    if isinstance(inputs_spec, dict):
+        return {k: _resolve_inputs(v, step_outputs) for k, v in inputs_spec.items()}
+    if isinstance(inputs_spec, list):
+        return [_resolve_inputs(v, step_outputs) for v in inputs_spec]
+    return inputs_spec
+
+
+def _build_execution_plan(workorder: Dict[str, Any], deps_index: List[Dict[str, str]]) -> Tuple[str, List[Dict[str, Any]]]:
+    """Normalize a workorder into an ordered execution plan.
+
+    Returns:
+      - plan_type: "steps" or "modules"
+      - plan: list of dicts with keys: step_id, module_id, cfg
+    """
+    steps = workorder.get("steps")
+    if isinstance(steps, list) and steps:
+        plan_steps: List[Dict[str, Any]] = []
+        for s in steps:
+            if not isinstance(s, dict):
+                continue
+            sid = str(s.get("step_id") or "").strip()
+            mid = canon_module_id(s.get("module_id") or "")
+            if not sid or not mid:
+                continue
+            plan_steps.append({"step_id": sid, "module_id": mid, "cfg": s})
+        edges = _extract_step_edges([p["cfg"] for p in plan_steps])
+        # edges keys refer to step_id; ensure node list order is stable as in YAML
+        nodes = [p["step_id"] for p in plan_steps]
+        ordered_sids = _toposort_nodes(nodes, edges)
+        by_id = {p["step_id"]: p for p in plan_steps}
+        return "steps", [by_id[sid] for sid in ordered_sids if sid in by_id]
+
+    # fallback: classic modules list (dependency-index driven)
+    requested_modules = [str(m.get("module_id","")).strip() for m in (workorder.get("modules") or []) if isinstance(m, dict) and m.get("module_id")]
+    ordered = _toposort_modules(requested_modules, deps_index)
+    module_cfgs: Dict[str, Dict[str, Any]] = {}
+    for m in (workorder.get("modules") or []):
+        if not isinstance(m, dict):
+            continue
+        mid = canon_module_id(m.get("module_id", ""))
+        if mid:
+            module_cfgs[mid] = m
+    plan: List[Dict[str, Any]] = []
+    for mid in ordered:
+        plan.append({"step_id": mid, "module_id": mid, "cfg": module_cfgs.get(mid, {})})
+    return "modules", plan
+
+
 def _load_tenant_relationships(repo_root: Path) -> Set[Tuple[str, str]]:
     rows = read_csv(repo_root / "maintenance-state" / "tenant_relationships.csv")
     out=set()
@@ -375,11 +611,13 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 w = dict(it.get("workorder") or {})
                 if not bool(w.get("enabled", True)):
                     continue
-                for m in (w.get("modules") or []):
-                    mid = canon_module_id(m.get("module_id", ""))
+                _ptype, _plan = _build_execution_plan(w, deps_index)
+                for step in _plan:
+                    mid = canon_module_id(step.get("module_id", ""))
+                    cfg = dict(step.get("cfg") or {})
                     if not mid:
                         continue
-                    if bool(m.get("purchase_release_artifacts", False)) and artifacts_policy.get(mid, True):
+                    if bool(cfg.get("purchase_release_artifacts", False)) and artifacts_policy.get(mid, True):
                         wants_releases = True
                         break
                 if wants_releases:
@@ -397,21 +635,14 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
         created_at = str((w.get("metadata") or {}).get("created_at") or utcnow_iso())
         started_at = utcnow_iso()
 
-        # pricing
-        requested_modules = [str(m.get("module_id","")).strip() for m in (w.get("modules") or []) if m.get("module_id")]
-        ordered = _toposort_modules(requested_modules, deps_index)
+        # pricing + execution plan
+        plan_type, plan = _build_execution_plan(w, deps_index)
+        print(f"[orchestrator] work_order_id={work_order_id} tenant_id={tenant_id} plan_type={plan_type} steps={[p.get('step_id') for p in plan]}")
 
-        print(f"[orchestrator] work_order_id={work_order_id} tenant_id={tenant_id} modules={ordered}")
-
-        module_cfgs: Dict[str, Dict[str, Any]] = {}
         est_total = 0
-        for m in (w.get("modules") or []):
-            mid = canon_module_id(m.get("module_id",""))
-            if not mid:
-                continue
-            module_cfgs[mid] = m
-        for mid in ordered:
-            cfg = module_cfgs.get(mid, {})
+        for step in plan:
+            mid = canon_module_id(step.get("module_id", ""))
+            cfg = dict(step.get("cfg") or {})
             est_total += _price_for_module(prices, mid, bool(cfg.get("purchase_release_artifacts", False)))
 
         # current balance
@@ -442,8 +673,13 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
 
         # spend transaction (debit)
         spend_tx = _new_id("transaction_id", used_tx)
-        # Human-readable module list for notes. Prefer module name; never append raw IDs when a name exists.
-        modules_human = ", ".join([module_names.get(m) or m for m in ordered])
+
+        def _label(mid: str, sid: str) -> str:
+            base = f"{module_names.get(mid, mid)} ({mid})" if module_names.get(mid) else mid
+            # Only show step suffix when it differs from module_id (or when steps mode is used)
+            return f"{base} [{sid}]" if sid and sid != mid else base
+
+        plan_human = ", ".join([_label(str(p.get("module_id")), str(p.get("step_id"))) for p in plan])
         transactions.append({
             "transaction_id": spend_tx,
             "tenant_id": tenant_id,
@@ -452,21 +688,22 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             "amount_credits": str(-est_total),
             "created_at": utcnow_iso(),
             "reason_code": "",
-            "note": f"Work order spend: {modules_human}",
-            "metadata_json": json.dumps({"workorder_path": item["path"], "modules": ordered}, separators=(",", ":")),
+            "note": f"Work order spend: {plan_human}",
+            "metadata_json": json.dumps({"workorder_path": item["path"], "plan_type": plan_type, "steps": [p.get("step_id") for p in plan]}, separators=(",", ":")),
         })
 
-        # transaction items per module (for audit)
-        # Store both total cost and itemized parts so refunds can be itemized too.
-        per_module_cost: Dict[str, int] = {}
-        per_module_parts: Dict[str, tuple[int, int]] = {}
-        for mid in ordered:
-            cfg = module_cfgs.get(mid, {})
+        # transaction items per step (audit + refunds)
+        per_step_cost: Dict[str, int] = {}
+        per_step_parts: Dict[str, tuple[int, int]] = {}
+        for step in plan:
+            sid = str(step.get("step_id") or "").strip()
+            mid = canon_module_id(step.get("module_id") or "")
+            cfg = dict(step.get("cfg") or {})
             run_p, rel_p = _price_parts_for_module(prices, mid, bool(cfg.get("purchase_release_artifacts", False)))
             cost = run_p + rel_p
-            per_module_cost[mid] = cost
-            per_module_parts[mid] = (run_p, rel_p)
-            m_label = module_names.get(mid) or mid
+            per_step_cost[sid] = cost
+            per_step_parts[sid] = (run_p, rel_p)
+            m_label = _label(mid, sid)
             transaction_items.append({
                 "transaction_item_id": _new_id("transaction_item_id", used_ti),
                 "transaction_id": spend_tx,
@@ -477,10 +714,9 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 "amount_credits": str(-run_p),
                 "created_at": utcnow_iso(),
                 "note": f"Module run spend: {m_label}",
-                "metadata_json": json.dumps({"purchase_release_artifacts": bool(cfg.get("purchase_release_artifacts", False))}, separators=(",", ":")),
+                "metadata_json": json.dumps({"step_id": sid, "purchase_release_artifacts": bool(cfg.get("purchase_release_artifacts", False))}, separators=(",", ":")),
             })
 
-            # If saving artifacts to Releases was purchased, itemize it separately.
             if rel_p > 0:
                 transaction_items.append({
                     "transaction_item_id": _new_id("transaction_item_id", used_ti),
@@ -492,7 +728,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                     "amount_credits": str(-rel_p),
                     "created_at": utcnow_iso(),
                     "note": f"Artifacts-to-Release spend: {m_label}",
-                    "metadata_json": json.dumps({"purchase_release_artifacts": True}, separators=(",", ":")),
+                    "metadata_json": json.dumps({"step_id": sid, "purchase_release_artifacts": True}, separators=(",", ":")),
                 })
 
         # update balance
@@ -501,20 +737,43 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
 
         mode = str(w.get("mode","")).strip().upper() or "PARTIAL_ALLOWED"
         any_failed = False
+        completed_steps: List[str] = []
         completed_modules: List[str] = []
+        step_outputs: Dict[str, Path] = {}
 
-        # Execute modules
-        for mid in ordered:
-            cfg = module_cfgs.get(mid, {})
+        # Execute steps (modules-only workorders and steps-based chaining workorders)
+        for step in plan:
+            sid = str(step.get("step_id") or "").strip()
+            mid = canon_module_id(step.get("module_id") or "")
+            cfg = dict(step.get("cfg") or {})
             mr_id = _new_id("module_run_id", used_mr)
             m_started = utcnow_iso()
 
-            # Module runners expect tenant parameters at the top level (per modules/*/tenant_params.schema.json).
-            # Keep platform metadata out of the params payload to avoid breaking schema expectations.
-            params = cfg.get("inputs") or {}
+            # Resolve chained inputs (supports bindings: {from_step, from_file, selector, json_path, take}).
+            inputs_spec = cfg.get("inputs") or {}
+            try:
+                resolved_inputs = _resolve_inputs(inputs_spec, step_outputs)
+                resolve_error = ""
+            except Exception as e:
+                resolved_inputs = {}
+                resolve_error = str(e)
+
+            params: Dict[str, Any] = {
+                "tenant_id": tenant_id,
+                "work_order_id": work_order_id,
+                "module_run_id": mr_id,
+                "inputs": resolved_inputs,
+                "reuse_output_type": str(cfg.get("reuse_output_type","")).strip(),
+                "_platform": {"plan_type": plan_type, "step_id": sid, "module_id": mid},
+            }
+            # Backward compatibility: also expose resolved inputs at top-level (without overriding reserved keys).
+            if isinstance(resolved_inputs, dict):
+                for k, v in resolved_inputs.items():
+                    if k not in params and k not in ("inputs", "_platform"):
+                        params[k] = v
 
             module_path = repo_root / "modules" / mid
-            out_dir = runtime_dir / "runs" / tenant_id / work_order_id / mid / mr_id
+            out_dir = runtime_dir / "runs" / tenant_id / work_order_id / sid / mr_id
             ensure_dir(out_dir)
 
             # ------------------------------------------------------------------
@@ -522,7 +781,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             # when reuse_output_type == "cache".
             # ------------------------------------------------------------------
             reuse_type = str(cfg.get("reuse_output_type", "")).strip().lower()
-            key_inputs = cfg.get("inputs") or {}
+            key_inputs = resolved_inputs if isinstance(resolved_inputs, dict) else {}
             cache_key = derive_cache_key(module_id=mid, tenant_id=tenant_id, key_inputs=key_inputs)
             cache_dir = cache_root / _cache_dirname(cache_key)
 
@@ -540,7 +799,29 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 except Exception:
                     cache_valid = False
 
-            if reuse_type == "cache" and _dir_has_files(cache_dir) and (cache_row is None or cache_valid):
+            if resolve_error:
+                # Chaining input resolution failed; do not execute the module.
+                report = out_dir / "binding_error.json"
+                report.write_text(
+                    json.dumps(
+                        {
+                            "step_id": sid,
+                            "module_id": mid,
+                            "error": resolve_error,
+                            "inputs_spec": cfg.get("inputs") or {},
+                        },
+                        indent=2,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                result = {
+                    "status": "FAILED",
+                    "reason_slug": "missing_required_input",
+                    "report_path": "binding_error.json",
+                    "output_ref": "",
+                }
+            elif reuse_type == "cache" and _dir_has_files(cache_dir) and (cache_row is None or cache_valid):
                 _copy_tree(cache_dir, out_dir)
                 result = {
                     "status": "COMPLETED",
@@ -552,17 +833,23 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             else:
                 result = execute_module_runner(module_path=module_path, params=params, outputs_dir=out_dir)
 
-            status = str(result.get("status","")).strip().upper() or "FAILED"
-            reason_slug = str(result.get("reason_slug","")).strip() or str(result.get("reason_key","")).strip()
+            raw_status = str(result.get("status", "") or "").strip()
+            if raw_status:
+                status = raw_status.upper()
+            else:
+                files = result.get("files")
+                status = "COMPLETED" if isinstance(files, list) else "FAILED"
+
+            reason_slug = str(result.get("reason_slug", "") or "").strip() or str(result.get("reason_key", "") or "").strip()
             if status == "COMPLETED":
+                completed_steps.append(sid)
                 completed_modules.append(mid)
                 reason_code = ""
             else:
                 any_failed = True
-                if reason_slug:
-                    reason_code = _reason_code(reason_idx, "MODULE", mid, reason_slug) or _reason_code(reason_idx, "GLOBAL", "", "module_failed")
-                else:
-                    reason_code = _reason_code(reason_idx, "GLOBAL", "", "module_failed")
+                if not reason_slug:
+                    reason_slug = "module_failed"
+                reason_code = _reason_code(reason_idx, "MODULE", mid, reason_slug) or _reason_code(reason_idx, "GLOBAL", "", reason_slug) or _reason_code(reason_idx, "GLOBAL", "", "module_failed")
 
             # output ref / report path: optional
             report_path = str(result.get("report_path","") or "")
@@ -582,8 +869,12 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 "reason_code": reason_code,
                 "report_path": report_path,
                 "output_ref": output_ref,
-                "metadata_json": json.dumps({"outputs_dir": str(out_dir), "cache_key": cache_key, "cache_hit": cache_hit}, separators=(",", ":")),
+                "metadata_json": json.dumps({"plan_type": plan_type, "step_id": sid, "outputs_dir": str(out_dir), "cache_key": cache_key, "cache_hit": cache_hit}, separators=(",", ":")),
             })
+
+            # Make outputs discoverable for downstream bindings (even if the step failed).
+            if sid:
+                step_outputs[sid] = out_dir
 
             # Persist successful outputs into the local module cache.
             # Cache is only reused when reuse_output_type == "cache".
@@ -618,7 +909,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             if status != "COMPLETED" and reason_code and reason_idx.refundable.get(reason_code, False):
                 # Prefer the itemized parts captured at spend time. If missing for any reason,
                 # recompute from pricing so refunds are always recorded and itemized.
-                parts = per_module_parts.get(mid)
+                parts = per_step_parts.get(sid)
                 if parts is None:
                     run_p, rel_p = _price_parts_for_module(prices, mid, bool(cfg.get("purchase_release_artifacts", False)))
                 else:
@@ -626,7 +917,11 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 refund_amt = int(run_p) + int(rel_p)
                 if refund_amt > 0:
                     refund_tx = _new_id("transaction_id", used_tx)
-                    m_label = module_names.get(mid) or mid
+                    m_label = f"{module_names.get(mid, mid)} ({mid})" if module_names.get(mid) else mid
+                    if sid and sid != mid:
+                        m_label = f"{m_label} [{sid}]"
+                    if sid != mid:
+                        m_label = f"{m_label} [{sid}]"
                     transactions.append({
                         "transaction_id": refund_tx,
                         "tenant_id": tenant_id,
@@ -635,8 +930,8 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                         "amount_credits": str(refund_amt),
                         "created_at": utcnow_iso(),
                         "reason_code": reason_code,
-                        "note": f"Refund: {m_label} (reason={_reason_label(reason_idx, reason_code)})",
-                        "metadata_json": json.dumps({"module_id": mid, "refund_for": mr_id, "spend_transaction_id": spend_tx}, separators=(",", ":")),
+                        "note": f"Refund: {m_label} (reason={reason_code})",
+                        "metadata_json": json.dumps({"step_id": sid, "module_id": mid, "refund_for": mr_id, "spend_transaction_id": spend_tx}, separators=(",", ":")),
                     })
 
                     # RUN refund item
@@ -650,8 +945,8 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                             "type": "REFUND",
                             "amount_credits": str(int(run_p)),
                             "created_at": utcnow_iso(),
-                            "note": f"Refund item (RUN): {m_label} (reason={_reason_label(reason_idx, reason_code)})",
-                            "metadata_json": json.dumps({"refund_for": mr_id, "feature": "RUN", "spend_transaction_id": spend_tx}, separators=(",", ":")),
+                            "note": f"Refund item (RUN): {m_label} (reason={reason_code})",
+                            "metadata_json": json.dumps({"step_id": sid, "module_id": mid, "refund_for": mr_id, "feature": "RUN", "spend_transaction_id": spend_tx}, separators=(",", ":")),
                         })
 
                     # RELEASE_ARTIFACTS refund item (only if it was purchased as part of pricing)
@@ -665,8 +960,8 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                             "type": "REFUND",
                             "amount_credits": str(int(rel_p)),
                             "created_at": utcnow_iso(),
-                            "note": f"Refund item (RELEASE_ARTIFACTS): {m_label} (reason={_reason_label(reason_idx, reason_code)})",
-                            "metadata_json": json.dumps({"refund_for": mr_id, "feature": "RELEASE_ARTIFACTS", "spend_transaction_id": spend_tx}, separators=(",", ":")),
+                            "note": f"Refund item (RELEASE_ARTIFACTS): {m_label} (reason={reason_code})",
+                            "metadata_json": json.dumps({"step_id": sid, "module_id": mid, "refund_for": mr_id, "feature": "RELEASE_ARTIFACTS", "spend_transaction_id": spend_tx}, separators=(",", ":")),
                         })
 
                     # balance update
@@ -679,7 +974,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 release_id = _new_id("github_release_asset_id", used_rel)
                 tag = f"r-{release_id}"
                 title = f"Artifacts {release_id}"
-                ensure_release(tag=tag, title=title, notes=f"tenant_id={tenant_id} work_order_id={work_order_id} module_id={mid}")
+                ensure_release(tag=tag, title=title, notes=f"tenant_id={tenant_id} work_order_id={work_order_id} module_id={mid} step_id={sid}")
 
                 staging = runtime_dir / "releases" / release_id
                 ensure_dir(staging)
@@ -689,11 +984,14 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                     if not fp.is_file():
                         continue
                     rel = fp.relative_to(out_dir).as_posix()
-                    dst = staging / rel
+                    rel_name = rel
+                    if sid and sid != mid:
+                        rel_name = f"{sid}/{rel}"
+                    dst = staging / rel_name
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     dst.write_bytes(fp.read_bytes())
                     items.append({
-                        "name": rel,
+                        "name": rel_name,
                         "sha256": sha256_file(dst),
                         "size_bytes": str(dst.stat().st_size),
                     })
@@ -703,6 +1001,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                     "tenant_id": tenant_id,
                     "work_order_id": work_order_id,
                     "module_id": mid,
+                    "step_id": sid,
                     "module_run_id": mr_id,
                     "created_at": utcnow_iso(),
                     "items": items,
@@ -743,12 +1042,15 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
 
         ended_at = utcnow_iso()
         final_status = "COMPLETED"
-        if any_failed and completed_modules:
+        if any_failed and completed_steps:
             final_status = "PARTIAL"
-        elif any_failed and not completed_modules:
+        elif any_failed and not completed_steps:
             final_status = "FAILED"
 
-        print(f"[orchestrator] work_order_id={work_order_id} status={final_status} completed_modules={completed_modules}")
+        print(
+            f"[orchestrator] work_order_id={work_order_id} status={final_status} plan_type={plan_type} "
+            f"completed_steps={completed_steps}"
+        )
 
         workorders_log.append({
             "work_order_id": work_order_id,
@@ -757,8 +1059,18 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             "created_at": created_at,
             "started_at": started_at,
             "ended_at": ended_at,
-            "note": f"{final_status}: {modules_human}",
-            "metadata_json": json.dumps({"requested_modules": ordered, "completed_modules": completed_modules, "any_failed": any_failed}, separators=(",", ":")),
+            "note": f"{final_status}: {plan_human}",
+            "metadata_json": json.dumps(
+                {
+                    "plan_type": plan_type,
+                    "requested_steps": [p.get("step_id") for p in plan],
+                    "requested_modules": [p.get("module_id") for p in plan],
+                    "completed_steps": completed_steps,
+                    "completed_modules": completed_modules,
+                    "any_failed": any_failed,
+                },
+                separators=(",", ":"),
+            ),
         })
 
     # Persist billing state tables

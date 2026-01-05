@@ -75,3 +75,10 @@ jobs:
     permissions:
       actions: write
       contents: write
+
+  e2e_verify:
+    name: E2E Verify (called)
+    needs: maintenance
+    uses: ./.github/workflows/e2e-verify.yml
+    permissions:
+      contents: read

@@ -165,12 +165,67 @@ def _validate_tenants_and_workorders(repo_root: Path) -> None:
             if wp.stem != wid:
                 _fail(f"Workorder filename mismatch: {wp.name} declared work_order_id={wid!r}")
 
+            # Workorder can be defined either as a simple module list, or as a steps-based
+            # chaining plan (IFTTT-like wiring).
+            steps = wo.get("steps")
+            if steps is not None:
+                if not isinstance(steps, list):
+                    _fail(f"Invalid workorder steps list in {wp}")
+
+                step_ids: List[str] = []
+                step_id_set = set()
+                from_refs: List[str] = []
+
+                def _walk_refs(v: Any) -> None:
+                    if isinstance(v, dict):
+                        if "from_step" in v:
+                            fr = str(v.get("from_step", "")).strip()
+                            if fr:
+                                from_refs.append(fr)
+                        for vv in v.values():
+                            _walk_refs(vv)
+                    elif isinstance(v, list):
+                        for vv in v:
+                            _walk_refs(vv)
+
+                for s in steps:
+                    if not isinstance(s, dict):
+                        _fail(f"Invalid step entry in {wp}: expected mapping")
+                    sid = str(s.get("step_id", "")).strip()
+                    if not sid or not re.match(r"^[0-9A-Za-z][0-9A-Za-z_-]{0,31}$", sid):
+                        _fail(f"Invalid step_id {sid!r} in {wp}")
+                    if sid in step_id_set:
+                        _fail(f"Duplicate step_id {sid!r} in {wp}")
+                    step_id_set.add(sid)
+                    step_ids.append(sid)
+
+                    mid = str(s.get("module_id", "")).strip()
+                    validate_id("module_id", mid, "workorder.step.module_id")
+
+                    inputs = s.get("inputs") or {}
+                    if not isinstance(inputs, dict):
+                        _fail(f"Invalid step.inputs in {wp}: step_id={sid!r}")
+                    _walk_refs(inputs)
+
+                for fr in from_refs:
+                    if fr not in step_id_set:
+                        _fail(f"Invalid binding from_step {fr!r} in {wp}: not in steps")
+
             mods = wo.get("modules") or []
-            if not isinstance(mods, list):
-                _fail(f"Invalid workorder modules list in {wp}")
-            for m in mods:
-                mid = str((m or {}).get("module_id","")).strip()
-                validate_id("module_id", mid, "workorder.module_id")
+            if steps is None:
+                if not isinstance(mods, list):
+                    _fail(f"Invalid workorder modules list in {wp}")
+                for m in mods:
+                    mid = str((m or {}).get("module_id", "")).strip()
+                    validate_id("module_id", mid, "workorder.module_id")
+            else:
+                # If both are present, we still validate the module ids (but the runner will use steps).
+                if not isinstance(mods, list):
+                    _fail(f"Invalid workorder modules list in {wp}")
+                for m in mods:
+                    mid = str((m or {}).get("module_id", "")).strip()
+                    if mid:
+                        validate_id("module_id", mid, "workorder.module_id")
 
     _ok("Tenants + workorders: IDs + filenames OK")
 

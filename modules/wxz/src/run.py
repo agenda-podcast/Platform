@@ -74,10 +74,15 @@ def run(params: Dict[str, Any], outputs_dir: str) -> Dict[str, Any]:
     dedupe_enabled = bool(dedupe_cfg.get("enabled", True))
     strip_tracking = bool(dedupe_cfg.get("strip_tracking_params", True))
 
-    # Secrets
+    # Optional offline/mock mode (used for deterministic CI/E2E runs).
+    # If enabled, the module will not call Google and will instead emit a small
+    # deterministic result set.
+    mock_mode = bool(params.get("mock_mode")) or (os.getenv("PLATFORM_OFFLINE") or "").strip() == "1"
+
+    # Secrets (required unless mock_mode)
     api_key = os.getenv(f"{MODULE_ID}_GOOGLE_SEARCH_API_KEY", "").strip()
     engine_id = os.getenv(f"{MODULE_ID}_GOOGLE_SEARCH_ENGINE_ID", "").strip()
-    if not api_key or not engine_id:
+    if (not api_key or not engine_id) and not mock_mode:
         return _error(
             out_dir,
             reason_slug="missing_secret",
@@ -97,6 +102,54 @@ def run(params: Dict[str, Any], outputs_dir: str) -> Dict[str, Any]:
     per_query_stats: List[Dict[str, Any]] = []
 
     try:
+        if mock_mode:
+            # Emit deterministic mock results.
+            with results_path.open("w", encoding="utf-8") as out_f:
+                for qi, q in enumerate(queries, start=1):
+                    for i in range(1, min(max_items_per_query, 3) + 1):
+                        norm = {
+                            "module_id": MODULE_ID,
+                            "query_index": qi,
+                            "query": q,
+                            "title": f"{q} — mock result {i}",
+                            "snippet": f"Mock snippet for '{q}' (item {i}).",
+                            "url": f"https://example.com/{qi}/{i}?q={qi}",
+                            "canonical_url": f"https://example.com/{qi}/{i}",
+                            "display_link": "example.com",
+                            "formatted_url": f"https://example.com/{qi}/{i}",
+                            "mime": None,
+                            "cache_id": None,
+                            "search_information": {"totalResults": "3"},
+                            "raw_item": {"mock": True},
+                        }
+                        out_f.write(json.dumps(norm, ensure_ascii=False) + "\n")
+                        total_written += 1
+                    per_query_stats.append(
+                        {
+                            "query_index": qi,
+                            "query": q,
+                            "requested": max_items_per_query,
+                            "written": min(max_items_per_query, 3),
+                            "fetched_items_total": min(max_items_per_query, 3),
+                            "pages_requested": 1,
+                            "last_error": None,
+                        }
+                    )
+
+            report = {
+                "module_id": MODULE_ID,
+                "mock_mode": True,
+                "queries_count": len(queries),
+                "max_items_per_query": max_items_per_query,
+                "safe": safe,
+                "filter_duplicates": filter_duplicates,
+                "dedupe": {"enabled": dedupe_enabled, "strip_tracking_params": strip_tracking},
+                "total_written": total_written,
+                "per_query": per_query_stats,
+            }
+            report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return {"status": "COMPLETED", "files": ["results.jsonl", "report.json"], "metadata": {"total_written": total_written, "mock_mode": True}}
+
         with results_path.open("w", encoding="utf-8") as out_f:
             for qi, q in enumerate(queries, start=1):
                 written_for_q = 0

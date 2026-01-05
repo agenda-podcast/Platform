@@ -1,56 +1,59 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
+
+
+def _norm_topic(s: str) -> str:
+    return " ".join((s or "").strip().split())
 
 
 def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
-    """Placeholder downstream module.
+    """Derive a small list of search queries from an input topic.
 
-    Reads module U2T output from the same work order runtime folder and emits
-    a deterministic derived artifact.
+    This is a demo module used to validate workorder chaining.
+    It writes `derived_queries.txt` into the module's output directory.
     """
 
-    summary_style = str(params.get("summary_style") or "bullets").strip().lower()
-    if summary_style not in ("bullets", "paragraph"):
-        summary_style = "bullets"
+    topic = _norm_topic(str((params.get("topic") or params.get("inputs", {}).get("topic") or "")))
+    if not topic:
+        return {"status": "FAILED", "reason_slug": "missing_required_input", "message": "Missing topic"}
 
-    # outputs_dir = .../<tenant>/<work_order>/module-002
-    workorder_dir = outputs_dir.parent
-    upstream_file = workorder_dir / "module-001" / "source_text.txt"
+    language = str((params.get("language") or params.get("inputs", {}).get("language") or "en")).strip() or "en"
+    freshness_days = str((params.get("freshness_days") or params.get("inputs", {}).get("freshness_days") or "7")).strip() or "7"
+    style = str((params.get("summary_style") or params.get("inputs", {}).get("summary_style") or "" )).strip()
 
-    out_file = outputs_dir / "derived_notes.txt"
+    # Deterministic query generation: keep it simple and predictable.
+    base = topic
+    queries: List[str] = [
+        base,
+        f"{base} latest",
+        f"{base} news",
+        f"{base} analysis",
+    ]
+    # Optional light enrichment from metadata.
+    if language.lower() not in ("", "en"):
+        queries.append(f"{base} {language}")
+    if freshness_days.isdigit():
+        queries.append(f"{base} past {freshness_days} days")
+    if style:
+        queries.append(f"{base} {style}")
 
-    if not upstream_file.exists():
-        out_file.write_text(
-            "UPSTREAM_MISSING: module-001/source_text.txt was not found.\n",
-            encoding="utf-8",
-        )
-        return {"files": ["derived_notes.txt"]}
+    # Deduplicate while preserving order.
+    seen = set()
+    deduped: List[str] = []
+    for q in queries:
+        qn = _norm_topic(q)
+        if not qn or qn in seen:
+            continue
+        seen.add(qn)
+        deduped.append(qn)
 
-    upstream_text = upstream_file.read_text(encoding="utf-8", errors="replace").strip()
+    out_path = outputs_dir / "derived_queries.txt"
+    out_path.write_text("\n".join(deduped) + "\n", encoding="utf-8")
 
-    header_lines = []
-    for ln in upstream_text.splitlines():
-        if ln.startswith(("TOPIC:", "LANGUAGE:", "FRESHNESS_DAYS:")):
-            header_lines.append(ln)
-
-    if summary_style == "paragraph":
-        derived = (
-            "DERIVED_NOTES (module 9SD)\n"
-            + ("\n".join(header_lines) + "\n\n" if header_lines else "")
-            + "This output is derived from module U2T content and exists to validate dependency ordering.\n"
-        )
-    else:
-        bullets = [
-            "DERIVED_NOTES (module 9SD)",
-            *(header_lines if header_lines else []),
-            "",
-            "- Derived from module U2T output (source_text.txt).",
-            "- Validates dependency ordering via maintenance dependency index.",
-            "- Demonstrates downstream artifact generation as a separate module.",
-        ]
-        derived = "\n".join(bullets).rstrip() + "\n"
-
-    out_file.write_text(derived, encoding="utf-8")
-    return {"files": ["derived_notes.txt"]}
+    return {
+        "status": "COMPLETED",
+        "files": [out_path.name],
+        "count": len(deduped),
+    }

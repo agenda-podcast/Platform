@@ -1,0 +1,50 @@
+name: E2E Verify
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e_verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
+          if [ -f pyproject.toml ] || [ -f setup.py ]; then python -m pip install -e .; fi
+
+      - name: Run offline orchestrator (E2E)
+        env:
+          PLATFORM_OFFLINE: "1"
+        run: |
+          set -euo pipefail
+          rm -rf .billing-state-e2e runtime-e2e
+          cp -a .billing-state-ci .billing-state-e2e
+          mkdir -p runtime-e2e
+          python -m platform.cli orchestrator --runtime-dir runtime-e2e --billing-state-dir .billing-state-e2e
+
+      - name: Assert chaining + billing/logging
+        run: |
+          set -euo pipefail
+          python scripts/e2e_assert_chaining.py \
+            --billing-state-dir .billing-state-e2e \
+            --runtime-dir runtime-e2e \
+            --tenant-id nxlkGI \
+            --work-order-id UbjkpxZO

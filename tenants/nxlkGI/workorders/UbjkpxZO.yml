@@ -4,35 +4,67 @@ mode: PARTIAL_ALLOWED
 metadata:
   title: New module verification.
   created_at: '2025-12-31T12:00:00Z'
-  notes: Module wxz.
+  notes: "Steps chaining demo: 9SD -> wxz -> U2T."
+
+# IFTTT-like chaining plan.
+#
+# Step 1: derive search queries from a topic
+# Step 2: run Google Custom Search using the derived queries
+# Step 3: feed the first returned title into U2T as a seed topic
+steps:
+  - step_id: derive_queries
+    module_id: 9SD
+    reuse_output_type: cache
+    purchase_release_artifacts: false
+    inputs:
+      topic: "Word News Today"
+      language: "en"
+      freshness_days: "7"
+      summary_style: "headlines"
+
+  - step_id: search
+    module_id: wxz
+    reuse_output_type: cache
+    purchase_release_artifacts: false
+    inputs:
+      queries:
+        from_step: derive_queries
+        from_file: derived_queries.txt
+        selector: lines
+        take: 5
+      max_items_per_query: 10
+      safe: active
+      filter_duplicates: true
+      dedupe:
+        enabled: true
+        strip_tracking_params: true
+
+  - step_id: seed_text
+    module_id: U2T
+    reuse_output_type: cache
+    purchase_release_artifacts: false
+    inputs:
+      topic:
+        from_step: search
+        from_file: results.jsonl
+        selector: jsonl_first
+        json_path: "$.title"
+      language: "en"
+      freshness_days: "7"
+
+# Legacy modules list kept for backward compatibility / reference only.
+# If steps are present, the orchestrator will execute steps.
 modules:
-- module_id: wxz
-  reuse_output_type: cache
-  purchase_release_artifacts: true
-  inputs:
-    queries:
-    - Word News Today
-    max_items_per_query: 10
-    safe: active
-    date_restrict: null
-    hl: null
-    lr: null
-    gl: null
-    cr: null
-    exact_terms: null
-    exclude_terms: null
-    or_terms: null
-    hq: null
-    file_type: null
-    filter_duplicates: true
-    rights: null
-    site_search: null
-    site_search_filter: null
-    link_site: null
-    low_range: null
-    high_range: null
-    sort: null
-    dedupe:
-      enabled: true
-      strip_tracking_params: true
+  - module_id: wxz
+    reuse_output_type: cache
+    purchase_release_artifacts: true
+    inputs:
+      queries:
+        - Word News Today
+      max_items_per_query: 10
+      safe: active
+      filter_duplicates: true
+      dedupe:
+        enabled: true
+        strip_tracking_params: true
 promotions: []
