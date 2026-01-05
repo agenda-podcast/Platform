@@ -263,12 +263,50 @@ def main() -> int:
         print("[publish_artifacts_release] No module runs since --since; nothing to publish.")
         return 0
 
+
+# Choose a transaction_id per workorder to make artifact ZIP names unique and non-overwriting.
+# Preference:
+#  1) Most recent SPEND created_at >= since_dt
+#  2) Otherwise most recent transaction created_at >= since_dt
+#  3) Otherwise most recent SPEND overall
+#  4) Otherwise most recent transaction overall
+txid_map: Dict[Tuple[str, str], str] = {}
+
+def _tx_dt(r: dict) -> dt.datetime:
+    return iso_parse((r.get("created_at") or "").strip())
+
+def _pick_txid(tenant_id: str, work_order_id: str) -> str:
+    cands = [
+        r for r in transactions
+        if (r.get("tenant_id") or "").strip() == tenant_id
+        and (r.get("work_order_id") or "").strip() == work_order_id
+        and (r.get("transaction_id") or "").strip()
+    ]
+    if not cands:
+        return ""
+    recent = [r for r in cands if _tx_dt(r) >= since_dt]
+
+    def _choose(rows: List[dict]) -> dict | None:
+        if not rows:
+            return None
+        spends = [r for r in rows if (r.get("type") or "").strip().upper() == "SPEND"]
+        target = spends if spends else rows
+        return max(target, key=_tx_dt)
+
+    picked = _choose(recent) or _choose(cands)
+    return ((picked or {}).get("transaction_id") or "").strip()
+
+for (tenant_id, work_order_id) in impacted.keys():
+    txid = _pick_txid(tenant_id, work_order_id) or "noTx"
+    txid_map[(tenant_id, work_order_id)] = txid
+
     dist_dir = pathlib.Path("dist_artifacts")
     dist_dir.mkdir(parents=True, exist_ok=True)
 
     for (tenant_id, work_order_id) in sorted(impacted.keys()):
         # Build zip
-        zip_path = dist_dir / f"artifacts_{tenant_id}_{work_order_id}.zip"
+        txid = txid_map.get((tenant_id, work_order_id), "noTx")
+        zip_path = dist_dir / f"artifacts_{tenant_id}_{work_order_id}_{txid}.zip"
         if zip_path.exists():
             zip_path.unlink()
 
