@@ -126,6 +126,7 @@ def _download_release_asset(repo: str, tag: str, asset_name: str, out_dir: Path)
         repo,
         "--dir",
         str(out_dir),
+        "--clobber",
         "--pattern",
         asset_name,
     ]
