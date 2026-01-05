@@ -46,7 +46,7 @@ jobs:
         run: |
           bash scripts/run_orchestrator.sh
 
-      - name: Guard: if artifacts were purchased, ensure they exist in Releases
+      - name: "Guard: if artifacts were purchased, ensure they exist in Releases"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
