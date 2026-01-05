@@ -18,6 +18,7 @@ Optional env:
 from __future__ import annotations
 
 import json
+import hashlib
 import mimetypes
 import os
 import pathlib
@@ -139,6 +140,42 @@ def _summarize_assets(release_json: dict) -> Dict[str, int]:
     return out
 
 
+def _map_assets(release_json: dict) -> Dict[str, dict]:
+    """Return name -> {id:int, url:str} from GitHub release JSON."""
+    out: Dict[str, dict] = {}
+    for a in release_json.get("assets", []) or []:
+        n = a.get("name")
+        i = a.get("id")
+        u = a.get("url")  # API url: /releases/assets/{id}
+        if n and isinstance(i, int) and isinstance(u, str) and u:
+            out[n] = {"id": i, "url": u}
+    return out
+
+
+def _sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _download_release_asset_bytes(asset_api_url: str, token: str) -> bytes:
+    # GitHub API: GET /repos/{owner}/{repo}/releases/assets/{asset_id}
+    # with Accept: application/octet-stream returns the raw bytes.
+    headers = _api_headers(token)
+    headers["Accept"] = "application/octet-stream"
+    code, raw = _request("GET", asset_api_url, headers, None)
+    if code >= 300:
+        txt = raw.decode("utf-8", errors="replace") if raw else ""
+        raise RuntimeError(f"[billing-bootstrap] Download asset failed: HTTP {code} {asset_api_url} {txt[:400]}")
+    return raw
+
+
+def _delete_release_asset(asset_api_url: str, token: str) -> None:
+    headers = _api_headers(token)
+    code, raw = _request("DELETE", asset_api_url, headers, None)
+    if code not in (204, 404):
+        txt = raw.decode("utf-8", errors="replace") if raw else ""
+        raise RuntimeError(f"[billing-bootstrap] Delete asset failed: HTTP {code} {asset_api_url} {txt[:400]}")
+
+
 def _upload_asset(upload_url_template: str, token: str, file_path: pathlib.Path, name: str) -> tuple[str, int, str]:
     upload_base = _normalize_upload_url(upload_url_template)
     url = f"{upload_base}?name={urllib.parse.quote(name)}"
@@ -183,25 +220,70 @@ def main() -> int:
     if not upload_url_template:
         raise RuntimeError("[billing-bootstrap] Release JSON missing upload_url")
 
-    existing = _summarize_assets(release)
-    to_upload = [fn for fn in REQUIRED_FILES if fn not in existing]
+    # Load template hashes (source of truth for what should be in the Release)
+    template_manifest_path = template_dir / "state_manifest.json"
+    template_manifest = json.loads(template_manifest_path.read_text(encoding="utf-8"))
+    template_hashes: Dict[str, str] = {
+        a["name"]: a["sha256"] for a in (template_manifest.get("assets") or [])
+        if isinstance(a, dict) and a.get("name") and a.get("sha256")
+    }
+    # Also enforce the manifest itself.
+    template_hashes["state_manifest.json"] = _sha256_hex(template_manifest_path.read_bytes())
 
-    if not to_upload:
-        print("[billing-bootstrap] All required assets already present. Nothing to do.")
+    existing_meta = _map_assets(release)
+    missing = [fn for fn in REQUIRED_FILES if fn not in existing_meta]
+
+    # Detect mismatched assets (present in Release but not matching the template hash)
+    mismatched: List[str] = []
+    for fn in REQUIRED_FILES:
+        if fn in existing_meta and fn in template_hashes:
+            try:
+                data = _download_release_asset_bytes(existing_meta[fn]["url"], token)
+                got = _sha256_hex(data)
+                exp = template_hashes[fn]
+                if got != exp:
+                    mismatched.append(fn)
+            except Exception as e:
+                # If we cannot download/validate, treat as mismatched so we repair it.
+                print(f"[billing-bootstrap] Warning: could not validate {fn}: {e}")
+                mismatched.append(fn)
+
+    if not missing and not mismatched:
+        print("[billing-bootstrap] All required assets already present and match template. Nothing to do.")
         return 0
 
-    print(f"[billing-bootstrap] Missing assets: {to_upload}")
+    if missing:
+        print(f"[billing-bootstrap] Missing assets: {missing}")
+    if mismatched:
+        print(f"[billing-bootstrap] Mismatched assets (will replace): {mismatched}")
+
     errors: List[str] = []
 
-    for fn in to_upload:
+    # Replace mismatched assets (delete then upload to avoid 422 conflicts)
+    for fn in mismatched:
+        try:
+            asset_url = existing_meta[fn]["url"]
+            _delete_release_asset(asset_url, token)
+            p = template_dir / fn
+            status, code, text = _upload_asset(upload_url_template, token, p, fn)
+            if status == "ok":
+                print(f"[billing-bootstrap] Replaced: {fn}")
+            else:
+                errors.append(f"replace {fn}: HTTP {code} {text}")
+        except Exception as e:
+            errors.append(f"replace {fn}: {e}")
+
+    # Upload missing assets
+    for fn in missing:
         p = template_dir / fn
         status, code, text = _upload_asset(upload_url_template, token, p, fn)
         if status == "ok":
             print(f"[billing-bootstrap] Uploaded: {fn}")
         elif status == "exists_or_conflict":
+            # Should not happen for missing, but tolerate a race.
             print(f"[billing-bootstrap] Asset exists/conflict (422): {fn}. Continuing.")
         else:
-            errors.append(f"{fn}: HTTP {code} {text}")
+            errors.append(f"upload {fn}: HTTP {code} {text}")
 
     # Re-check release to confirm
     release2 = _get_release_by_tag(repo, token, tag)
