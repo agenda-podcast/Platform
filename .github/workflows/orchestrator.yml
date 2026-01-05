@@ -13,6 +13,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
+    environment: Main
     env:
       BILLING_STATE_DIR: .billing-state
       RUNTIME_DIR: runtime
@@ -51,6 +52,8 @@ jobs:
           python scripts/bootstrap_billing_state_from_release.py             --repo "${{ github.repository }}"             --tag "${BILLING_STATE_RELEASE_TAG}"             --billing-state-dir "${BILLING_STATE_DIR}"
 
       - name: Run orchestrator
+        env:
+          SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}
         shell: bash
         run: |
           python -m platform.cli orchestrator             --runtime-dir "${RUNTIME_DIR}"             --billing-state-dir "${BILLING_STATE_DIR}"
