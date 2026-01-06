@@ -38,6 +38,8 @@ jobs:
           rm -rf .billing-state-e2e runtime-e2e
           cp -a .billing-state-ci .billing-state-e2e
           mkdir -p runtime-e2e
+          # Pre-execution validation (servicing-table driven)
+          python -m platform.cli consistency-validate
           # Seed a historical sentinel row to ensure billing-state is append-only (SoT).
           python - <<'PY'
           import csv

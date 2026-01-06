@@ -19,6 +19,8 @@ from .billing.payments import (
     validate_repo_payments,
 )
 
+from .consistency.validator import validate_all_workorders
+
 
 def _repo_root() -> Path:
     # This file is at: <repo_root>/platform/cli.py
@@ -200,6 +202,16 @@ def cmd_cache_prune(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_consistency_validate(args: argparse.Namespace) -> int:
+    """Validate all enabled Workorders against module contracts (servicing tables).
+
+    This is intended to run *before* Orchestrator execution to avoid consuming
+    credits on invalid Workorders.
+    """
+    validate_all_workorders(_repo_root())
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="platform")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -218,6 +230,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--billing-state-dir", default=".billing-state")
     sp.add_argument("--enable-github-releases", action="store_true")
     sp.set_defaults(func=cmd_orchestrate)
+
+    sp = sub.add_parser("consistency-validate", help="Consistency Validation (data-driven, pre-exec)")
+    sp.set_defaults(func=cmd_consistency_validate)
 
 
     sp = sub.add_parser("module-exec", help="Execute a single module runner")

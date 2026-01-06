@@ -11,7 +11,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  consistency_validation:
+    uses: ./.github/workflows/consistency-validation.yml
+
   run:
+    needs: [consistency_validation]
     runs-on: ubuntu-latest
     environment: Main
     env:

@@ -351,6 +351,7 @@ def _validate_maintenance_state(repo_root: Path) -> None:
         "tenant_relationships.csv",
         "module_requirements_index.csv",
         "module_artifacts_policy.csv",
+        "module_contract_rules.csv",
         "platform_policy.csv",
         "maintenance_manifest.csv",
         "ids/category_registry.csv",

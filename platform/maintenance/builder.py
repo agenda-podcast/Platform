@@ -4,7 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import yaml
 
@@ -51,6 +51,491 @@ def _read_yaml(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def _read_json(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8")) or {}
+
+
+def _sha256_bytes(parts: List[bytes]) -> str:
+    h = hashlib.sha256()
+    for b in parts:
+        h.update(b)
+    return h.hexdigest()
+
+
+def _module_contract_sources(ctx: MaintenanceContext, module_id: str) -> List[Path]:
+    """Return the list of files that define a module's *contract*.
+
+    This intentionally excludes runtime code so Maintenance can avoid rewriting
+    servicing tables when only implementation changes.
+    """
+    mid = canon_module_id(module_id)
+    if not mid:
+        return []
+    mdir = ctx.modules_dir / mid
+    sources: List[Path] = []
+    # Always include module.yml.
+    p = mdir / "module.yml"
+    if p.exists():
+        sources.append(p)
+
+    # Prefer canonical tenant params schema under platform/schemas if present.
+    ps = ctx.repo_root / "platform" / "schemas" / "work_order_modules" / f"{mid}.schema.json"
+    if ps.exists():
+        sources.append(ps)
+    else:
+        ts = mdir / "tenant_params.schema.json"
+        if ts.exists():
+            sources.append(ts)
+
+    osch = mdir / "output_schema.json"
+    if osch.exists():
+        sources.append(osch)
+
+    return sources
+
+
+def _compute_module_hash(ctx: MaintenanceContext, module_id: str) -> str:
+    parts: List[bytes] = []
+    for p in _module_contract_sources(ctx, module_id):
+        parts.append(p.read_bytes())
+    return _sha256_bytes(parts)
+
+
+def _json_dumps_compact(obj: Any) -> str:
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _schema_primary_type(t: Any) -> Optional[str]:
+    """Normalize JSON Schema 'type' to a single primary type.
+
+    If type is a list and includes null, prefer the first non-null.
+    """
+    if isinstance(t, str):
+        return t
+    if isinstance(t, list):
+        for x in t:
+            if x != "null":
+                return str(x)
+    return None
+
+
+def _schema_item_type(items: Any) -> Optional[str]:
+    if not isinstance(items, dict):
+        return None
+    return _schema_primary_type(items.get("type"))
+
+
+def _extract_schema_rules(schema: Dict[str, Any]) -> Tuple[Dict[str, Dict[str, Any]], set[str]]:
+    """Extract per-property constraints from a tenant params JSON schema."""
+    props = schema.get("properties") or {}
+    required = schema.get("required") or []
+    req_set = {str(x) for x in required if str(x)}
+    out: Dict[str, Dict[str, Any]] = {}
+    if not isinstance(props, dict):
+        return out, req_set
+
+    for k, v in props.items():
+        if not isinstance(v, dict):
+            continue
+        out[str(k)] = dict(v)
+    return out, req_set
+
+
+def _default_binding_rules(field_type: Optional[str], item_type: Optional[str], max_items: Optional[int]) -> Dict[str, Any]:
+    """Conservative binding rules used by Consistency Validation and UI.
+
+    The validator is data-driven per field, so these are only defaults.
+    """
+    # Arrays of strings: allow reading lines.
+    if field_type == "array" and item_type == "string":
+        rules: Dict[str, Any] = {
+            "allowed": True,
+            "object_shape": ["from_step", "from_file", "selector"],
+            "allowed_selectors": ["lines"],
+            "selector_rules": {
+                "lines": {
+                    "supports_take": True,
+                    "max_take": max_items,
+                    "supports_json_path": False,
+                }
+            },
+        }
+        return rules
+
+    # Strings: allow text and JSON extraction from json/jsonl_first.
+    if field_type == "string":
+        return {
+            "allowed": True,
+            "object_shape": ["from_step", "from_file", "selector"],
+            "allowed_selectors": ["text", "json", "jsonl_first"],
+            "selector_rules": {
+                "text": {"supports_take": False, "supports_json_path": False},
+                "json": {"supports_take": False, "supports_json_path": True},
+                "jsonl_first": {"supports_take": False, "supports_json_path": True},
+            },
+        }
+
+    # Objects: allow json/jsonl_first.
+    if field_type == "object":
+        return {
+            "allowed": True,
+            "object_shape": ["from_step", "from_file", "selector"],
+            "allowed_selectors": ["json", "jsonl_first"],
+            "selector_rules": {
+                "json": {"supports_take": False, "supports_json_path": True},
+                "jsonl_first": {"supports_take": False, "supports_json_path": True},
+            },
+        }
+
+    # Arrays of objects: allow jsonl.
+    if field_type == "array" and item_type == "object":
+        return {
+            "allowed": True,
+            "object_shape": ["from_step", "from_file", "selector"],
+            "allowed_selectors": ["jsonl"],
+            "selector_rules": {
+                "jsonl": {"supports_take": True, "max_take": max_items, "supports_json_path": False},
+            },
+        }
+
+    # Fallback: allow binding but without selector restrictions (UI can refine later).
+    return {
+        "allowed": True,
+        "object_shape": ["from_step", "from_file", "selector"],
+        "allowed_selectors": ["text", "json", "jsonl_first", "jsonl", "lines"],
+        "selector_rules": {},
+    }
+
+
+def _compile_module_contract_rules(ctx: MaintenanceContext, module_id: str) -> List[Dict[str, Any]]:
+    """Compile the per-module rules rows for module_contract_rules.csv."""
+    mid = canon_module_id(module_id)
+    if not mid:
+        return []
+    mdir = ctx.modules_dir / mid
+    myml = _read_yaml(mdir / "module.yml")
+    ports = myml.get("ports") or {}
+    ports_in = ports.get("inputs") or []
+    ports_out = ports.get("outputs") or []
+
+    # Tenant schema: canonical source for tenant-editable inputs.
+    schema_path = ctx.repo_root / "platform" / "schemas" / "work_order_modules" / f"{mid}.schema.json"
+    if not schema_path.exists():
+        schema_path = mdir / "tenant_params.schema.json"
+    tenant_schema = _read_json(schema_path) if schema_path.exists() else {}
+    schema_props, schema_required = _extract_schema_rules(tenant_schema)
+
+    # Output schema: helps chaining selectors + UI.
+    output_schema = _read_json(mdir / "output_schema.json") if (mdir / "output_schema.json").exists() else {}
+    out_props = (output_schema.get("properties") or {}) if isinstance(output_schema.get("properties"), dict) else {}
+
+    # Build a quick index of module.yml ports for metadata merging.
+    ports_in_by_id: Dict[str, Dict[str, Any]] = {}
+    for p in ports_in:
+        if isinstance(p, dict) and str(p.get("id") or "").strip():
+            ports_in_by_id[str(p.get("id")).strip()] = dict(p)
+
+    ports_out_by_id: Dict[str, Dict[str, Any]] = {}
+    for p in ports_out:
+        if isinstance(p, dict) and str(p.get("id") or "").strip():
+            ports_out_by_id[str(p.get("id")).strip()] = dict(p)
+
+    module_hash = _compute_module_hash(ctx, mid)
+    rows: List[Dict[str, Any]] = []
+
+    # INPUTS: tenant-visible (port) from tenant schema if present, else from module.yml.
+    if schema_props:
+        for fid, spec in schema_props.items():
+            yml_meta = ports_in_by_id.get(fid, {})
+            # visibility: tenant unless explicitly platform in module.yml
+            vis = str(yml_meta.get("visibility", "tenant")).strip().lower() or "tenant"
+            port_scope = "limited_port" if vis == "platform" else "port"
+
+            raw_type = spec.get("type")
+            ptype = _schema_primary_type(raw_type) or str(yml_meta.get("type") or "").strip() or "string"
+            itype = _schema_item_type(spec.get("items"))
+            fmt = str(yml_meta.get("format") or spec.get("format") or "").strip()
+            desc = str(yml_meta.get("description") or spec.get("description") or "").strip()
+            required = (fid in schema_required) or bool(yml_meta.get("required", False))
+            default_val = yml_meta.get("default", spec.get("default", None))
+
+            minimum = spec.get("minimum")
+            maximum = spec.get("maximum")
+            min_len = spec.get("minLength")
+            max_len = spec.get("maxLength")
+            min_items = spec.get("minItems")
+            max_items = spec.get("maxItems")
+            pattern = spec.get("pattern")
+            enum = spec.get("enum")
+            examples = spec.get("examples")
+
+            binding_rules = _default_binding_rules(ptype, itype, int(max_items) if isinstance(max_items, int) else None)
+
+            rule_obj = {
+                "io": "input",
+                "id": fid,
+                "schema": spec,
+                "binding": binding_rules,
+            }
+
+            rows.append(
+                {
+                    "module_id": mid,
+                    "module_hash": module_hash,
+                    "io": "INPUT",
+                    "port_scope": port_scope,
+                    "field_name": f"inputs.{fid}",
+                    "field_id": fid,
+                    "type": ptype,
+                    "item_type": itype or "",
+                    "format": fmt,
+                    "required": "true" if required else "false",
+                    "default_json": "" if default_val is None else _json_dumps_compact(default_val),
+                    "min_value": "" if minimum is None else str(minimum),
+                    "max_value": "" if maximum is None else str(maximum),
+                    "min_length": "" if min_len is None else str(min_len),
+                    "max_length": "" if max_len is None else str(max_len),
+                    "min_items": "" if min_items is None else str(min_items),
+                    "max_items": "" if max_items is None else str(max_items),
+                    "regex": "" if pattern is None else str(pattern),
+                    "enum_json": "" if enum is None else _json_dumps_compact(enum),
+                    "description": desc,
+                    "examples_json": "" if examples is None else _json_dumps_compact(examples),
+                    "path": "",
+                    "content_schema_json": "",
+                    "binding_json": _json_dumps_compact(binding_rules),
+                    "rule_json": _json_dumps_compact(rule_obj),
+                }
+            )
+
+    else:
+        # No tenant schema: use module.yml for tenant-visible inputs.
+        for fid, yml_meta in ports_in_by_id.items():
+            vis = str(yml_meta.get("visibility", "tenant")).strip().lower() or "tenant"
+            port_scope = "limited_port" if vis == "platform" else "port"
+            ptype = str(yml_meta.get("type") or "string").strip()
+            fmt = str(yml_meta.get("format") or "").strip()
+            desc = str(yml_meta.get("description") or "").strip()
+            required = bool(yml_meta.get("required", False))
+            default_val = yml_meta.get("default", None)
+            binding_rules = _default_binding_rules(ptype, None, None)
+            rule_obj = {"io": "input", "id": fid, "schema": {}, "binding": binding_rules}
+            rows.append(
+                {
+                    "module_id": mid,
+                    "module_hash": module_hash,
+                    "io": "INPUT",
+                    "port_scope": port_scope,
+                    "field_name": f"inputs.{fid}",
+                    "field_id": fid,
+                    "type": ptype,
+                    "item_type": "",
+                    "format": fmt,
+                    "required": "true" if required else "false",
+                    "default_json": "" if default_val is None else _json_dumps_compact(default_val),
+                    "min_value": "",
+                    "max_value": "",
+                    "min_length": "",
+                    "max_length": "",
+                    "min_items": "",
+                    "max_items": "",
+                    "regex": "",
+                    "enum_json": "",
+                    "description": desc,
+                    "examples_json": "",
+                    "path": "",
+                    "content_schema_json": "",
+                    "binding_json": _json_dumps_compact(binding_rules),
+                    "rule_json": _json_dumps_compact(rule_obj),
+                }
+            )
+
+    # Ensure platform-only inputs present even if not in tenant schema.
+    if isinstance(ports_in, list):
+        for p in ports_in:
+            if not isinstance(p, dict):
+                continue
+            fid = str(p.get("id") or "").strip()
+            if not fid:
+                continue
+            vis = str(p.get("visibility", "tenant")).strip().lower() or "tenant"
+            if vis != "platform":
+                continue
+            # If already captured from schema loop, it will be port_scope limited_port. Otherwise add.
+            if any(r.get("io") == "INPUT" and r.get("field_id") == fid for r in rows):
+                continue
+            ptype = str(p.get("type") or "string").strip()
+            fmt = str(p.get("format") or "").strip()
+            desc = str(p.get("description") or "").strip()
+            required = bool(p.get("required", False))
+            default_val = p.get("default", None)
+            binding_rules = _default_binding_rules(ptype, None, None)
+            rule_obj = {"io": "input", "id": fid, "schema": {}, "binding": binding_rules}
+            rows.append(
+                {
+                    "module_id": mid,
+                    "module_hash": module_hash,
+                    "io": "INPUT",
+                    "port_scope": "limited_port",
+                    "field_name": f"inputs.{fid}",
+                    "field_id": fid,
+                    "type": ptype,
+                    "item_type": "",
+                    "format": fmt,
+                    "required": "true" if required else "false",
+                    "default_json": "" if default_val is None else _json_dumps_compact(default_val),
+                    "min_value": "",
+                    "max_value": "",
+                    "min_length": "",
+                    "max_length": "",
+                    "min_items": "",
+                    "max_items": "",
+                    "regex": "",
+                    "enum_json": "",
+                    "description": desc,
+                    "examples_json": "",
+                    "path": "",
+                    "content_schema_json": "",
+                    "binding_json": _json_dumps_compact(binding_rules),
+                    "rule_json": _json_dumps_compact(rule_obj),
+                }
+            )
+
+    # OUTPUTS: from module.yml ports.outputs.
+    for fid, yml_meta in ports_out_by_id.items():
+        vis = str(yml_meta.get("visibility", "tenant")).strip().lower() or "tenant"
+        port_scope = "limited_port" if vis == "platform" else "port"
+        otype = str(yml_meta.get("type") or "file").strip()
+        fmt = str(yml_meta.get("format") or "").strip()
+        desc = str(yml_meta.get("description") or "").strip()
+        path = str(yml_meta.get("path") or "").lstrip("/").strip()
+
+        # Best-effort content schema extraction from output_schema.json.
+        content_schema: Any = {}
+        if output_schema and path:
+            if fid == "report" and isinstance(out_props.get("report_schema"), dict):
+                content_schema = out_props.get("report_schema")
+            elif "jsonlines" in fmt and isinstance(out_props.get("results_line_schema"), dict):
+                content_schema = out_props.get("results_line_schema")
+            elif isinstance(out_props.get(f"{fid}_schema"), dict):
+                content_schema = out_props.get(f"{fid}_schema")
+
+        rule_obj = {
+            "io": "output",
+            "id": fid,
+            "path": path,
+            "format": fmt,
+            "content_schema": content_schema if content_schema else None,
+        }
+
+        rows.append(
+            {
+                "module_id": mid,
+                "module_hash": module_hash,
+                "io": "OUTPUT",
+                "port_scope": port_scope,
+                "field_name": f"outputs.{fid}",
+                "field_id": fid,
+                "type": otype,
+                "item_type": "",
+                "format": fmt,
+                "required": "",
+                "default_json": "",
+                "min_value": "",
+                "max_value": "",
+                "min_length": "",
+                "max_length": "",
+                "min_items": "",
+                "max_items": "",
+                "regex": "",
+                "enum_json": "",
+                "description": desc,
+                "examples_json": "",
+                "path": path,
+                "content_schema_json": "" if not content_schema else _json_dumps_compact(content_schema),
+                "binding_json": "",
+                "rule_json": _json_dumps_compact(rule_obj),
+            }
+        )
+
+    # Stable sort.
+    rows = sorted(rows, key=lambda r: (r["module_id"], r["io"], r["port_scope"], r["field_name"]))
+    return rows
+
+
+def _write_module_contract_rules(ctx: MaintenanceContext, modules: List[Dict[str, Any]]) -> None:
+    """Write maintenance-state/module_contract_rules.csv.
+
+    Incremental behavior:
+      - If module_hash is unchanged vs existing CSV, keep rows byte-identical.
+      - If module_hash changes, regenerate all rows for that module.
+    """
+    path = ctx.ms_dir / "module_contract_rules.csv"
+    existing = read_csv(path) if path.exists() else []
+    existing_by_module: Dict[str, List[Dict[str, str]]] = {}
+    existing_hash: Dict[str, str] = {}
+    for r in existing:
+        mid = canon_module_id(r.get("module_id", ""))
+        if not mid:
+            continue
+        existing_by_module.setdefault(mid, []).append(r)
+        h = str(r.get("module_hash", "")).strip()
+        if h:
+            existing_hash[mid] = h
+
+    out_rows: List[Dict[str, Any]] = []
+    for m in modules:
+        mid = m["module_id"]
+        new_hash = _compute_module_hash(ctx, mid)
+        if existing_hash.get(mid) == new_hash and mid in existing_by_module:
+            # Preserve existing rows to keep file stable.
+            out_rows.extend(existing_by_module[mid])
+        else:
+            out_rows.extend(_compile_module_contract_rules(ctx, mid))
+
+    header = [
+        "module_id",
+        "module_hash",
+        "io",
+        "port_scope",
+        "field_name",
+        "field_id",
+        "type",
+        "item_type",
+        "format",
+        "required",
+        "default_json",
+        "min_value",
+        "max_value",
+        "min_length",
+        "max_length",
+        "min_items",
+        "max_items",
+        "regex",
+        "enum_json",
+        "description",
+        "examples_json",
+        "path",
+        "content_schema_json",
+        "binding_json",
+        "rule_json",
+    ]
+
+    # Stable sort for the full file too.
+    out_rows = sorted(
+        out_rows,
+        key=lambda r: (
+            str(r.get("module_id", "")),
+            str(r.get("io", "")),
+            str(r.get("port_scope", "")),
+            str(r.get("field_name", "")),
+        ),
+    )
+    _write_csv(path, out_rows, header)
 
 
 def _ensure_dir(path: Path) -> None:
@@ -390,6 +875,7 @@ def _write_manifest(ctx: MaintenanceContext) -> None:
         "tenant_relationships.csv",
         "module_requirements_index.csv",
         "module_artifacts_policy.csv",
+        "module_contract_rules.csv",
         "platform_policy.csv",
     ]
     rows=[]
@@ -422,5 +908,6 @@ def run_maintenance(repo_root: Path) -> None:
     _write_tenant_relationships(ctx, tenants)
     _write_module_requirements_index(ctx, modules)
     _write_module_artifacts_policy(ctx, modules)
+    _write_module_contract_rules(ctx, modules)
     _write_platform_policy(ctx)
     _write_manifest(ctx)
