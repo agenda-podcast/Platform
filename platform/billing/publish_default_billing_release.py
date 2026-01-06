@@ -22,6 +22,8 @@ import mimetypes
 import os
 import pathlib
 import sys
+import time
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -42,6 +44,15 @@ REQUIRED_FILES = [
 ]
 
 
+class TransientGitHubApiError(RuntimeError):
+    """Transient GitHub API connectivity issue.
+
+    We treat these as soft-fail conditions during Maintenance so the repository
+    can still bootstrap local billing-state from the checked-in templates.
+    """
+
+
+
 def _env(name: str, default: str | None = None) -> str:
     v = os.getenv(name)
     if v is None or v.strip() == "":
@@ -60,17 +71,75 @@ def _api_headers(token: str) -> Dict[str, str]:
     }
 
 
+def _is_transient_network_error(exc: Exception) -> bool:
+    """Classify transient network errors.
+
+    GitHub Actions runners occasionally hit transient DNS/TCP timeouts.
+    Maintenance should not fail hard *before* it can bootstrap local
+    billing-state from the checked-in templates.
+    """
+
+    # urllib wraps many socket failures in URLError.
+    if isinstance(exc, urllib.error.URLError):
+        r = getattr(exc, "reason", None)
+        if isinstance(r, (TimeoutError, socket.timeout)):
+            return True
+        # Common string reasons
+        rs = str(r).lower() if r is not None else str(exc).lower()
+        if "timed out" in rs or "timeout" in rs:
+            return True
+        if "temporary failure" in rs or "name resolution" in rs:
+            return True
+
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return True
+
+    msg = str(exc).lower()
+    if "timed out" in msg or "timeout" in msg:
+        return True
+    return False
+
+
 def _request(method: str, url: str, headers: Dict[str, str], body: bytes | None = None) -> tuple[int, bytes]:
+    """HTTP request with small, bounded retry for transient network errors.
+
+    Rationale: Maintenance must remain reliable even if GitHub API has brief
+    connectivity issues. If we still cannot reach GitHub after retries,
+    callers may choose to soft-fail (skip remote ensure) when safe.
+    """
+    timeout_s = int(os.getenv("GITHUB_API_TIMEOUT", "30"))
+    retries = int(os.getenv("GITHUB_API_RETRIES", "3"))
+    backoff_s = float(os.getenv("GITHUB_API_RETRY_BACKOFF", "2"))
+
     req = urllib.request.Request(url=url, data=body, method=method)
     for k, v in headers.items():
         req.add_header(k, v)
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            return resp.getcode(), resp.read()
-    except urllib.error.HTTPError as e:
-        return e.code, e.read()
-    except Exception as e:
-        raise RuntimeError(f"HTTP {method} {url} failed: {e}") from e
+
+    last_exc: Exception | None = None
+    for attempt in range(1, max(1, retries) + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+                return resp.getcode(), resp.read()
+        except urllib.error.HTTPError as e:
+            # HTTPError is a response; do not retry here. Upstream logic will decide.
+            return e.code, e.read()
+        except Exception as e:
+            last_exc = e
+            if _is_transient_network_error(e) and attempt < retries:
+                sleep_s = min(10.0, backoff_s ** (attempt - 1))
+                print(f"[billing-bootstrap] Transient network error (attempt {attempt}/{retries}) {method} {url}: {e}. Retrying in {sleep_s:.1f}s")
+                time.sleep(sleep_s)
+                continue
+            if _is_transient_network_error(e):
+                raise TransientGitHubApiError(f"HTTP {method} {url} failed: {e}") from e
+            raise RuntimeError(f"HTTP {method} {url} failed: {e}") from e
+
+    # Should be unreachable, but keep a safe fallback.
+    if last_exc is not None:
+        if _is_transient_network_error(last_exc):
+            raise TransientGitHubApiError(f"HTTP {method} {url} failed: {last_exc}") from last_exc
+        raise RuntimeError(f"HTTP {method} {url} failed: {last_exc}") from last_exc
+    raise RuntimeError(f"HTTP {method} {url} failed: unknown error")
 
 
 def _json(method: str, url: str, headers: Dict[str, str], payload: dict | None = None) -> tuple[int, dict | None, str]:
@@ -207,7 +276,15 @@ def main() -> int:
     if missing_local:
         raise FileNotFoundError(f"[billing-bootstrap] Missing template files in repo at {template_dir}: {missing_local}")
 
-    release = _get_release_by_tag(repo, token, tag)
+    try:
+        release = _get_release_by_tag(repo, token, tag)
+    except TransientGitHubApiError as e:
+        # Critical: Maintenance must still be able to run offline against the
+        # checked-in billing-state template. If GitHub API is temporarily
+        # unreachable, skip remote release ensure and allow Maintenance to
+        # bootstrap local billing-state from repo templates.
+        print(f"[billing-bootstrap] Warning: GitHub API unreachable; skipping remote billing-state ensure for tag={tag}. {e}")
+        return 0
     if release is None:
         print(f"[billing-bootstrap] Release tag not found: {tag}. Creating...")
         release = _create_release(repo, token, tag)
