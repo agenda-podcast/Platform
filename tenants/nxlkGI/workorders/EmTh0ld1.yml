@@ -1,5 +1,5 @@
 work_order_id: EmTh0ld1
-enabled: true
+enabled: false
 mode: STRICT
 artifacts_requested: true
 metadata:
