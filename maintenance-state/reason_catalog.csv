@@ -39,4 +39,3 @@ nw98r9W4,GLOBAL,,EMl,internal_error,16,Billing,Unexpected internal system error.
 tMtj6jby,GLOBAL,,gww,unauthorized_release_access,15,Access Control,Cross-tenant access denied by tenant relationships.
 woegbftA,GLOBAL,,dMY,delivery_missing,14,Validation,Purchased deliverable outputs were missing at publish time; deliverable refunded.
 yzd6l3Ns,GLOBAL,,0Qx,tenant_suspended,16,Billing,Tenant account is suspended; execution not allowed.
-Zs3Cr3t1,GLOBAL,,sct,missing_required_secret,01,Acquisition,Required env secrets were not provided for one or more modules in the workorder.
