@@ -1,0 +1,62 @@
+name: Prod Shadow Mode (Nightly)
+
+on:
+  schedule:
+    - cron: "30 3 * * *"  # 03:30 UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prod_shadow:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Gate prod shadow run
+        id: gate
+        shell: bash
+        env:
+          ENABLE_PROD_SHADOW: ${{ secrets.ENABLE_PROD_SHADOW }}
+          STAGING_PG_DSN: ${{ secrets.STAGING_PG_DSN }}
+        run: |
+          set -euo pipefail
+          if [ "${ENABLE_PROD_SHADOW:-}" = "true" ] && [ -n "${STAGING_PG_DSN:-}" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
+
+      - name: Install dependencies
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
+          if [ -f pyproject.toml ] || [ -f setup.py ]; then python -m pip install -e .; fi
+
+      - name: Shadow preflight (minimal workload)
+        if: steps.gate.outputs.run == 'true'
+        env:
+          # Future: used by db_postgres adapters once implemented.
+          PLATFORM_PG_DSN: ${{ secrets.STAGING_PG_DSN }}
+        run: |
+          set -euo pipefail
+          python -m platform.cli consistency-validate
+          python -m platform.cli integrity-validate --tenant-id nxlkGI --work-order-id UbjkpxZO
+          echo "Prod shadow mode template executed."
+          echo "Note: db_postgres adapters are scaffolds; wire staging DB execution when implemented."
