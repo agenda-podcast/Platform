@@ -75,11 +75,22 @@ def _load_module_runs(module_runs_log: Path) -> List[Dict[str, Any]]:
 
 
 def _get_step_id_from_meta(meta_json: str) -> str:
+    """Extract step_id from module_runs_log metadata_json.
+
+    The platform CSV adapter historically wrote step identifiers under:
+      - step_id (preferred)
+      - step (legacy/back-compat)
+    """
     try:
         m = json.loads(meta_json or "{}")
     except Exception:
         m = {}
-    return str(m.get("step_id") or "").strip()
+    if not isinstance(m, dict):
+        return ""
+    sid = str(m.get("step_id") or "").strip()
+    if sid:
+        return sid
+    return str(m.get("step") or "").strip()
 
 
 def _get_outputs_dir_from_meta(meta_json: str, output_ref: str) -> str:

@@ -201,6 +201,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--runtime-profile", default="", help="Path to runtime profile YAML")
     ap.add_argument("--no-publish", action="store_true", help="Do not upload; only write ZIPs to dist-dir")
     ap.add_argument("--run-url", default="")
+    ap.add_argument("--repo", default="", help="GitHub repo (owner/name). Accepted for CI compatibility; optional.")
     args = ap.parse_args(argv)
 
     billing_state_dir = Path(args.billing_state_dir)
