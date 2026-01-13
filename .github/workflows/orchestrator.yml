@@ -17,7 +17,6 @@ jobs:
   run:
     needs: [consistency_validation]
     runs-on: ubuntu-latest
-    environment: Main
     env:
       BILLING_STATE_DIR: .billing-state
       RUNTIME_DIR: runtime
