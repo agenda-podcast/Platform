@@ -90,8 +90,20 @@ jobs:
             --repo "${{ github.repository }}" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
+      - name: Detect SECRETSTORE_PASSPHRASE presence
+        id: secretstore
+        shell: bash
+        env:
+          SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}
+        run: |
+          if [ -n "${SECRETSTORE_PASSPHRASE}" ]; then
+            echo "has_passphrase=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_passphrase=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload deliverable artifacts to S3 (optional)
-        if: success() && secrets.SECRETSTORE_PASSPHRASE != ''
+        if: success() && steps.secretstore.outputs.has_passphrase == 'true'
         env:
           SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}
           PLATFORM_ARTIFACTS_S3_PREFIX: platform/dev/deliverables
