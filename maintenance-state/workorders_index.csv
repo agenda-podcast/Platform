@@ -1,0 +1,3 @@
+tenant_id,work_order_id,enabled,schedule_cron,title,notes,path
+nxlkGI,UbjkpxZO,true,,New module verification.,Steps chaining demo: 9SD -> wxi -> U2T.,tenants/nxlkGI/workorders/UbjkpxZO.yml
+nxlkGI,EmTh0ld1,false,,Email threshold oversize package E2E,,tenants/nxlkGI/workorders/EmTh0ld1.yml

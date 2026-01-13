@@ -19,3 +19,19 @@ reasons:
   reason_slug: internal_error
   category_id: '16'
   description: Unexpected internal system error.
+- reason_key: dMY
+  reason_slug: delivery_missing
+  category_id: '14'
+  description: Purchased deliverable outputs were missing at publish time; deliverable refunded.
+- reason_key: q1Z
+  reason_slug: delivery_failed
+  category_id: '14'
+  description: Delivery step failed; delivery could not be completed.
+- reason_key: a4R
+  reason_slug: package_failed
+  category_id: '14'
+  description: Packaging step failed; package could not be generated.
+- reason_key: N8k
+  reason_slug: package_too_large_for_email
+  category_id: '14'
+  description: Package size exceeds email attachment limits; email delivery not possible.

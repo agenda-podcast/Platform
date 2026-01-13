@@ -26,8 +26,25 @@ def _import_module_runner(module_path: Path):
     spec = importlib.util.spec_from_file_location(f"module_{module_path.name}_runner", runner_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Failed to load module runner: {runner_path}")
+    # Allow module runners to import sibling helper modules from the same src/ directory.
+    import sys
+
+    src_dir = str(runner_path.parent)
+    inserted = False
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+        inserted = True
+
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        if inserted:
+            # Remove the first matching occurrence (we inserted at position 0).
+            try:
+                sys.path.remove(src_dir)
+            except ValueError:
+                pass
     if not hasattr(mod, "run"):
         raise AttributeError(f"Module runner must define run(params, outputs_dir): {runner_path}")
     return mod

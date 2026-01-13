@@ -28,6 +28,13 @@ class SecretStore:
         blk = mods.get(module_id) or {}
         return blk if isinstance(blk, dict) else {}
 
+    def integration_block(self, integration_id: str) -> Dict[str, Any]:
+        ints = self.raw.get("integrations") or {}
+        if not isinstance(ints, dict):
+            return {}
+        blk = ints.get(integration_id) or {}
+        return blk if isinstance(blk, dict) else {}
+
 
 def _decrypt_gpg_json(gpg_path: Path, passphrase: str) -> Dict[str, Any]:
     """Decrypt a symmetrically encrypted .gpg file and parse JSON.
@@ -77,11 +84,11 @@ def load_secretstore(repo_root: Path) -> SecretStore:
 
     if not passphrase:
         # Silent by default; caller may log a warning.
-        return SecretStore(raw={"version": 0, "modules": {}})
+        return SecretStore(raw={"version": 0, "modules": {}, "integrations": {}})
 
     raw = _decrypt_gpg_json(gpg_path=gpg_path, passphrase=passphrase)
     if not raw:
-        return SecretStore(raw={"version": 0, "modules": {}})
+        return SecretStore(raw={"version": 0, "modules": {}, "integrations": {}})
     return SecretStore(raw=raw)
 
 
@@ -116,3 +123,31 @@ def env_for_module(store: SecretStore, module_id: str) -> Dict[str, str]:
                 env.setdefault(kk[len(prefix):], vv)
 
     return env
+
+
+def env_for_integration(store: SecretStore, integration_id: str) -> Dict[str, str]:
+    """Return env vars for a named integration block.
+
+    Integrations are used for non-module platform concerns such as artifact stores,
+    publishers, database credentials, and external engines.
+
+    The block supports two optional sections:
+      - secrets: secret values (tokens, keys, passwords)
+      - vars: non-secret configuration values
+    """
+    blk = store.integration_block(integration_id)
+    env: Dict[str, str] = {}
+    for section in ("secrets", "vars"):
+        d = blk.get(section) or {}
+        if not isinstance(d, dict):
+            continue
+        for k, v in d.items():
+            if k is None:
+                continue
+            kk = str(k).strip()
+            if not kk:
+                continue
+            env[kk] = "" if v is None else str(v)
+    return env
+
+

@@ -5,6 +5,9 @@ import json
 import os
 from pathlib import Path
 
+from .infra.config import load_runtime_profile
+from .infra.factory import build_infra
+
 from .maintenance.builder import run_maintenance
 from .orchestration.orchestrator import run_orchestrator
 from .cache.prune import run_cache_prune
@@ -19,7 +22,7 @@ from .billing.payments import (
     validate_repo_payments,
 )
 
-from .consistency.validator import validate_all_workorders
+from .consistency.validator import validate_all_workorders, integrity_validate
 
 
 def _repo_root() -> Path:
@@ -41,11 +44,20 @@ def cmd_orchestrate(args: argparse.Namespace) -> int:
     runtime_dir.mkdir(parents=True, exist_ok=True)
     billing_state_dir.mkdir(parents=True, exist_ok=True)
 
+    profile = load_runtime_profile(repo_root, cli_path=str(getattr(args, "runtime_profile", "") or ""))
+    infra = build_infra(
+        repo_root=repo_root,
+        profile=profile,
+        billing_state_dir=billing_state_dir,
+        runtime_dir=runtime_dir,
+    )
+
     run_orchestrator(
         repo_root=repo_root,
         billing_state_dir=billing_state_dir,
         runtime_dir=runtime_dir,
         enable_github_releases=enable_releases,
+        infra=infra,
     )
     return 0
 
@@ -203,29 +215,76 @@ def cmd_cache_prune(args: argparse.Namespace) -> int:
 
 
 def cmd_consistency_validate(args: argparse.Namespace) -> int:
-    """Validate all enabled Workorders against module contracts (servicing tables).
+    """Validate workorders against module contracts (servicing tables).
 
-    This is intended to run *before* Orchestrator execution to avoid consuming
-    credits on invalid Workorders.
+    Behavior:
+    - Enabled workorders: blocking validation. Any failure returns non-zero.
+    - Disabled workorders: draft warnings are printed, but exit code remains zero.
     """
-    validate_all_workorders(_repo_root())
+    try:
+        validate_all_workorders(_repo_root())
+        return 0
+    except Exception as e:
+        # The validator raises ConsistencyValidationError for blocking failures.
+        print(str(e))
+        return 2
+
+
+
+def cmd_integrity_validate(args: argparse.Namespace) -> int:
+    # Integrity Validation (plan/preflight only, no execution).
+    # Supports validating a single workorder (by id/path) or all enabled workorders in the index.
+    repo_root = _repo_root()
+    results = integrity_validate(
+        repo_root,
+        work_order_id=str(getattr(args, "work_order_id", "") or ""),
+        tenant_id=str(getattr(args, "tenant_id", "") or ""),
+        path=str(getattr(args, "path", "") or ""),
+    )
+
+    # Human-readable summary (helpful in Actions logs)
+    print(f"integrity validation OK: workorders_validated={len(results)}")
+
+    # Structured output for automation
+    import json as _json
+    print(_json.dumps({"validated": results}, ensure_ascii=False))
+    return 0
+
+
+def cmd_runtime_print(args: argparse.Namespace) -> int:
+    repo_root = _repo_root()
+    profile = load_runtime_profile(repo_root, cli_path=str(getattr(args, 'runtime_profile', '') or ''))
+
+    billing_state_dir = Path(str(getattr(args, 'billing_state_dir', '') or '.billing-state')).resolve()
+    runtime_dir = Path(str(getattr(args, 'runtime_dir', '') or 'runtime')).resolve()
+
+    infra = build_infra(
+        repo_root=repo_root,
+        profile=profile,
+        billing_state_dir=billing_state_dir,
+        runtime_dir=runtime_dir,
+    )
+    print(json.dumps(infra.describe(), indent=2, sort_keys=False))
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="platform")
+    p.add_argument('--runtime-profile', default='', help='Path to runtime profile YAML (overrides PLATFORM_RUNTIME_PROFILE and config/runtime_profile.yml)')
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sp = sub.add_parser("maintenance", help="Compile maintenance-state tables")
     sp.set_defaults(func=cmd_maintenance)
 
     sp = sub.add_parser("orchestrate", help="Run orchestrator")
+    sp.add_argument('--runtime-profile', default='', help=argparse.SUPPRESS)
     sp.add_argument("--runtime-dir", default="runtime")
     sp.add_argument("--billing-state-dir", default=".billing-state")
     sp.add_argument("--enable-github-releases", action="store_true")
     sp.set_defaults(func=cmd_orchestrate)
 
     sp = sub.add_parser("orchestrator", help="Alias for orchestrate")
+    sp.add_argument('--runtime-profile', default='', help=argparse.SUPPRESS)
     sp.add_argument("--runtime-dir", default="runtime")
     sp.add_argument("--billing-state-dir", default=".billing-state")
     sp.add_argument("--enable-github-releases", action="store_true")
@@ -233,6 +292,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("consistency-validate", help="Consistency Validation (data-driven, pre-exec)")
     sp.set_defaults(func=cmd_consistency_validate)
+
+
+    sp = sub.add_parser("integrity-validate", help="Integrity Validation (plan/preflight only, no execution)")
+    sp.add_argument("--work-order-id", default="")
+    sp.add_argument("--tenant-id", default="")
+    sp.add_argument("--path", default="")
+    sp.set_defaults(func=cmd_integrity_validate)
 
 
     sp = sub.add_parser("module-exec", help="Execute a single module runner")
@@ -267,6 +333,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("reconcile-payments", help="Reconcile repo-recorded payments into billing-state")
     sp.add_argument("--billing-state-dir", default=".billing-state")
     sp.set_defaults(func=cmd_reconcile_payments)
+
+    sp = sub.add_parser("runtime-print", help="Print runtime profile adapter wiring (dry-run)")
+    sp.add_argument("--billing-state-dir", default=".billing-state")
+    sp.add_argument("--runtime-dir", default="runtime")
+    sp.set_defaults(func=cmd_runtime_print)
+
 
     return p
 

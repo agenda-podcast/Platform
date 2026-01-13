@@ -1,0 +1,36 @@
+profile_name: prod_cloud_db
+description: "Production placeholder: DB-backed registry and ledger + cloud object storage + external execution backend."
+adapters:
+  registry:
+    kind: db_postgres
+    settings:
+      dsn: "postgresql://USER:PASSWORD@HOST:5432/platform"
+
+  run_state_store:
+    kind: db_postgres
+    settings:
+      dsn: "postgresql://USER:PASSWORD@HOST:5432/platform"
+
+  ledger_writer:
+    kind: db_postgres
+    settings:
+      dsn: "postgresql://USER:PASSWORD@HOST:5432/platform"
+
+  artifact_store:
+    kind: s3
+    settings:
+      bucket: "REPLACE_ME_BUCKET"
+      prefix: "platform/"
+
+  execution_backend:
+    kind: external_engine
+    settings:
+      endpoint: "https://REPLACE_ME_EXECUTION_ENGINE"
+      timeout_seconds: 900
+
+  artifact_publisher:
+    kind: cloud_storage
+    settings:
+      target: "s3"
+      bucket: "REPLACE_ME_BUCKET"
+      prefix: "releases/"

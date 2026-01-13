@@ -1,0 +1,54 @@
+module_id: deliver_dropbox
+name: deliver_dropbox
+version: 0.1.0
+kind: delivery
+description: "System delivery module: upload package.zip to Dropbox."
+
+requirements:
+  secrets:
+    - name: DROPBOX_ACCESS_TOKEN
+      note: "Dropbox OAuth access token; if unset, uses dev stub."
+  vars:
+    - name: DROPBOX_CHUNK_BYTES
+      value: "4194304"
+      note: "Upload chunk size in bytes for resumable uploads."
+    - name: DROPBOX_CREATE_SHARE_LINK
+      value: "false"
+      note: "If true, attempt to create or reuse a share link after upload."
+
+ports:
+  inputs:
+    port:
+      - id: package_zip
+        type: file
+        required: true
+        format: application/zip
+        description: "ZIP file to deliver."
+      - id: manifest_json
+        type: file
+        required: false
+        format: application/json
+        description: "Optional manifest for the delivered package."
+      - id: remote_base_path
+        type: string
+        required: false
+        default: "/Apps/Platform"
+        format: text/plain
+        description: "Deprecated (ignored). Remote path is hard-locked to /{tenant_id}/{work_order_id}/{run_id}/{step_id}/{deliverable_id}/package.zip."
+    limited_port: []
+  outputs:
+    port:
+      - id: delivery_receipt_json
+        type: file
+        path: delivery_receipt.json
+        format: application/json
+        description: "Delivery receipt with remote path, share link, and verification status."
+    limited_port: []
+
+deliverables:
+  port:
+    - deliverable_id: delivery_receipt
+      description: "Delivery receipt (tenant-visible)."
+      outputs:
+        - delivery_receipt_json
+  limited_port: []

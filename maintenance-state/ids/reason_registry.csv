@@ -1,28 +1,41 @@
 reason_code,scope,module_id,reason_key,reason_slug,category_id,description
-6O6V4z,MODULE,wxz,r0D,artifacts_download_not_allowed_by_module,14,"Artifacts were purchased, but this module does not support downloadable release artifacts."
-9RXo6Z,MODULE,wxz,zoA,bad_input_format,01,Input was present but not in a supported format.
-E7LC3q,MODULE,U2T,dpb,bad_input_format,01,Input was present but not in a supported format.
-ES9Hgt,MODULE,9SD,J8u,external_api_error,01,Upstream API call failed or returned an error.
-LSNoxf,MODULE,9SD,sd5,artifacts_not_eligible,14,Artifacts were purchased but not eligible per policy or module capability.
-MD2Bcx,GLOBAL,,EMl,internal_error,16,Unexpected internal system error.
-MXixWy,MODULE,9SD,9oM,missing_required_input,01,A required module input was not provided or could not be resolved.
-RCNCl7,MODULE,wxz,wrP,missing_secret,01,Required env secrets were not provided for Google Custom Search API.
-RVe9DN,MODULE,9SD,Vut,skipped_cache,12,Cache was used; module execution skipped and marked FAILED for refund logic.
-ShlFvj,MODULE,wxz,tmn,missing_required_input,01,A required module input was not provided or could not be resolved.
-T2J0Yj,MODULE,9SD,GqU,artifacts_download_not_allowed_by_platform,14,"Artifacts were purchased, but platform policy disables downloadable release artifacts for this module."
-Tdqu2d,MODULE,wxz,E2Y,output_write_failed,01,Failed to write module outputs to the runtime directory.
-W02JvS,GLOBAL,,0Qx,tenant_suspended,16,Tenant account is suspended; execution not allowed.
-blEqc2,MODULE,U2T,lBy,artifacts_download_not_allowed_by_platform,14,"Artifacts were purchased, but platform policy disables downloadable release artifacts for this module."
-c8XOYn,MODULE,U2T,GyK,artifacts_not_eligible,14,Artifacts were purchased but not eligible per policy or module capability.
-eDaZkN,MODULE,U2T,0aG,artifacts_download_not_allowed_by_module,14,"Artifacts were purchased, but this module does not support downloadable release artifacts."
-gSgN1Q,MODULE,U2T,lNB,missing_required_input,01,A required module input was not provided or could not be resolved.
-iQEX3f,MODULE,wxz,Yt1,skipped_cache,12,Cache was used; module execution skipped and marked FAILED for refund logic.
-j2tD8N,MODULE,U2T,vEK,skipped_cache,12,Cache was used; module execution skipped and marked FAILED for refund logic.
-kUnE3K,MODULE,wxz,a2u,artifacts_download_not_allowed_by_platform,14,"Artifacts were purchased, but platform policy disables downloadable release artifacts for this module."
-kbgyWT,MODULE,U2T,5eS,external_api_error,01,Upstream API call failed or returned an error.
-mdAfF9,GLOBAL,,MEy,not_enough_credits,16,Tenant credits do not cover estimated work order spend.
-oHsCKk,GLOBAL,,FM9,workorder_invalid,14,Work order file failed schema validation.
-qDjGKS,MODULE,wxz,ljz,external_api_error,01,Upstream API call failed or returned an error.
-rWX9Jx,GLOBAL,,gww,unauthorized_release_access,15,Cross-tenant access denied by tenant relationships.
-xquEPE,MODULE,9SD,Ntd,bad_input_format,01,Input was present but not in a supported format.
-y7eE9e,MODULE,9SD,FLe,artifacts_download_not_allowed_by_module,14,"Artifacts were purchased, but this module does not support downloadable release artifacts."
+12GMA6JU,MODULE,wxi,bif,bad_input_format,01,Input was present but not in a supported format.
+14fAP4xU,MODULE,wxz,tmn,missing_required_input,01,A required module input was not provided or could not be resolved.
+1AlZFSfg,MODULE,9SD,GqU,artifacts_download_not_allowed_by_platform,14,"Artifacts were purchased, but platform policy disables downloadable release artifacts for this module."
+3Qf2UsfH,MODULE,wxz,zoA,bad_input_format,01,Input was present but not in a supported format.
+3Uzl5PpT,MODULE,wxi,skc,skipped_cache,12,Cache was used; module execution skipped and marked FAILED for refund logic.
+4lSTnsAP,MODULE,9SD,sd5,artifacts_not_eligible,14,Artifacts were purchased but not eligible per policy or module capability.
+4tf5VYHR,GLOBAL,,a4R,package_failed,14,Packaging step failed; package could not be generated.
+5akf0krM,MODULE,U2T,0aG,artifacts_download_not_allowed_by_module,14,"Artifacts were purchased, but this module does not support downloadable release artifacts."
+74CGVRFH,MODULE,U2T,lBy,artifacts_download_not_allowed_by_platform,14,"Artifacts were purchased, but platform policy disables downloadable release artifacts for this module."
+CBkm3RR2,MODULE,9SD,Ntd,bad_input_format,01,Input was present but not in a supported format.
+CLCx3f2T,MODULE,wxz,r0D,artifacts_download_not_allowed_by_module,14,"Artifacts were purchased, but this module does not support downloadable release artifacts."
+DcmMYx9B,GLOBAL,,MEy,not_enough_credits,16,Tenant credits do not cover estimated work order spend.
+EbvJOU6a,MODULE,wxi,eae,external_api_error,01,Upstream API call failed or returned an error.
+EvgSyiqM,MODULE,U2T,GyK,artifacts_not_eligible,14,Artifacts were purchased but not eligible per policy or module capability.
+GWDXTsXu,MODULE,wxz,Yt1,skipped_cache,12,Cache was used; module execution skipped and marked FAILED for refund logic.
+I7D9Levi,MODULE,wxi,adp,artifacts_download_not_allowed_by_platform,14,"Artifacts were purchased, but platform policy disables downloadable release artifacts for this module."
+JAljEU2W,MODULE,wxz,E2Y,output_write_failed,01,Failed to write module outputs to the runtime directory.
+JiSwSse5,GLOBAL,,N8k,package_too_large_for_email,14,Package size exceeds email attachment limits; email delivery not possible.
+K9WdX1De,MODULE,9SD,FLe,artifacts_download_not_allowed_by_module,14,"Artifacts were purchased, but this module does not support downloadable release artifacts."
+MmdlT5sO,MODULE,U2T,5eS,external_api_error,01,Upstream API call failed or returned an error.
+PQNWIRb5,MODULE,wxz,wrP,missing_secret,01,Required env secrets were not provided for Google Custom Search API.
+T664R1O3,MODULE,wxi,mri,missing_required_input,01,A required module input was not provided or could not be resolved.
+TlfOYxvR,MODULE,U2T,lNB,missing_required_input,01,A required module input was not provided or could not be resolved.
+UCm5FHjJ,MODULE,U2T,vEK,skipped_cache,12,Cache was used; module execution skipped and marked FAILED for refund logic.
+UK07VML6,MODULE,9SD,9oM,missing_required_input,01,A required module input was not provided or could not be resolved.
+VejqHFQA,MODULE,9SD,J8u,external_api_error,01,Upstream API call failed or returned an error.
+VvbjTOfr,MODULE,wxz,a2u,artifacts_download_not_allowed_by_platform,14,"Artifacts were purchased, but platform policy disables downloadable release artifacts for this module."
+XytL5pcz,GLOBAL,,FM9,workorder_invalid,14,Work order file failed schema validation.
+YRXZV5BI,MODULE,wxi,ane,artifacts_not_eligible,14,"Artifacts were purchased, but required deliverable outputs were not produced or not publishable."
+YvKKQuZM,MODULE,wxz,ljz,external_api_error,01,Upstream API call failed or returned an error.
+cJzX2G2O,MODULE,wxi,adm,artifacts_download_not_allowed_by_module,14,"Artifacts were purchased, but this module does not support downloadable release artifacts."
+d5CAmDUS,GLOBAL,,q1Z,delivery_failed,14,Delivery step failed; delivery could not be completed.
+ioA4l1DH,MODULE,wxi,owf,output_write_failed,01,Failed to write module outputs to the runtime directory.
+jPnQKXd7,MODULE,9SD,Vut,skipped_cache,12,Cache was used; module execution skipped and marked FAILED for refund logic.
+kiaacdi9,MODULE,U2T,dpb,bad_input_format,01,Input was present but not in a supported format.
+l41c9h4n,MODULE,wxi,msc,missing_secret,01,Required env secrets were not provided for Google Custom Search API.
+nw98r9W4,GLOBAL,,EMl,internal_error,16,Unexpected internal system error.
+tMtj6jby,GLOBAL,,gww,unauthorized_release_access,15,Cross-tenant access denied by tenant relationships.
+woegbftA,GLOBAL,,dMY,delivery_missing,14,Purchased deliverable outputs were missing at publish time; deliverable refunded.
+yzd6l3Ns,GLOBAL,,0Qx,tenant_suspended,16,Tenant account is suspended; execution not allowed.

@@ -1,390 +1,444 @@
-#!/usr/bin/env python3
-"""
-Publish purchased and successfully generated artifacts to GitHub Releases.
-
-IMPORTANT: This script is intentionally self-contained and MUST NOT import the repo's "platform"
-package, because running `python scripts/publish_artifacts_release.py` sets sys.path[0] to the
-scripts/ directory, causing `import platform` to resolve to the Python stdlib "platform" module.
-
-Key behaviors:
-- Packages runtime outputs for the run scope (--since) into a ZIP per work_order_id.
-- Publishes the ZIP to a dedicated Release tag: artifacts-<tenant_id>-<work_order_id>
-- Writes/updates billing-state mapping ledgers:
-  - github_releases_map.csv
-  - github_assets_map.csv
-- Delivery gating (optional but enabled):
-  - If the work order has SPEND transaction items since --since but the ZIP contains no runtime files,
-    the workorder row is downgraded to PARTIAL with a DELIVERY_MISSING note.
-
-Assumptions:
-- You use `gh` CLI with GH_TOKEN set (Actions uses secrets.GITHUB_TOKEN).
-- Billing-state CSV schemas match your tail output.
-"""
-
 from __future__ import annotations
 
 import argparse
-import csv
-import datetime as dt
 import json
 import os
-import pathlib
-import secrets
-import string
-import subprocess
-import zipfile
-from typing import Dict, List, Optional, Tuple
+import sys
+import tempfile
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+# --- Import repo-local "platform" package (avoid stdlib name collision) ---
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+sys.modules.pop("platform", None)
+
+from platform.common.id_policy import generate_unique_id  # type: ignore  # noqa: E402
+from platform.infra.config import load_runtime_profile  # type: ignore  # noqa: E402
+from platform.infra.factory import build_infra  # type: ignore  # noqa: E402
+from platform.infra.models import DeliverableArtifactRecord, TransactionRecord, TransactionItemRecord  # type: ignore  # noqa: E402
+from platform.orchestration.idempotency import key_artifact_publish, key_refund  # type: ignore  # noqa: E402
+from platform.utils.csvio import read_csv  # type: ignore  # noqa: E402
+from platform.artifacts.checksums import sha256_file  # type: ignore  # noqa: E402
+from platform.artifacts.packaging import ZipEntry, zip_with_manifest  # type: ignore  # noqa: E402
+from platform.utils.time import utcnow_iso  # type: ignore  # noqa: E402
 
 
-BASE62_ALPHABET = string.digits + string.ascii_uppercase + string.ascii_lowercase
+@dataclass
+class PublishTarget:
+    tenant_id: str
+    work_order_id: str
+    step_id: str
+    module_id: str
+    deliverable_id: str
+    spend_transaction_id: str
+    spend_transaction_item_id: str
 
 
-def base62_id(n: int) -> str:
-    """Return a random Base62 string of length n."""
-    return "".join(secrets.choice(BASE62_ALPHABET) for _ in range(n))
+def _parse_iso_z(s: str) -> datetime:
+    v = (s or "").strip()
+    if not v:
+        raise ValueError("empty timestamp")
+    if v.endswith("Z"):
+        v = v[:-1] + "+00:00"
+    return datetime.fromisoformat(v)
 
 
-def iso_parse(s: str) -> dt.datetime:
-    if not s:
-        return dt.datetime.min.replace(tzinfo=dt.timezone.utc)
-    s = s.strip()
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
-    return dt.datetime.fromisoformat(s).astimezone(dt.timezone.utc)
+def _artifact_key_for_deliverable(*, tenant_id: str, work_order_id: str, step_id: str, module_id: str, deliverable_id: str) -> str:
+    # Canonical object key structure (portable across stores)
+    return f"tenants/{tenant_id}/workorders/{work_order_id}/steps/{step_id}/modules/{module_id}/deliverables/{deliverable_id}/artifact.zip"
 
 
-def read_csv(path: pathlib.Path) -> List[dict]:
-    if not path.exists():
-        return []
-    with path.open("r", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+def _load_reason_index(repo_root: Path) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    p = repo_root / "maintenance-state" / "reason_catalog.csv"
+    if not p.exists():
+        return out
+    for r in read_csv(p):
+        key = str(r.get("reason_key", "")).strip()
+        slug = str(r.get("reason_slug", "")).strip()
+        if key and slug:
+            out[slug] = key
+    return out
 
 
-def write_csv(path: pathlib.Path, rows: List[dict], headers: List[str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=headers)
-        w.writeheader()
-        for r in rows:
-            w.writerow({h: r.get(h, "") for h in headers})
+def _find_purchased_deliverables(
+    *,
+    ledger,
+    since_dt: datetime,
+    tenant_id: str = "",
+    work_order_id: str = "",
+) -> List[PublishTarget]:
+    items = ledger.list_transaction_items(tenant_id=tenant_id or None, work_order_id=work_order_id or None)
+    out: List[PublishTarget] = []
+    for it in items:
+        if str(it.type).upper() != "SPEND":
+            continue
+        did = str(it.deliverable_id or "").strip()
+        # Skip internal deliverable ids (publisher reconciles only user-facing deliverables).
+        # Internal convention: any deliverable_id starting with '__' is internal (e.g. __run__, __delivery_evidence__).
+        if not did or did.startswith("__"):
+            continue
+        try:
+            created = _parse_iso_z(str(it.created_at))
+        except Exception:
+            continue
+        if created < since_dt:
+            continue
+        out.append(
+            PublishTarget(
+                tenant_id=str(it.tenant_id),
+                work_order_id=str(it.work_order_id),
+                step_id=str(it.step_id),
+                module_id=str(it.module_id),
+                deliverable_id=did,
+                spend_transaction_id=str(it.transaction_id),
+                spend_transaction_item_id=str(it.transaction_item_id),
+            )
+        )
+    # Deterministic order
+    out.sort(key=lambda x: (x.tenant_id, x.work_order_id, x.step_id, x.module_id, x.deliverable_id))
+    return out
 
 
-def run(cmd: List[str]) -> str:
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    if proc.returncode != 0:
-        raise RuntimeError(f"Command failed ({proc.returncode}): {' '.join(cmd)}\n{proc.stdout}")
-    return proc.stdout
-
-
-def gh_release_id(repo: str, tag: str) -> str:
-    # gh release view --json id prints numeric id as number; we keep as string
-    out = run(["gh", "release", "view", tag, "--repo", repo, "--json", "id"])
-    data = json.loads(out)
-    return str(data.get("id", ""))
-
-
-def gh_asset_id(repo: str, tag: str, asset_name: str) -> str:
-    out = run(["gh", "release", "view", tag, "--repo", repo, "--json", "assets"])
-    data = json.loads(out)
-    for a in data.get("assets", []) or []:
-        if a.get("name") == asset_name:
-            return str(a.get("id", ""))
-    return ""
-
-
-def ensure_release(repo: str, tag: str, title: str, body: str) -> None:
-    try:
-        print(run(["gh", "release", "create", tag, "--repo", repo, "--title", title, "--notes", body]))
-    except Exception as e:
-        # likely exists
-        print(f"[publish_artifacts_release] release create skipped/failed (likely exists): {e}")
-
-
-def upload_asset(repo: str, tag: str, asset_path: pathlib.Path) -> None:
-    print(run(["gh", "release", "upload", tag, str(asset_path), "--repo", repo, "--clobber"]))
-
-
-def zip_add_runtime_runs(runtime_runs_dir: pathlib.Path, zip_path: pathlib.Path, since_dt: dt.datetime) -> int:
-    """
-    Add runtime runs files modified >= since_dt.
-    Returns number of files added.
-    """
-    added = 0
-    with zipfile.ZipFile(zip_path, "a", compression=zipfile.ZIP_DEFLATED) as zf:
-        for root, _, files in os.walk(runtime_runs_dir):
-            for fn in files:
-                fp = pathlib.Path(root) / fn
-                try:
-                    mtime = dt.datetime.fromtimestamp(fp.stat().st_mtime, tz=dt.timezone.utc)
-                except Exception:
-                    mtime = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
-                if mtime < since_dt:
-                    continue
-                rel = fp.relative_to(runtime_runs_dir)
-                zf.write(fp, str(pathlib.Path("runtime_runs") / rel))
-                added += 1
-    return added
-
-
-def extract_workorder_rows(workorders_log: List[dict], tenant_id: str, work_order_id: str) -> List[dict]:
-    return [r for r in workorders_log if (r.get("tenant_id") or "").strip() == tenant_id and (r.get("work_order_id") or "").strip() == work_order_id]
-
-
-def downgrade_workorder_to_partial(billing_state_dir: pathlib.Path, tenant_id: str, work_order_id: str, reason: str) -> bool:
-    """
-    Downgrade the most recent workorders_log row (matching tenant/workorder) from COMPLETED to PARTIAL.
-    Returns True if changed.
-    """
-    path = billing_state_dir / "workorders_log.csv"
-    rows = read_csv(path)
-    changed = False
-    # find last matching row
-    for i in range(len(rows) - 1, -1, -1):
-        r = rows[i]
-        if (r.get("tenant_id") or "").strip() == tenant_id and (r.get("work_order_id") or "").strip() == work_order_id:
-            status = (r.get("status") or "").strip().upper()
-            if status == "COMPLETED":
-                r["status"] = "PARTIAL"
-                note = (r.get("note") or "").strip()
-                extra = f"DELIVERY_MISSING: {reason}"
-                r["note"] = (note + " | " + extra) if note else extra
-                changed = True
-            break
-    if changed:
-        headers = list(rows[0].keys()) if rows else [
-            "work_order_id","tenant_id","status","created_at","started_at","ended_at","note","metadata_json"
-        ]
-        write_csv(path, rows, headers)
-    return changed
-
-
-def upsert_release_maps(
-    billing_state_dir: pathlib.Path,
-    tenant_id: str,
-    work_order_id: str,
-    tag: str,
-    github_release_id: str,
-    asset_name: str,
-    github_asset_id: str,
-    created_at: str,
+def _ensure_refund_for_missing(
+    *,
+    ledger,
+    billing_state_dir: Path,
+    reason_key: str,
+    target: PublishTarget,
+    note: str,
+    metadata: Dict[str, Any],
 ) -> None:
-    # github_releases_map.csv
-    rel_path = billing_state_dir / "github_releases_map.csv"
-    rel_rows = read_csv(rel_path)
-    rel_headers = ["release_id", "github_release_id", "tag", "tenant_id", "work_order_id", "created_at"]
-    existing = next((r for r in rel_rows if (r.get("tag") or "") == tag), None)
-    if existing is None:
-        rel_rows.append({
-            "release_id": base62_id(8),
-            "github_release_id": github_release_id,
-            "tag": tag,
-            "tenant_id": tenant_id,
-            "work_order_id": work_order_id,
-            "created_at": created_at,
-        })
-    else:
-        existing["github_release_id"] = github_release_id
-        existing["tenant_id"] = tenant_id
-        existing["work_order_id"] = work_order_id
-    write_csv(rel_path, rel_rows, rel_headers)
+    idem = key_refund(
+        tenant_id=target.tenant_id,
+        work_order_id=target.work_order_id,
+        step_id=target.step_id,
+        module_id=target.module_id,
+        deliverable_id=target.deliverable_id,
+        reason_key=reason_key,
+    )
 
-    # github_assets_map.csv
-    asset_path = billing_state_dir / "github_assets_map.csv"
-    asset_rows = read_csv(asset_path)
-    asset_headers = ["asset_id", "github_asset_id", "release_id", "asset_name", "created_at"]
+    # Idempotency: scan existing items for idem
+    existing = ledger.list_transaction_items(tenant_id=target.tenant_id, work_order_id=target.work_order_id)
+    for it in existing:
+        if str(it.type).upper() != "REFUND":
+            continue
+        try:
+            m = json.loads(str(it.metadata_json or "{}")) if str(it.metadata_json or "").strip() else {}
+        except Exception:
+            m = {}
+        if str(m.get("idempotency_key") or "").strip() == idem:
+            return
 
-    # find release_id
-    rel_id = next((r.get("release_id") for r in rel_rows if (r.get("tag") or "") == tag), "") or base62_id(8)
+    # Create a new REFUND transaction and one item mirroring the deliverable
+    used_tx = {str(r.get("transaction_id")) for r in read_csv(billing_state_dir / "transactions.csv")}
+    used_ti = {str(r.get("transaction_item_id")) for r in read_csv(billing_state_dir / "transaction_items.csv")}
 
-    a_existing = next((r for r in asset_rows if (r.get("asset_name") or "") == asset_name and (r.get("release_id") or "") == rel_id), None)
-    if a_existing is None:
-        asset_rows.append({
-            "asset_id": base62_id(8),
-            "github_asset_id": github_asset_id,
-            "release_id": rel_id,
-            "asset_name": asset_name,
-            "created_at": created_at,
-        })
-    else:
-        a_existing["github_asset_id"] = github_asset_id
-    write_csv(asset_path, asset_rows, asset_headers)
+    tx_id = generate_unique_id("transaction_id", used_tx)
+    ti_id = generate_unique_id("transaction_item_id", used_ti)
+
+    tx_meta = {
+        "idempotency_key": f"tx_refund_{idem}",
+        "reason_key": reason_key,
+        "deliverable_id": target.deliverable_id,
+        "step_id": target.step_id,
+        "module_id": target.module_id,
+        "refund_for_transaction_item_id": target.spend_transaction_item_id,
+    }
+    ledger.post_transaction(
+        TransactionRecord(
+            transaction_id=tx_id,
+            tenant_id=target.tenant_id,
+            work_order_id=target.work_order_id,
+            type="REFUND",
+            amount_credits=0,
+            created_at=utcnow_iso(),
+            note=note,
+            metadata_json=json.dumps(tx_meta, separators=(",", ":")),
+        )
+    )
+
+    meta2 = dict(metadata)
+    meta2["idempotency_key"] = idem
+    meta2["reason_key"] = reason_key
+
+    ledger.post_transaction_item(
+        TransactionItemRecord(
+            transaction_item_id=ti_id,
+            transaction_id=tx_id,
+            tenant_id=target.tenant_id,
+            module_id=target.module_id,
+            work_order_id=target.work_order_id,
+            step_id=target.step_id,
+            deliverable_id=target.deliverable_id,
+            feature=target.deliverable_id,
+            type="REFUND",
+            amount_credits=0,
+            created_at=utcnow_iso(),
+            note=note,
+            metadata_json=json.dumps(meta2, separators=(",", ":")),
+        )
+    )
 
 
-def main() -> int:
+def _write_zip_with_manifest(*, zip_path: Path, files: List[Tuple[Path, str]], manifest: Dict[str, Any]) -> None:
+    entries = [ZipEntry(arcname=arcname, source_path=src) for src, arcname in files]
+    zip_with_manifest(zip_path=zip_path, entries=entries, manifest=manifest, manifest_arcname="deliverable_manifest.json")
+
+
+def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--billing-state-dir", required=True)
     ap.add_argument("--runtime-dir", required=True)
-    ap.add_argument("--since", required=True)
-    ap.add_argument("--repo", required=True)
+    ap.add_argument("--since", required=True, help="ISO8601 timestamp (Z) to filter purchases")
+    ap.add_argument("--tenant-id", default="")
+    ap.add_argument("--work-order-id", default="")
+    ap.add_argument("--dist-dir", default="dist_artifacts")
+    ap.add_argument("--runtime-profile", default="", help="Path to runtime profile YAML")
+    ap.add_argument("--no-publish", action="store_true", help="Do not upload; only write ZIPs to dist-dir")
     ap.add_argument("--run-url", default="")
-    ap.add_argument("--no-publish", action="store_true")
-    ap.add_argument("--enforce-delivery-gate", action="store_true", default=True)
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
-    billing_state_dir = pathlib.Path(args.billing_state_dir)
-    runtime_dir = pathlib.Path(args.runtime_dir)
-    since_dt = iso_parse(args.since)
+    billing_state_dir = Path(args.billing_state_dir)
+    runtime_dir = Path(args.runtime_dir)
+    since_dt = _parse_iso_z(args.since)
 
-    if "GITHUB_ACTIONS" in os.environ and not os.environ.get("GH_TOKEN") and not args.no_publish:
-        print("[publish_artifacts_release][FAIL] GH_TOKEN is not set; cannot publish Releases.")
-        return 2
+    profile = load_runtime_profile(REPO_ROOT, cli_path=str(getattr(args, 'runtime_profile', '') or ''))
+    infra = build_infra(repo_root=REPO_ROOT, profile=profile, billing_state_dir=billing_state_dir, runtime_dir=runtime_dir)
 
-    # Inputs
-    workorders_log = read_csv(billing_state_dir / "workorders_log.csv")
-    module_runs_log = read_csv(billing_state_dir / "module_runs_log.csv")
-    transaction_items = read_csv(billing_state_dir / "transaction_items.csv")
+    reason_index = _load_reason_index(REPO_ROOT)
+    delivery_missing_key = reason_index.get("delivery_missing", "delivery_missing")
 
-    # Determine impacted workorders based on:
-    # - module runs ended since --since (COMPLETED)
-    # - transaction items created since --since (SPEND/REFUND)
-    impacted: Dict[Tuple[str, str], dict] = {}
+    purchases = _find_purchased_deliverables(ledger=infra.ledger, since_dt=since_dt, tenant_id=args.tenant_id, work_order_id=args.work_order_id)
 
-    for r in module_runs_log:
-        ended_at = iso_parse((r.get("ended_at") or "").strip())
-        if ended_at < since_dt:
-            continue
-        tenant_id = (r.get("tenant_id") or "").strip()
-        work_order_id = (r.get("work_order_id") or "").strip()
-        if tenant_id and work_order_id:
-            impacted.setdefault((tenant_id, work_order_id), {})["has_runs"] = True
-
-    for r in transaction_items:
-        created_at = iso_parse((r.get("created_at") or "").strip())
-        if created_at < since_dt:
-            continue
-        tenant_id = (r.get("tenant_id") or "").strip()
-        # NOTE: transaction_items.csv does NOT have work_order_id in your schema; join is done in tail
-        # For publishing, we infer impacted workorders from module_runs/workorders_log.
-        # If you later add work_order_id to transaction_items schema, extend this here.
-        if tenant_id:
-            pass
-
-    if not impacted:
-        print("[publish_artifacts_release] No module runs since --since; nothing to publish.")
-        return 0
-
-
-# Choose a transaction_id per workorder to make artifact ZIP names unique and non-overwriting.
-# Preference:
-#  1) Most recent SPEND created_at >= since_dt
-#  2) Otherwise most recent transaction created_at >= since_dt
-#  3) Otherwise most recent SPEND overall
-#  4) Otherwise most recent transaction overall
-txid_map: Dict[Tuple[str, str], str] = {}
-
-def _tx_dt(r: dict) -> dt.datetime:
-    return iso_parse((r.get("created_at") or "").strip())
-
-def _pick_txid(tenant_id: str, work_order_id: str) -> str:
-    cands = [
-        r for r in transactions
-        if (r.get("tenant_id") or "").strip() == tenant_id
-        and (r.get("work_order_id") or "").strip() == work_order_id
-        and (r.get("transaction_id") or "").strip()
-    ]
-    if not cands:
-        return ""
-    recent = [r for r in cands if _tx_dt(r) >= since_dt]
-
-    def _choose(rows: List[dict]) -> dict | None:
-        if not rows:
-            return None
-        spends = [r for r in rows if (r.get("type") or "").strip().upper() == "SPEND"]
-        target = spends if spends else rows
-        return max(target, key=_tx_dt)
-
-    picked = _choose(recent) or _choose(cands)
-    return ((picked or {}).get("transaction_id") or "").strip()
-
-for (tenant_id, work_order_id) in impacted.keys():
-    txid = _pick_txid(tenant_id, work_order_id) or "noTx"
-    txid_map[(tenant_id, work_order_id)] = txid
-
-    dist_dir = pathlib.Path("dist_artifacts")
+    dist_dir = Path(args.dist_dir)
     dist_dir.mkdir(parents=True, exist_ok=True)
 
-    for (tenant_id, work_order_id) in sorted(impacted.keys()):
-        # Build zip
-        txid = txid_map.get((tenant_id, work_order_id), "noTx")
-        zip_path = dist_dir / f"artifacts_{tenant_id}_{work_order_id}_{txid}.zip"
-        if zip_path.exists():
-            zip_path.unlink()
+    any_refunds = False
+    published_count = 0
+    published_by_pair: dict[tuple[str, str], int] = {}
 
-        files_added_runtime = 0
-
-        # Add workorder yaml if present
-        wo_yaml = pathlib.Path("tenants") / tenant_id / "workorders" / f"{work_order_id}.yml"
-        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            if wo_yaml.exists():
-                zf.write(wo_yaml, f"workorder/{wo_yaml.name}")
-
-        # Add runtime runs (canonical)
-        runtime_runs_dir = runtime_dir / "runs" / tenant_id / work_order_id
-        if runtime_runs_dir.exists():
-            files_added_runtime += zip_add_runtime_runs(runtime_runs_dir, zip_path, since_dt)
-
-        # Manifest
-        # determine whether spend items exist for this workorder (via module runs in this scope)
-        spend_items = [
-            r for r in transaction_items
-            if (r.get("tenant_id") or "").strip() == tenant_id
-            and (r.get("type") or "").strip().upper() == "SPEND"
-            and iso_parse((r.get("created_at") or "").strip()) >= since_dt
-        ]
-        manifest = {
-            "tenant_id": tenant_id,
-            "work_order_id": work_order_id,
-            "since_utc": since_dt.isoformat(),
-            "source_run_url": args.run_url,
-            "runtime_runs_dir": str(runtime_runs_dir),
-            "runtime_files_added": files_added_runtime,
-            "spend_items_since_count": len(spend_items),
-            "note": "If runtime_files_added == 0 and spend_items_since_count > 0, delivery is missing.",
-        }
-        with zipfile.ZipFile(zip_path, "a", compression=zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr("manifest.json", json.dumps(manifest, indent=2))
-
-        # Delivery gating: if purchased but no runtime files packaged, downgrade COMPLETED -> PARTIAL
-        if args.enforce_delivery_gate and files_added_runtime == 0 and len(spend_items) > 0:
-            changed = downgrade_workorder_to_partial(billing_state_dir, tenant_id, work_order_id, "purchased but no runtime files packaged")
-            if changed:
-                print(f"[publish_artifacts_release] Downgraded workorder to PARTIAL due to missing delivery: {tenant_id}/{work_order_id}")
-
-        if args.no_publish:
-            print(f"[publish_artifacts_release] Built (no-publish): {zip_path}")
+    for t in purchases:
+        try:
+            deliverable = infra.registry.get_deliverable(t.module_id, t.deliverable_id)
+        except Exception as e:
+            _ensure_refund_for_missing(
+                ledger=infra.ledger,
+                billing_state_dir=billing_state_dir,
+                reason_key=delivery_missing_key,
+                target=t,
+                note=f"Refund: deliverable not found in contract ({t.module_id}:{t.deliverable_id})",
+                metadata={"error": str(e), "type": "MissingDeliverable"},
+            )
+            any_refunds = True
             continue
 
-        tag = f"artifacts-{tenant_id}-{work_order_id}"
-        title = f"Artifacts: {tenant_id}/{work_order_id}"
-        body = (
-            "Purchased and/or successfully generated artifacts for this work order.\n\n"
-            f"- Tenant: {tenant_id}\n"
-            f"- Work Order: {work_order_id}\n"
-            f"- Since (UTC): {since_dt.isoformat()}\n"
-            f"- Runtime files added: {files_added_runtime}\n"
-        )
-        if args.run_url:
-            body += f"- Workflow run: {args.run_url}\n"
+        # Repo registry returns plain dict deliverables; future adapters may return typed objects.
+        if isinstance(deliverable, dict):
+            outs = deliverable.get("outputs") or []
+        else:
+            outs = getattr(deliverable, "outputs", None) or []
 
-        ensure_release(args.repo, tag, title, body)
-        upload_asset(args.repo, tag, zip_path)
+        output_ids = [str(x) for x in outs]
 
-        # Map ids into billing-state
-        rid = gh_release_id(args.repo, tag)
-        aid = gh_asset_id(args.repo, tag, zip_path.name)
-        upsert_release_maps(
-            billing_state_dir=billing_state_dir,
-            tenant_id=tenant_id,
-            work_order_id=work_order_id,
-            tag=tag,
-            github_release_id=rid,
-            asset_name=zip_path.name,
-            github_asset_id=aid,
-            created_at=dt.datetime.now(tz=dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        )
+        # Resolve outputs via RunStateStore. Download if non-local.
+        with tempfile.TemporaryDirectory() as td:
+            tmpdir = Path(td)
+            zip_files: List[Tuple[Path, str]] = []
+            missing: List[str] = []
 
-        print(f"[publish_artifacts_release] Published {zip_path.name} to release tag {tag}")
+            for oid in output_ids:
+                try:
+                    outrec = infra.run_state.get_output(
+                        tenant_id=t.tenant_id,
+                        work_order_id=t.work_order_id,
+                        step_id=t.step_id,
+                        output_id=oid,
+                    )
+                except Exception:
+                    missing.append(oid)
+                    continue
 
+                uri = str(outrec.uri or "").strip()
+                rel_path = str(outrec.path or "").lstrip("/")
+
+                if uri.startswith("file://"):
+                    src = Path(uri[7:])
+                    if not src.exists():
+                        missing.append(oid)
+                        continue
+                    zip_files.append((src, rel_path))
+                else:
+                    # Treat uri as artifact store key (after optional scheme)
+                    key = uri
+                    if "://" in uri:
+                        key = uri.split("://", 1)[1]
+                    dest = tmpdir / rel_path
+                    try:
+                        infra.artifacts.get_to_file(key, dest)
+                        zip_files.append((dest, rel_path))
+                    except Exception:
+                        missing.append(oid)
+                        continue
+
+            if missing:
+                _ensure_refund_for_missing(
+                    ledger=infra.ledger,
+                    billing_state_dir=billing_state_dir,
+                    reason_key=delivery_missing_key,
+                    target=t,
+                    note=f"Refund: missing outputs for {t.module_id}:{t.deliverable_id}",
+                    metadata={"missing_outputs": missing, "type": "DeliveryMissing"},
+                )
+                any_refunds = True
+                continue
+
+            artifact_key = _artifact_key_for_deliverable(
+                tenant_id=t.tenant_id,
+                work_order_id=t.work_order_id,
+                step_id=t.step_id,
+                module_id=t.module_id,
+                deliverable_id=t.deliverable_id,
+            )
+            publish_idem = key_artifact_publish(
+                tenant_id=t.tenant_id,
+                work_order_id=t.work_order_id,
+                step_id=t.step_id,
+                module_id=t.module_id,
+                deliverable_id=t.deliverable_id,
+                artifact_key=artifact_key,
+            )
+
+            # Idempotency: skip if deliverable artifact already recorded
+            already = False
+            try:
+                for r in infra.run_state.list_deliverable_artifacts(tenant_id=t.tenant_id, work_order_id=t.work_order_id):
+                    if r.step_id == t.step_id and r.module_id == t.module_id and r.deliverable_id == t.deliverable_id:
+                        if str(r.idempotency_key or "").strip() == publish_idem and str(r.status or "").upper() == "PUBLISHED":
+                            already = True
+                            break
+            except Exception:
+                already = False
+
+            if already:
+                continue
+
+            manifest = {
+                "tenant_id": t.tenant_id,
+                "work_order_id": t.work_order_id,
+                "step_id": t.step_id,
+                "module_id": t.module_id,
+                "deliverable_id": t.deliverable_id,
+                "artifact_key": artifact_key,
+                "spend_transaction_id": t.spend_transaction_id,
+                "spend_transaction_item_id": t.spend_transaction_item_id,
+                "run_url": str(args.run_url or "").strip(),
+                "created_at": utcnow_iso(),
+                "files": [],
+            }
+
+            # Normalize outputs to file entries. Some outputs are directories (for example thumbnails/).
+            flat_files: List[Tuple[Path, str]] = []
+            for src, arc in zip_files:
+                if src.is_dir():
+                    base = arc.rstrip("/")
+                    for child in sorted(src.rglob("*")):
+                        if child.is_file():
+                            rel = child.relative_to(src).as_posix()
+                            flat_files.append((child, f"{base}/{rel}" if base else rel))
+                else:
+                    flat_files.append((src, arc))
+
+            # De-duplicate by archive path to avoid zipfile duplicate-name warnings.
+            seen_arcs: set[str] = set()
+            deduped: List[Tuple[Path, str]] = []
+            for src, arc in flat_files:
+                a = str(arc or "").lstrip("/")
+                if not a or a in seen_arcs:
+                    continue
+                seen_arcs.add(a)
+                deduped.append((src, a))
+            flat_files = deduped
+
+            for src, arc in flat_files:
+                manifest["files"].append({"path": arc, "sha256": sha256_file(src), "bytes": int(src.stat().st_size)})
+
+            local_zip = dist_dir / f"{t.tenant_id}__{t.work_order_id}__{t.step_id}__{t.module_id}__{t.deliverable_id}.zip"
+            _write_zip_with_manifest(zip_path=local_zip, files=flat_files, manifest=manifest)
+
+            uri = ""
+            if not args.no_publish:
+                uri = infra.artifacts.put_file(artifact_key, local_zip, content_type="application/zip")
+
+            rec = DeliverableArtifactRecord(
+                tenant_id=t.tenant_id,
+                work_order_id=t.work_order_id,
+                step_id=t.step_id,
+                module_id=t.module_id,
+                deliverable_id=t.deliverable_id,
+                artifact_key=artifact_key,
+                artifact_uri=uri or local_zip.resolve().as_uri(),
+                status="PUBLISHED" if not args.no_publish else "STAGED",
+                created_at=utcnow_iso(),
+                idempotency_key=publish_idem,
+                metadata_json=json.dumps({"manifest": manifest}, separators=(",", ":")),
+            )
+            try:
+                infra.run_state.record_deliverable_artifact(rec)
+            except Exception:
+                pass
+            published_count += 1
+            k = (t.tenant_id, t.work_order_id)
+            published_by_pair[k] = int(published_by_pair.get(k, 0)) + 1
+
+
+    # Update run status: PARTIAL if any refunds exist for delivery_missing, else COMPLETED.
+    #
+    # IMPORTANT: The E2E workflow calls publish without --tenant-id/--work-order-id,
+    # so we reconcile statuses for every workorder touched by this publish scan.
+    try:
+        pairs: set[tuple[str, str]] = set()
+        if args.tenant_id and args.work_order_id:
+            pairs.add((args.tenant_id, args.work_order_id))
+        else:
+            pairs.update({(t.tenant_id, t.work_order_id) for t in purchases})
+
+        for (tid, wid) in sorted(pairs):
+            refunds = infra.ledger.list_transaction_items(tenant_id=tid, work_order_id=wid)
+            has_delivery_missing_refund = False
+            for it in refunds:
+                if str(it.type).upper() != "REFUND":
+                    continue
+                try:
+                    _m = json.loads(str(it.metadata_json or "{}")) if str(it.metadata_json or "").strip() else {}
+                except Exception:
+                    _m = {}
+                if str(_m.get("reason_key") or "").strip() == delivery_missing_key:
+                    has_delivery_missing_refund = True
+                    break
+
+            status = "PARTIAL" if has_delivery_missing_refund else "COMPLETED"
+            infra.run_state.set_run_status(
+                tenant_id=tid,
+                work_order_id=wid,
+                status=status,
+                metadata={
+                    "publisher": "publish_artifacts_release.py",
+                    "published": int(published_by_pair.get((tid, wid), 0)),
+                    "published_total": int(published_count),
+                    "awaiting_publish": False,
+                    "any_delivery_missing": bool(has_delivery_missing_refund),
+                },
+            )
+    except Exception:
+        pass
+
+    if any_refunds:
+        return 2
     return 0
 
 

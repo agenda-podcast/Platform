@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 from typing import Any, Dict, List
 
 
@@ -52,8 +53,18 @@ def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
     out_path = outputs_dir / "derived_queries.txt"
     out_path.write_text("\n".join(deduped) + "\n", encoding="utf-8")
 
+    report = {
+        "topic": topic,
+        "language": language,
+        "freshness_days": freshness_days,
+        "summary_style": style,
+        "count": len(deduped),
+        "queries": deduped,
+    }
+    (outputs_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
     return {
         "status": "COMPLETED",
-        "files": [out_path.name],
+        "files": [out_path.name, "report.json"],
         "count": len(deduped),
     }

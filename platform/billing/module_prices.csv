@@ -1,4 +1,17 @@
-module_id,price_run_credits,price_save_to_release_credits,effective_from,effective_to,active,notes
-U2T,5,2,1970-01-01,,true,Auto-added by Maintenance.
-9SD,5,2,1970-01-01,,true,Auto-added by Maintenance.
-wxz,5,2,1970-01-01,,true,Auto-added by Maintenance.
+module_id,deliverable_id,price_credits,effective_from,effective_to,active,notes
+9SD,__run__,5,1970-01-01,,true,Auto-added by Maintenance. Migrated: price_run_credits.
+9SD,tenant_outputs,2,1970-01-01,,true,Auto-added by Maintenance. Migrated: price_save_to_release_credits.
+U2T,__run__,5,1970-01-01,,true,Auto-added by Maintenance. Migrated: price_run_credits.
+U2T,tenant_outputs,2,1970-01-01,,true,Auto-added by Maintenance. Migrated: price_save_to_release_credits.
+bigfile_gen,__run__,5,1970-01-01,,true,E2E helper module: run.
+bigfile_gen,tenant_outputs,2,1970-01-01,,true,E2E helper module: tenant outputs.
+deliver_dropbox,__run__,1,1970-01-01,,true,System module: delivery step run (dropbox).
+deliver_email,__run__,1,1970-01-01,,true,System module: delivery step run (email).
+package_std,__run__,1,1970-01-01,,true,System module: packaging step run.
+package_std,package_artifacts,0,1970-01-01,,true,System module: packaging deliverable artifacts.
+wxi,__run__,5,1970-01-01,,true,Auto-added by Maintenance. Migrated: price_run_credits.
+wxi,images,2,1970-01-01,,true,Auto-added by Maintenance. Migrated: price_save_to_release_credits.
+wxi,metadata,2,1970-01-01,,true,Auto-added by Maintenance. Migrated: price_save_to_release_credits.
+wxi,thumbnails,2,1970-01-01,,true,Auto-added by Maintenance. Migrated: price_save_to_release_credits.
+wxz,__run__,5,1970-01-01,,true,Auto-added by Maintenance. Migrated: price_run_credits.
+wxz,tenant_outputs,2,1970-01-01,,true,Auto-added by Maintenance. Migrated: price_save_to_release_credits.

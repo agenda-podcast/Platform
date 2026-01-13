@@ -6,7 +6,7 @@ errors:
   - error_code: BAD_INPUT
     severity: ERROR
     description: "Work Order inputs for module wxz do not conform to the tenant parameters schema."
-    remediation: "Validate tenant inputs against platform/schemas/work_order_modules/wxz.schema.json and correct the values."
+    remediation: "Validate tenant inputs against modules/wxz/module.yml (ports.inputs.port) and maintenance-state/module_contract_rules.csv, then correct the values."
   - error_code: GOOGLE_API_ERROR
     severity: ERROR
     description: "Google Custom Search API returned a non-2xx response or an invalid payload."

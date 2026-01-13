@@ -1,0 +1,49 @@
+profile_name: dev_github
+description: "Current repository-backed behavior: CSV ledgers + local python module execution + GitHub Releases publishing."
+adapters:
+  registry:
+    kind: repo_csv
+    settings:
+      modules_csv: platform/modules/modules.csv
+
+  run_state_store:
+    kind: billing_state_csv
+    settings:
+      billing_state_dir: .billing-state
+
+  ledger_writer:
+    kind: billing_state_csv
+    settings:
+      billing_state_dir: .billing-state
+
+  artifact_store:
+    kind: multi
+    settings:
+      policy: best_effort_secondary
+      stores:
+        # Primary store: GitHub Releases (dev-friendly; no infra setup required)
+        - kind: github_release
+          settings:
+            default_tag: platform-artifacts
+
+        # Secondary store: S3 (optional; enabled when AWS credentials + bucket are present)
+        - kind: s3
+          settings:
+            # If empty, S3ArtifactStore will read PLATFORM_ARTIFACTS_S3_BUCKET.
+            bucket: ""
+            prefix: platform/dev
+
+  execution_backend:
+    kind: local_python
+    settings:
+      modules_dir: modules
+
+  artifact_publisher:
+    kind: github_releases
+    settings:
+      enabled: true
+
+  tenant_credentials_store:
+    kind: csv_dev
+    settings:
+      tenants_root: tenants

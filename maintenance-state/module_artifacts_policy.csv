@@ -1,4 +1,9 @@
 module_id,platform_artifacts_enabled,notes
 9SD,true,
 U2T,true,
+bigfile_gen,true,
+deliver_dropbox,true,
+deliver_email,true,
+package_std,true,
+wxi,true,
 wxz,true,

@@ -60,7 +60,10 @@ jobs:
           SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}
         shell: bash
         run: |
-          python -m platform.cli orchestrator             --runtime-dir "${RUNTIME_DIR}"             --billing-state-dir "${BILLING_STATE_DIR}"
+          python -m platform.cli orchestrator \
+            --runtime-profile config/runtime_profile.dev_github.yml \
+            --runtime-dir "${RUNTIME_DIR}" \
+            --billing-state-dir "${BILLING_STATE_DIR}"
 
       - name: Billing-state tail (this run only)
         if: always()
@@ -72,6 +75,35 @@ jobs:
             echo "scripts/billing_state_tail.py not found; skipping tail."
           fi
 
+      # Purchased + successfully generated outputs must be uploaded to GitHub Releases (not workflow artifacts).
+      - name: Package + publish purchased artifacts to Releases
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          python scripts/publish_artifacts_release.py \
+            --runtime-profile config/runtime_profile.dev_github.yml \
+            --billing-state-dir "${BILLING_STATE_DIR}" \
+            --runtime-dir "${RUNTIME_DIR}" \
+            --since "${{ steps.start.outputs.since }}" \
+            --repo "${{ github.repository }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Upload deliverable artifacts to S3 (optional)
+        if: success() && secrets.SECRETSTORE_PASSPHRASE != ''
+        env:
+          SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}
+          PLATFORM_ARTIFACTS_S3_PREFIX: platform/dev/deliverables
+        shell: bash
+        run: |
+          python scripts/upload_dist_artifacts_s3.py \
+            --dist-dir dist_artifacts \
+            --prefix "${PLATFORM_ARTIFACTS_S3_PREFIX}" \
+            --skip-if-missing-bucket \
+            --verify
+
+      # Publish billing-state Source of Truth after deliverables publish so the Release reflects the final reconciled ledger (incl. refunds).
       - name: Publish billing-state Source of Truth to GitHub Release
         if: always()
         env:
@@ -83,16 +115,3 @@ jobs:
             --release-tag "${BILLING_STATE_RELEASE_TAG}" \
             --repo "${{ github.repository }}"
 
-      # Purchased + successfully generated outputs must be uploaded to GitHub Releases (not workflow artifacts).
-      - name: Package + publish purchased artifacts to Releases
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          python scripts/publish_artifacts_release.py \
-            --billing-state-dir "${BILLING_STATE_DIR}" \
-            --runtime-dir "${RUNTIME_DIR}" \
-            --since "${{ steps.start.outputs.since }}" \
-            --repo "${{ github.repository }}" \
-            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

@@ -1,0 +1,36 @@
+reasons:
+- reason_key: mri
+  reason_slug: missing_required_input
+  description: A required module input was not provided or could not be resolved.
+- reason_key: bif
+  reason_slug: bad_input_format
+  description: Input was present but not in a supported format.
+- reason_key: msc
+  reason_slug: missing_secret
+  description: Required env secrets were not provided for Google Custom Search API.
+- reason_key: eae
+  reason_slug: external_api_error
+  description: Upstream API call failed or returned an error.
+- reason_key: owf
+  reason_slug: output_write_failed
+  description: Failed to write module outputs to the runtime directory.
+- reason_key: skc
+  reason_slug: skipped_cache
+  category_id: '12'
+  description: Cache was used; module execution skipped and marked FAILED for refund
+    logic.
+- reason_key: adm
+  reason_slug: artifacts_download_not_allowed_by_module
+  category_id: '14'
+  description: Artifacts were purchased, but this module does not support downloadable
+    release artifacts.
+- reason_key: adp
+  reason_slug: artifacts_download_not_allowed_by_platform
+  category_id: '14'
+  description: Artifacts were purchased, but platform policy disables downloadable
+    release artifacts for this module.
+- reason_key: ane
+  reason_slug: artifacts_not_eligible
+  category_id: '14'
+  description: Artifacts were purchased, but required deliverable outputs were not
+    produced or not publishable.

@@ -1,9 +1,8 @@
 # Billing defaults used by Maintenance when auto-adding module prices.
-# These are applied ONLY when a module_id is missing from platform/billing/module_prices.csv.
+# These are applied ONLY when a (module_id, deliverable_id) is missing from platform/billing/module_prices.csv.
 billing_defaults:
   # Credits charged for a successful module run (estimation + actual spend).
   default_price_run_credits: 5
 
-  # Credits charged when tenant requests "download artifacts"/"save to release".
-  # This maps to the platform field `price_save_to_release_credits`.
-  default_price_save_to_release_credits: 2
+  # Credits charged per purchased deliverable (estimation + actual spend).
+  default_price_deliverable_credits: 2

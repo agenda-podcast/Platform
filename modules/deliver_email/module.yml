@@ -1,0 +1,58 @@
+module_id: deliver_email
+name: deliver_email
+version: 0.1.0
+kind: delivery
+description: "System delivery module: send package.zip via email (attachment only)."
+
+metadata:
+  max_package_bytes: 20866662
+
+requirements:
+  secrets:
+    - name: EMAIL_SMTP_HOST
+      note: "SMTP host; if unset, uses dev outbox stub."
+    - name: EMAIL_SMTP_PORT
+      note: "SMTP port; if unset, uses dev outbox stub."
+  vars:
+    - name: EMAIL_SMTP_USE_TLS
+      value: "true"
+      note: "Use STARTTLS when connecting to SMTP."
+    - name: DELIVER_EMAIL_DEFAULT_RECIPIENT
+      value: ""
+      note: "Default recipient for dev runs when recipient_email input is omitted."
+
+ports:
+  inputs:
+    port:
+      - id: package_zip
+        type: file
+        required: true
+        format: application/zip
+        description: "ZIP file to deliver."
+      - id: manifest_json
+        type: file
+        required: false
+        format: application/json
+        description: "Optional manifest for the delivered package."
+      - id: recipient_email
+        type: string
+        required: false
+        format: text/plain
+        description: "Recipient email; falls back to DELIVER_EMAIL_DEFAULT_RECIPIENT."
+    limited_port: []
+  outputs:
+    port:
+      - id: delivery_receipt_json
+        type: file
+        path: delivery_receipt.json
+        format: application/json
+        description: "Delivery receipt with provider metadata and verification status."
+    limited_port: []
+
+deliverables:
+  port:
+    - deliverable_id: delivery_receipt
+      description: "Delivery receipt (tenant-visible)."
+      outputs:
+        - delivery_receipt_json
+  limited_port: []

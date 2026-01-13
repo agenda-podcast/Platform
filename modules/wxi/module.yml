@@ -1,0 +1,207 @@
+module_id: wxi
+name: google_search_images
+version: 0.2.0
+kind: transform
+description: "Google Custom Search (images): returns image result metadata and (optionally) downloads thumbnails/full images under platform-controlled deliverables."
+
+supports_downloadable_artifacts: true
+produces_manifest: true
+
+requirements:
+  secrets:
+    - name: GOOGLE_SEARCH_API_KEY
+      note: "Google Custom Search API key (used by wxi)."
+    - name: GOOGLE_SEARCH_ENGINE_ID
+      note: "Custom Search Engine (cx) id (used by wxi)."
+
+cache:
+  enabled: true
+  retention_default: 1w
+  key_inputs:
+    - queries
+    - safe
+    - max_items_per_query
+    - img_size
+    - img_type
+    - img_color_type
+    - img_dominant_color
+
+ports:
+  inputs:
+    port:
+      - id: queries
+        type: array
+        item_type: string
+        required: true
+        format: application/json
+        case_sensitive: false
+        description: "List of image search query strings (1..5)."
+        schema:
+          minItems: 1
+          maxItems: 5
+          items:
+            minLength: 1
+            maxLength: 256
+
+      - id: max_items_per_query
+        type: integer
+        required: false
+        default: 50
+        format: text/plain
+        case_sensitive: false
+        description: "Requested max results per query (hard-capped by the module to 100)."
+        schema:
+          minimum: 1
+          maximum: 100
+
+      - id: safe
+        type: string
+        required: false
+        default: active
+        format: text/plain
+        case_sensitive: true
+        description: "SafeSearch filtering. ENUM: active, off."
+        schema:
+          enum: [active, off]
+
+      - id: img_size
+        type: string
+        required: false
+        default: null
+        format: text/plain
+        case_sensitive: true
+        description: "Image size filter (Google CSE imgSize)."
+        schema:
+          nullable: true
+          enum: [icon, small, medium, large, xlarge, xxlarge, huge, null]
+
+      - id: img_type
+        type: string
+        required: false
+        default: null
+        format: text/plain
+        case_sensitive: true
+        description: "Image type filter (Google CSE imgType)."
+        schema:
+          nullable: true
+          enum: [clipart, face, lineart, stock, photo, animated, null]
+
+      - id: img_color_type
+        type: string
+        required: false
+        default: null
+        format: text/plain
+        case_sensitive: true
+        description: "Image color type filter (Google CSE imgColorType)."
+        schema:
+          nullable: true
+          enum: [color, gray, mono, null]
+
+      - id: img_dominant_color
+        type: string
+        required: false
+        default: null
+        format: text/plain
+        case_sensitive: true
+        description: "Dominant color filter (Google CSE imgDominantColor)."
+        schema:
+          nullable: true
+          enum: [black, blue, brown, gray, green, orange, pink, purple, red, teal, white, yellow, null]
+
+    limited_port:
+      - id: search_type
+        type: string
+        required: false
+        default: image
+        format: text/plain
+        case_sensitive: true
+        description: "Platform-enforced. Must be 'image' for this module."
+        schema:
+          enum: [image]
+
+      - id: lang
+        type: string
+        required: false
+        default: en
+        format: text/plain
+        case_sensitive: false
+        description: "Platform-only language hint used for output annotations."
+        schema:
+          minLength: 1
+          maxLength: 32
+
+      - id: download_thumbnails
+        type: boolean
+        required: false
+        default: false
+        format: text/plain
+        case_sensitive: false
+        description: "Platform-only. When true, download thumbnailLink files into thumbnails/."
+
+      - id: download_images
+        type: boolean
+        required: false
+        default: false
+        format: text/plain
+        case_sensitive: false
+        description: "Platform-only. When true, download full images into images/."
+
+  outputs:
+    port:
+      - id: results
+        type: file
+        path: results.jsonl
+        format: application/x-jsonlines
+        description: "One JSON object per line: query + image result item metadata."
+
+      - id: report
+        type: file
+        path: report.json
+        format: application/json
+        description: "Run summary (timing, counts, errors)."
+
+      - id: thumbnails_dir
+        type: dir
+        path: thumbnails
+        format: application/octet-stream
+        description: "Downloaded thumbnail images (if enabled)."
+
+      - id: thumbnails_index
+        type: file
+        path: thumbnails/index.jsonl
+        format: application/x-jsonlines
+        description: "Index of downloaded thumbnails (one JSON object per line)."
+
+      - id: images_dir
+        type: dir
+        path: images
+        format: application/octet-stream
+        description: "Downloaded full images (if enabled)."
+
+      - id: images_index
+        type: file
+        path: images/index.jsonl
+        format: application/x-jsonlines
+        description: "Index of downloaded full images (one JSON object per line)."
+
+    limited_port: []
+
+deliverables:
+  port:
+    - deliverable_id: metadata
+      description: "Metadata only: results.jsonl + report.json."
+      outputs: [results, report]
+
+    - deliverable_id: thumbnails
+      description: "Download thumbnails and provide thumbnails/index.jsonl."
+      limited_inputs:
+        download_thumbnails: true
+      outputs: [thumbnails_dir, thumbnails_index]
+
+    - deliverable_id: images
+      description: "Download full images and provide images/index.jsonl."
+      limited_inputs:
+        download_images: true
+      outputs: [images_dir, images_index]
+
+  limited_port: []

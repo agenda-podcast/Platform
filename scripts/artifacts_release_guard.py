@@ -66,15 +66,32 @@ def _iter_workorders(repo_root: Path) -> Iterable[Path]:
 
 
 def _workorder_requests_release_artifacts(workorder: Dict[str, Any]) -> bool:
-    # Support a few likely keys to avoid brittle coupling:
-    # - module-level: purchase_release_artifacts: true
-    # - module-level: artifacts_download: true
-    # - module-level: artifacts_download_purchased: true
-    # - workorder-level: purchase_release_artifacts: true (global default)
+    """Return True if this workorder requires downloadable release artifacts.
 
+    New shape (Milestone 1+):
+      workorder.steps[*].deliverables is a non-empty list => artifacts are required.
+
+    Back-compat keys are still supported to avoid brittle coupling.
+    """
+
+    # New: steps[*].deliverables
+    steps = workorder.get("steps") or []
+    if isinstance(steps, list):
+        for s in steps:
+            if not isinstance(s, dict):
+                continue
+            dels = s.get("deliverables")
+            if isinstance(dels, list) and any(str(x or "").strip() for x in dels):
+                return True
+            # tolerate comma-separated strings
+            if isinstance(dels, str) and dels.strip():
+                return True
+
+    # Back-compat: workorder-level key
     if _truthy(workorder.get("purchase_release_artifacts")):
         return True
 
+    # Back-compat: older workorders used modules: [ ... ]
     modules = workorder.get("modules") or []
     if not isinstance(modules, list):
         return False

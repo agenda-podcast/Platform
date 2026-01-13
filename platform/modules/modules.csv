@@ -1,4 +1,9 @@
 module_id,module_name,version,folder,entrypoint,description
-U2T,module_U2T,0.1.0,U2T,src/run.py:run,Placeholder module that generates a deterministic text artifact and a release manifest item.
-9SD,module_9SD,0.1.0,9SD,src/run.py:run,"Placeholder transform module that depends on 001, reads its output, and emits derived notes."
-wxz,google_search_pages,0.1.0,wxz,src/run.py:run,"Google Custom Search (web pages only): fetch up to 100 results per query, up to 5 queries per run."
+9SD,demo_derive_queries,0.2.0,9SD,src/run.py:run,Demo transform module: derive search queries from a seed topic.
+U2T,demo_seed_outputs,0.2.0,U2T,src/run.py:run,Placeholder module that generates a deterministic text artifact and a run report.
+package_std,package_std,0.1.0,package_std,src/run.py:run,System packaging module: builds package.zip plus manifest.json and manifest.csv from bound outputs.
+deliver_email,deliver_email,0.1.0,deliver_email,src/run.py:run,System delivery module: send package.zip via email (attachment only).
+deliver_dropbox,deliver_dropbox,0.1.0,deliver_dropbox,src/run.py:run,System delivery module: upload package.zip to Dropbox.
+wxi,google_search_images,0.2.0,wxi,src/run.py:run,Google Custom Search (images): returns image result metadata and downloads thumbnails/full images under deliverables control.
+wxz,google_search_pages,0.2.0,wxz,src/run.py:run,"Google Custom Search (web pages only): fetch up to 100 results per query, up to 5 queries per run."
+bigfile_gen,bigfile_gen,0.1.0,bigfile_gen,src/run.py:run,Deterministic large-file generator for oversize package threshold tests.

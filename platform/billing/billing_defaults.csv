@@ -1,3 +1,3 @@
 key,value,notes
 default_price_run_credits,5,Default price per successful module run (credits)
-default_price_save_to_release_credits,2,Default price per "download artifacts/save to release" (credits)
+default_price_deliverable_credits,2,Default price per purchased deliverable (credits)

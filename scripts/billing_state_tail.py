@@ -112,10 +112,12 @@ def _format_compact_row(path: Path, row: dict[str, str], lookups: Lookups) -> st
         enriched["module"] = lookups.module_name_by_id.get(mid, mid)
 
     if fname == "transaction_items.csv":
-        txid = (row.get("transaction_id") or "").strip()
-        wo = lookups.workorder_by_transaction_id.get(txid, "") if txid else ""
-        if wo:
-            enriched["work_order_id"] = wo
+        # Back-compat: older billing-state templates may not include work_order_id on items.
+        if not (row.get("work_order_id") or "").strip():
+            txid = (row.get("transaction_id") or "").strip()
+            wo = lookups.workorder_by_transaction_id.get(txid, "") if txid else ""
+            if wo:
+                enriched["work_order_id"] = wo
 
     # Prefer showing note if present
     keys_preferred = []
@@ -123,7 +125,7 @@ def _format_compact_row(path: Path, row: dict[str, str], lookups: Lookups) -> st
         keys_preferred = ["transaction_id", "tenant_id", "work_order_id", "type", "amount_credits", "created_at", "note"]
     elif fname == "transaction_items.csv":
         # include module_id (schema) and infer work_order_id via transactions.csv join
-        keys_preferred = ["transaction_item_id", "transaction_id", "tenant_id", "work_order_id", "module_id", "module", "feature", "type", "amount_credits", "created_at", "note"]
+        keys_preferred = ["transaction_item_id", "transaction_id", "tenant_id", "work_order_id", "step_id", "module_id", "module", "deliverable_id", "feature", "type", "amount_credits", "created_at", "note"]
     elif fname == "workorders_log.csv":
         keys_preferred = ["work_order_id", "tenant_id", "status", "started_at", "ended_at", "note"]
     elif fname == "module_runs_log.csv":

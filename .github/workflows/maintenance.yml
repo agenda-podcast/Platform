@@ -38,6 +38,28 @@ jobs:
             python -m pip install -e .
           fi
 
+      - name: Publish script guardrail (no-publish)
+        env:
+          PLATFORM_OFFLINE: "1"
+        run: |
+          set -euo pipefail
+
+          rm -rf dist_artifacts_guardrail
+          python scripts/publish_artifacts_release.py \
+            --runtime-profile config/runtime_profile.dev_github.yml \
+            --billing-state-dir .billing-state-e2e \
+            --runtime-dir runtime-e2e \
+            --dist-dir dist_artifacts_guardrail \
+            --since 2026-01-12T13:04:00Z \
+            --no-publish || rc=$?
+
+          if [ "${rc:-0}" -ne 0 ] && [ "${rc:-0}" -ne 2 ]; then
+            echo "[GUARDRAIL][FAIL] publish_artifacts_release.py returned unexpected code: ${rc}" >&2
+            exit "${rc}"
+          fi
+
+          test -d dist_artifacts_guardrail
+
       - name: Run Maintenance
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -58,29 +80,29 @@ jobs:
         if: ${{ github.event_name == 'push' }}
         run: |
           set -euo pipefail
-          if git diff --quiet -- maintenance-state; then
-            echo "[MAINTENANCE] maintenance-state/: no changes to commit."
+          if git diff --quiet -- maintenance-state platform/secretstore/secretstore.template.json; then
+            echo "[MAINTENANCE] No changes to commit (maintenance-state/ and secretstore template)."
             exit 0
           fi
 
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
 
-          git add maintenance-state
+          git add maintenance-state platform/secretstore/secretstore.template.json
           if git diff --cached --quiet; then
             echo "[MAINTENANCE] Nothing staged after git add maintenance-state."
             exit 0
           fi
 
-          git commit -m "chore(maintenance): refresh maintenance-state"
+          git commit -m "chore(maintenance): refresh maintenance-state and secretstore template"
           git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Ensure maintenance-state is committed
         run: |
           set -euo pipefail
-          if ! git diff --quiet -- maintenance-state; then
-            echo "[MAINTENANCE][FAIL] maintenance-state/ is out-of-date even after maintenance run." >&2
-            git --no-pager diff -- maintenance-state | sed -n '1,200p' >&2 || true
+          if ! git diff --quiet -- maintenance-state platform/secretstore/secretstore.template.json; then
+            echo "[MAINTENANCE][FAIL] Repo is out-of-date after maintenance run (maintenance-state/ or secretstore template)." >&2
+            git --no-pager diff -- maintenance-state platform/secretstore/secretstore.template.json | sed -n '1,200p' >&2 || true
             exit 2
           fi
 

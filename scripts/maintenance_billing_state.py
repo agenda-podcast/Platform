@@ -20,7 +20,7 @@ from pathlib import Path
 import re
 from typing import Dict, List
 
-TENANT_ID_RE = re.compile(r"^\d{10}$")
+TENANT_ID_RE = re.compile(r"^[0-9A-Za-z]{6}$")
 
 HEADER = ["tenant_id", "credits_available", "updated_at", "status"]
 

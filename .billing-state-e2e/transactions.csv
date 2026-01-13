@@ -1,5 +1,6 @@
 transaction_id,tenant_id,work_order_id,type,amount_credits,created_at,reason_code,note,metadata_json
-9lIpLywt,nxlkGI,,TOPUP,1000,2026-01-03T19:13:09Z,,Seed example payment,"{""topup_method_id"":""0Y"",""reference"":""INV-1001"",""payment_id"":""Gq1JFSl9""}"
+9lIpLywt,nxlkGI,,TOPUP,1000,2026-01-03T19:13:09Z,,Seed example payment,"{""topup_method_id"":""0YA"",""reference"":""INV-1001"",""payment_id"":""Gq1JFSl9""}"
 f0NCsCgP,nxlkGI,UbjkpxZO,SPEND,-7,2026-01-03T19:14:03Z,,,"{""workorder_path"":""/mnt/data/Platform-main_rewritten/Platform-main/tenants/nxlkGI/workorders/UbjkpxZO.yml""}"
 iWU8W7gI,nxlkGI,UbjkpxZO,REFUND,7,2026-01-03T19:14:03Z,ShlFvj,,"{""module_id"":""wxz"",""refund_for"":""IYOrev6V""}"
-Hkm5qa99,nxlkGI,UbjkpxZO,SPEND,-15,2026-01-05T04:30:31Z,,"Work order spend: demo_derive_queries (9SD) [derive_queries], google_search_pages (wxz) [search], demo_seed_outputs (U2T) [seed_text]","{""workorder_path"":""/mnt/data/platform_repo/Platform-main/tenants/nxlkGI/workorders/UbjkpxZO.yml"",""plan_type"":""steps"",""steps"":[""derive_queries"",""search"",""seed_text""]}"
+SeNt1n3L,nxlkGI,HiSt0Ry1,TOPUP,1,2020-01-01T00:00:00Z,,E2E sentinel - must persist,"{""sentinel"":true}"
+3KoWmYjG,nxlkGI,UbjkpxZO,SPEND,-25,2026-01-13T03:21:21Z,,"Work order spend: demo_derive_queries (9SD) derive_queries [a1], google_search_images (wxi) search_images [b2], demo_seed_outputs (U2T) seed_text [c3], package_std (package_std) package_outputs [p4], deliver_dropbox (deliver_dropbox) deliver_to_dropbox_stub [d5]","{""workorder_path"":""tenants/nxlkGI/workorders/UbjkpxZO.yml"",""plan_type"":""steps"",""steps"":[""a1"",""b2"",""c3"",""p4"",""d5""],""idempotency_key"":""wo_spend_4ec14da98dc428633808b2de""}"

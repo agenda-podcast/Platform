@@ -1,92 +1,109 @@
-# PLATFORM (Modular, Release-backed State)
+# PLATFORM (Modular runner with release-backed state)
 
-This repository implements a small, modular “platform” runner with:
+PLATFORM is a modular runner that executes tenant work orders, records outputs, and maintains a release-backed billing state suitable for development and verification workflows.
 
-- **Modules** (in `modules/<module_id>/`) executed by the orchestrator
-- **Tenants + Work Orders** (in `tenants/<tenant_id>/workorders/`)
-- **Release-backed billing state** (GitHub Release tag is the **system of record**)
-- **Maintenance** that regenerates derived indexes in `maintenance-state/`
-- Repository verification is performed as part of **Maintenance** and **Orchestrator** runs
-- A **standalone Cache Prune** workflow (safe by default; deletion only when explicitly requested)
+## What this repository contains
 
-## ID policy (Base62, fixed length, randomized, de-duplicated)
+- **Modules** in `modules/<module_id>/` with explicit contracts in `module.yml` (inputs, outputs, deliverables, and `kind`).
+- **Tenants and work orders** in `tenants/<tenant_id>/workorders/*.yml`.
+- **Billing state (append-only logs)** under `.billing-state*/` and published as GitHub Release assets in development mode.
+- **Maintenance** that regenerates derived indexes under `maintenance-state/` and validates repository invariants.
+- **Packaging and delivery** modules that turn outputs into downloadable artifacts when the tenant requests them.
 
-All IDs are **random Base62** using the alphabet: `0-9 A-Z a-z`.
+## Separation of concerns (critical)
 
-| Entity | Length |
-|---|---:|
-| Tenant ID | 6 |
-| Work Order ID | 8 |
-| Module ID | 3 |
-| Transaction ID | 8 |
-| Transaction Item ID | 8 |
-| Module Run ID | 8 |
-| Reason Code | 6 |
-| Reason Key | 3 |
-| Payment ID | 8 |
-| Top-up Method ID | 2 |
-| Product Code | 3 |
-| GitHub Release / Asset ID (internal) | 8 |
+### Orchestrator (execution)
 
-Validation and generation are implemented in:
-- `platform/common/id_policy.py`
-- `platform/common/id_codec.py`
+`python -m platform.cli orchestrator` executes enabled work orders:
 
-## Release-backed billing state (fixed tag)
+- Loads the work order YAML
+- Executes steps in order
+- Writes step run records and output records into the runtime directory
+- Posts billing ledger items (with deterministic idempotency keys)
+- Computes final run status (COMPLETED or PARTIAL) based on step outcomes and delivery policy
 
-Billing state is **not stored as editable source of truth in the repository**.
+The orchestrator does not publish artifacts to GitHub Releases.
 
-- The **source-of-truth release tag is fixed**: `billing-state-v1`
-- Workflows download the release assets into `.billing-state/`, mutate locally, then upload back.
+### Publisher script (workflow-driven publish)
 
-Billing-state assets (CSV) include:
-- `tenants_credits.csv`
-- `transactions.csv`
-- `transaction_items.csv`
-- `promotion_redemptions.csv`
-- `cache_index.csv`
-- `workorders_log.csv`
-- `module_runs_log.csv`
-- `github_releases_map.csv` (internal release_id -> GitHub numeric release id)
-- `github_assets_map.csv` (internal asset_id -> GitHub numeric asset id)
-- `state_manifest.json`
+`scripts/publish_artifacts_release.py` is invoked by workflows as a separate step:
 
-Template assets used to bootstrap the fixed Release (and local fresh-start runs) live in `releases/billing-state-v1/`.
+- Scans the billing state to identify purchased deliverables
+- Packages and publishes those deliverables (or simulates publishing with `--no-publish`)
+- Skips internal deliverable IDs (for example `__run__`, `__delivery_evidence__`, and any deliverable starting with `__`)
+- Writes publish evidence records used by verification scripts
 
-## GitHub Release/Asset internal mapping (anti-enumeration)
+## Artifact delivery policy (enforced)
 
-For module artifacts published to GitHub Releases, the platform uses an **internal** random 8-char ID
-(`github_release_asset_id`) as the “release_id” and “asset_id”. The numeric GitHub IDs are stored in billing state:
+These rules are intentionally strict for enabled work orders and intentionally permissive for drafts.
 
-- `.billing-state/github_releases_map.csv`
-- `.billing-state/github_assets_map.csv`
+1) **Activation gating**
+- If `enabled: true` and `artifacts_requested: true`, the work order must include:
+  - At least one step with `kind: packaging`
+  - At least one step with `kind: delivery`
+- If any enabled work order includes a `kind: packaging` step (regardless of `artifacts_requested`), it must also include at least one `kind: delivery` step.
 
-This enables internal folder naming and avoids exposing sequential GitHub IDs.
+2) **No auto-injection**
+- The platform does not inject packaging or delivery steps into work orders.
+- Validation blocks activation for enabled work orders that violate the policy.
+- Draft work orders are allowed to save with warnings.
 
-## Key commands
+3) **Email size cap**
+- Email delivery enforces a hard cap of 19.9 MB.
+- When a package exceeds the cap, the delivery step fails with reason `package_too_large_for_email` and (when eligible) a refund is posted for the delivery run.
 
-- Maintenance (regenerates `maintenance-state/`):
-  ```bash
-  python -m platform.cli maintenance
-  ```
+4) **Publisher internal deliverables**
+- Publishing scans ignore internal deliverable IDs to prevent accidental publication of platform-internal artifacts.
 
-- Orchestrator (runs enabled work orders):
-  ```bash
-  python -m platform.cli orchestrator --billing-state-dir .billing-state --runtime-dir runtime
-  ```
+## Dev GitHub Releases versus tenant-owned delivery
 
-  Note: if any workorder sets `purchase_release_artifacts: true` and `GH_TOKEN`/`GITHUB_TOKEN` is available,
-  the orchestrator automatically publishes artifacts to GitHub Releases.
+- **Development mode (`runtime_profile.dev_github.yml`)** uses GitHub Releases as a system-of-record for billing state assets and for development and test artifact storage.
+- **Tenant-owned delivery** is the direction for production: tenants connect their own storage providers (for example Dropbox, S3, OneDrive, Google Drive) and deliveries are performed into tenant-owned accounts using tenant-scoped credentials.
 
-- Admin top-up (posts a TOPUP transaction):
-  ```bash
-  python -m platform.cli admin-topup --billing-state-dir .billing-state --tenant-id <TENANT> --topup-method-id <TM> --amount-credits 1000 --reference "wire-123"
-  ```
+The repository includes scaffolding for this direction (credentials store, OAuth callback service, and integration secret blocks), but it is not a production deployment guide.
 
-## Workflows
+## Quickstart (local)
 
-- **maintenance.yml**: ensures billing-state Release exists, regenerates maintenance-state, and verifies repo invariants
-- **orchestrator.yml**: runs work orders and updates the billing-state release assets
-- **admin-topup.yml**: applies a top-up and updates the billing-state release assets
-- **cache-prune.yml**: updates cache index and (optionally) deletes expired caches; Maintenance calls it in dry-run mode
+### 1) Run unit tests
 
+```bash
+python -m pip install -r requirements.txt
+pytest -q
+```
+
+### 2) Run the CI verifier locally
+
+```bash
+python scripts/ci_verify.py --phase pre
+python scripts/ci_verify.py --phase e2e
+```
+
+### 3) Run the offline E2E parity sequence (matches `.github/workflows/e2e-verify.yml`)
+
+The orchestrator runs all work orders that are `enabled: true`. The example below assumes tenant `nxlkGI` work order `UbjkpxZO` is enabled (it is enabled in this repository).
+
+```bash
+python -m platform.cli consistency-validate
+python -m platform.cli integrity-validate
+
+python -m platform.cli orchestrator --runtime-profile config/runtime_profile.dev_github.yml --billing-state-dir .billing-state-e2e --runtime-dir runtime-e2e
+python -m platform.cli orchestrator --runtime-profile config/runtime_profile.dev_github.yml --billing-state-dir .billing-state-e2e --runtime-dir runtime-e2e
+
+python scripts/publish_artifacts_release.py --runtime-profile config/runtime_profile.dev_github.yml --billing-state-dir .billing-state-e2e --runtime-dir runtime-e2e --since "$(cat .since_ts)" --no-publish
+
+python scripts/e2e_assert_chaining.py --runtime-dir runtime-e2e --tenant-id nxlkGI --work-order-id UbjkpxZO
+python scripts/e2e_assert_idempotency.py --billing-state-dir .billing-state-e2e --tenant-id nxlkGI --work-order-id UbjkpxZO
+```
+
+## Admin top-up (development)
+
+Admin top-up posts a TOPUP transaction to billing state.
+
+```bash
+python -m platform.cli admin-topup --tenant-id nxlkGI --amount-credits 1000 --topup-method-id bank-wire --reference wire-123 --note "dev seed top-up" --billing-state-dir .billing-state
+```
+
+## Canonical references
+
+- `docs/release_checklist.md` is the canonical operator checklist and verification posture.
+- `docs/schemas.md` is the canonical schema and validation reference for work orders and module contracts.

@@ -1,0 +1,8 @@
+{
+  "topic": "Word News Today — mock image 1",
+  "language": "en",
+  "freshness_days": "7",
+  "files": [
+    "source_text.txt"
+  ]
+}

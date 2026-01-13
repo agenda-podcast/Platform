@@ -1,3 +1,1 @@
 module_id,requirement_type,requirement_key,requirement_value,note
-wxz,secret,GOOGLE_SEARCH_API_KEY,,Provide via env var wxz_GOOGLE_SEARCH_API_KEY (GitHub secret name should match).
-wxz,secret,GOOGLE_SEARCH_ENGINE_ID,,Provide via env var wxz_GOOGLE_SEARCH_ENGINE_ID (GitHub secret name should match).

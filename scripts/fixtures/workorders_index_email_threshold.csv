@@ -1,0 +1,2 @@
+tenant_id,work_order_id,enabled,schedule_cron,title,notes,path
+nxlkGI,EmTh0ld1,true,,Email threshold oversize package,Generated big file then package and attempt deliver_email expecting package_too_large_for_email,tenants/nxlkGI/workorders/EmTh0ld1.yml

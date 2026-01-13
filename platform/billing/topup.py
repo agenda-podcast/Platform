@@ -115,6 +115,9 @@ def apply_admin_topup(repo_root: Path, billing: BillingState, req: TopupRequest)
         "transaction_id": tx_id,
         "tenant_id": tenant_id,
         "module_id": "",
+        "work_order_id": "",
+        "step_id": "",
+        "deliverable_id": "",
         "feature": "ADMIN_TOPUP",
         "type": "TOPUP",
         "amount_credits": str(int(req.amount_credits)),
@@ -129,6 +132,6 @@ def apply_admin_topup(repo_root: Path, billing: BillingState, req: TopupRequest)
 
     billing.save_table("tenants_credits.csv", tenants_credits, ["tenant_id","credits_available","updated_at","status"])
     billing.save_table("transactions.csv", transactions, ["transaction_id","tenant_id","work_order_id","type","amount_credits","created_at","reason_code","note","metadata_json"])
-    billing.save_table("transaction_items.csv", transaction_items, ["transaction_item_id","transaction_id","tenant_id","module_id","feature","type","amount_credits","created_at","note","metadata_json"])
+    billing.save_table("transaction_items.csv", transaction_items, ["transaction_item_id","transaction_id","tenant_id","module_id","work_order_id","step_id","deliverable_id","feature","type","amount_credits","created_at","note","metadata_json"])
 
     return tx_id

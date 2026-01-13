@@ -1,1 +1,1 @@
-transaction_item_id,transaction_id,tenant_id,module_id,feature,type,amount_credits,created_at,note,metadata_json
+transaction_item_id,transaction_id,tenant_id,module_id,work_order_id,step_id,deliverable_id,feature,type,amount_credits,created_at,note,metadata_json

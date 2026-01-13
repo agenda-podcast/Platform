@@ -1,7 +1,8 @@
 module_id: U2T
 name: demo_seed_outputs
 version: 0.2.0
-description: "Placeholder module that generates a deterministic text artifact and a release manifest item."
+kind: transform
+description: "Placeholder module that generates a deterministic text artifact and a run report."
 
 supports_downloadable_artifacts: true
 produces_manifest: true
@@ -16,36 +17,55 @@ cache:
 
 ports:
   inputs:
-    - id: topic
-      type: string
-      required: true
-      visibility: tenant
-      format: text/plain
-      description: "Seed topic for the generated artifact."
-    - id: language
-      type: string
-      required: false
-      visibility: platform
-      default: "en"
-      format: text/plain
-      description: "Platform-only default; not tenant-editable."
-    - id: freshness_days
-      type: string
-      required: false
-      visibility: platform
-      default: "7"
-      format: text/plain
-      description: "Platform-only default; not tenant-editable."
+    port:
+      - id: topic
+        type: string
+        required: true
+        format: text/plain
+        case_sensitive: false
+        schema:
+          minLength: 1
+          maxLength: 512
+        description: "Seed topic for the generated artifact."
+    limited_port:
+      - id: language
+        type: string
+        required: false
+        default: "en"
+        format: text/plain
+        case_sensitive: false
+        schema:
+          minLength: 1
+          maxLength: 32
+        description: "Platform-only default; not tenant-editable."
+      - id: freshness_days
+        type: string
+        required: false
+        default: "7"
+        format: text/plain
+        case_sensitive: false
+        schema:
+          pattern: "^\\d+$"
+          minLength: 1
+          maxLength: 4
+        description: "Platform-only default; not tenant-editable."
   outputs:
-    - id: source_text
-      type: file
-      visibility: tenant
-      path: source_text.txt
-      format: text/plain
-      description: "Deterministic text output."
-    - id: report
-      type: file
-      visibility: tenant
-      path: report.json
-      format: application/json
-      description: "Structured run report."
+    port:
+      - id: source_text
+        type: file
+        path: source_text.txt
+        format: text/plain
+        description: "Deterministic text output."
+      - id: report
+        type: file
+        path: report.json
+        format: application/json
+        description: "Structured run report."
+    limited_port: []
+
+deliverables:
+  port:
+    - deliverable_id: tenant_outputs
+      description: "Tenant-visible outputs."
+      outputs: [source_text, report]
+  limited_port: []

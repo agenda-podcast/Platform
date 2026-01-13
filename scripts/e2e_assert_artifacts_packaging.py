@@ -1,21 +1,40 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import argparse
-import pathlib
+from pathlib import Path
+
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.e2e_assert_chaining import assert_artifacts_packaging
+
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(
+        description="Validate per-deliverable artifacts packaging (contract-only files + manifest)."
+    )
+    ap.add_argument("--billing-state-dir", required=True)
+    ap.add_argument("--since", required=True)
+    ap.add_argument("--tenant-id", required=True)
+    ap.add_argument("--work-order-id", required=True)
     ap.add_argument("--dist-dir", default="dist_artifacts")
-    ap.add_argument("--min-zips", type=int, default=1)
     args = ap.parse_args()
 
-    dist = pathlib.Path(args.dist_dir)
-    zips = sorted(dist.glob("*.zip"))
-    if len(zips) < args.min_zips:
-        print(f"[E2E][FAIL] Expected at least {args.min_zips} ZIP(s) in {dist}, found {len(zips)}")
-        return 2
+    assert_artifacts_packaging(
+        billing_state_dir=Path(args.billing_state_dir),
+        since=args.since,
+        tenant_id=args.tenant_id,
+        work_order_id=args.work_order_id,
+        dist_dir=Path(args.dist_dir),
+    )
 
-    print(f"[E2E][OK] Found {len(zips)} ZIP(s) in {dist}")
+    print("[E2E][OK] Artifacts packaging validated")
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

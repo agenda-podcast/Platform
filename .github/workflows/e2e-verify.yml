@@ -14,14 +14,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
-          cache-dependency-path: |
-            requirements.txt
-            pyproject.toml
 
       - name: Install dependencies
         run: |
@@ -30,36 +26,40 @@ jobs:
           if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
           if [ -f pyproject.toml ] || [ -f setup.py ]; then python -m pip install -e .; fi
 
-      - name: Run offline orchestrator (E2E)
+      - name: Orchestrator run #1 (offline)
         env:
           PLATFORM_OFFLINE: "1"
+          DROPBOX_CREATE_SHARE_LINK: "false"
         run: |
           set -euo pipefail
+
+          # Capture the 'since' timestamp for publish reconciliation.
+          SINCE_TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          echo "E2E_PUBLISH_SINCE=${SINCE_TS}" >> "$GITHUB_ENV"
+
           rm -rf .billing-state-e2e runtime-e2e
           cp -a .billing-state-ci .billing-state-e2e
           mkdir -p runtime-e2e
-          # Pre-execution validation (servicing-table driven)
+
+          # Pre-execution validation (servicing-table driven).
           python -m platform.cli consistency-validate
+
+          # Preflight/plan-only validation (defaults enrichment + deliverables/bindings).
+          python -m platform.cli integrity-validate --tenant-id nxlkGI --work-order-id UbjkpxZO
+
           # Seed a historical sentinel row to ensure billing-state is append-only (SoT).
           python - <<'PY'
           import csv
           from pathlib import Path
+
           billing = Path('.billing-state-e2e')
           tx_path = billing / 'transactions.csv'
           ti_path = billing / 'transaction_items.csv'
 
-          def append_row(path: Path, row: dict):
-              rows = []
-              with path.open('r', encoding='utf-8', newline='') as f:
-                  r = csv.DictReader(f)
-                  headers = list(r.fieldnames or [])
-                  for rr in r:
-                      rows.append(dict(rr))
-              rows.append(row)
-              with path.open('w', encoding='utf-8', newline='') as f:
-                  w = csv.DictWriter(f, fieldnames=headers)
-                  w.writeheader()
-                  w.writerows(rows)
+          with tx_path.open(newline='', encoding='utf-8') as f:
+              tx_header = next(csv.reader(f))
+          with ti_path.open(newline='', encoding='utf-8') as f:
+              ti_header = next(csv.reader(f))
 
           sentinel_tx = {
               'transaction_id': 'SeNt1n3L',
@@ -78,22 +78,81 @@ jobs:
               'tenant_id': 'nxlkGI',
               'module_id': '',
               'feature': 'ADMIN_TOPUP',
-              'type': 'TOPUP',
+              'deliverable_id': '',
               'amount_credits': '1',
+              'type': 'TOPUP',
               'created_at': '2020-01-01T00:00:00Z',
               'note': 'E2E sentinel - must persist',
+              'work_order_id': 'HiSt0Ry1',
+              'step_id': '',
               'metadata_json': '{"sentinel":true}',
           }
-          append_row(tx_path, sentinel_tx)
-          append_row(ti_path, sentinel_item)
-          PY
-          python -m platform.cli orchestrator --runtime-dir runtime-e2e --billing-state-dir .billing-state-e2e
 
-      - name: Assert chaining + billing/logging
+          with tx_path.open('a', newline='', encoding='utf-8') as f:
+              w = csv.DictWriter(f, fieldnames=tx_header)
+              w.writerow(sentinel_tx)
+
+          with ti_path.open('a', newline='', encoding='utf-8') as f:
+              w = csv.DictWriter(f, fieldnames=ti_header)
+              w.writerow(sentinel_item)
+          PY
+
+          python -m platform.cli orchestrator             --runtime-profile config/runtime_profile.dev_github.yml             --billing-state-dir .billing-state-e2e             --runtime-dir runtime-e2e
+
+      - name: Orchestrator run #2 (same dirs, idempotency rerun)
+        env:
+          PLATFORM_OFFLINE: "1"
+          DROPBOX_CREATE_SHARE_LINK: "false"
         run: |
           set -euo pipefail
-          python scripts/e2e_assert_chaining.py \
-            --billing-state-dir .billing-state-e2e \
-            --runtime-dir runtime-e2e \
-            --tenant-id nxlkGI \
-            --work-order-id UbjkpxZO
+          python -m platform.cli orchestrator             --runtime-profile config/runtime_profile.dev_github.yml             --billing-state-dir .billing-state-e2e             --runtime-dir runtime-e2e
+
+      - name: Publish artifacts (offline reconciliation)
+        env:
+          PLATFORM_OFFLINE: "1"
+        run: |
+          set -euo pipefail
+          rm -rf dist_artifacts
+          python scripts/publish_artifacts_release.py             --runtime-profile config/runtime_profile.dev_github.yml             --billing-state-dir .billing-state-e2e             --runtime-dir runtime-e2e             --since "$E2E_PUBLISH_SINCE"             --no-publish
+
+      - name: Assert chaining + packaging outputs (L1 + L2)
+        run: |
+          set -euo pipefail
+          python scripts/e2e_assert_chaining.py             --billing-state-dir .billing-state-e2e             --runtime-dir runtime-e2e             --since "$E2E_PUBLISH_SINCE"             --tenant-id nxlkGI             --work-order-id UbjkpxZO
+
+      - name: Assert idempotency rerun (L4)
+        run: |
+          set -euo pipefail
+          python scripts/e2e_assert_idempotency.py             --billing-state-dir .billing-state-e2e             --tenant-id nxlkGI             --work-order-id UbjkpxZO
+
+      - name: Email threshold scenario (L3)
+        env:
+          PLATFORM_OFFLINE: "1"
+        run: |
+          set -euo pipefail
+
+          rm -rf .billing-state-e2e-email runtime-e2e-email
+          cp -a billing-state-seed .billing-state-e2e-email
+          mkdir -p runtime-e2e-email
+
+          # Swap workorders index to run the email threshold fixture.
+          cp maintenance-state/workorders_index.csv maintenance-state/workorders_index.csv.bak
+          cp scripts/fixtures/workorders_index_email_threshold.csv maintenance-state/workorders_index.csv
+
+          # Temporarily enable the fixture workorder (keep it disabled in repo default).
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('tenants/nxlkGI/workorders/EmTh0ld1.yml')
+          s = p.read_text(encoding='utf-8')
+          if 'enabled: false' in s:
+              s = s.replace('enabled: false', 'enabled: true', 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+
+          python -m platform.cli integrity-validate --tenant-id nxlkGI --work-order-id EmTh0ld1
+
+          python -m platform.cli orchestrator             --runtime-profile config/runtime_profile.dev_github.yml             --billing-state-dir .billing-state-e2e-email             --runtime-dir runtime-e2e-email
+
+          python scripts/e2e_assert_email_threshold.py             --billing-state-dir .billing-state-e2e-email             --runtime-dir runtime-e2e-email             --tenant-id nxlkGI             --work-order-id EmTh0ld1
+
+          mv maintenance-state/workorders_index.csv.bak maintenance-state/workorders_index.csv

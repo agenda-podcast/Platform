@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Dict
 
@@ -31,4 +32,12 @@ def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
     out_file = outputs_dir / "source_text.txt"
     out_file.write_text(text, encoding="utf-8")
 
-    return {"status": "COMPLETED", "files": ["source_text.txt"]}
+    report = {
+        "topic": topic,
+        "language": language,
+        "freshness_days": freshness_days,
+        "files": ["source_text.txt"],
+    }
+    (outputs_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    return {"status": "COMPLETED", "files": ["source_text.txt", "report.json"]}

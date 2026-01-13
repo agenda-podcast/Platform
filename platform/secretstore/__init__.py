@@ -8,4 +8,4 @@ This module is intentionally minimal and safe-by-default:
 - It restores process env after each module run (handled by module_exec).
 """
 
-from .loader import load_secretstore, env_for_module  # noqa: F401
+from .loader import load_secretstore, env_for_module, env_for_integration  # noqa: F401

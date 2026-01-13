@@ -1,0 +1,43 @@
+module_id: bigfile_gen
+name: Big File Generator
+kind: transform
+version: 1
+description: Generate a deterministic, high-entropy binary file of a specified size for E2E testing.
+entrypoint: python -m modules.bigfile_gen
+ports:
+  inputs:
+    port:
+    - id: bytes
+      type: integer
+      required: true
+      description: Number of bytes to generate.
+      schema:
+        minimum: 1
+      examples:
+      - 26214400
+    - id: seed
+      type: string
+      required: false
+      description: Determinism seed.
+      default: ""
+      examples:
+      - email_threshold
+  outputs:
+    port:
+    - id: big_file
+      type: file
+      path: big.bin
+      format: binary
+      description: Generated binary file.
+    - id: report
+      type: file
+      path: report.json
+      format: json
+      description: Generation report including sha256 and bytes.
+deliverables:
+  port:
+  - deliverable_id: tenant_outputs
+    title: Generated outputs
+    outputs:
+    - big_file
+    - report

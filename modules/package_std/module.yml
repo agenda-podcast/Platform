@@ -1,0 +1,63 @@
+module_id: package_std
+name: package_std
+version: 0.1.0
+kind: packaging
+description: 'System packaging module: builds package.zip plus manifest.{json,csv}
+  from bound outputs.'
+ports:
+  inputs:
+    port:
+    - id: bound_outputs
+      type: array
+      item_type: object
+      required: true
+      format: application/json
+      description: List of output bindings to include in the package. Each item binds
+        an upstream step output using from_step + output_id and optionally renames
+        it in the ZIP via as_path.
+      schema:
+        minItems: 1
+      examples:
+      - from_step: s1
+        output_id: report
+        as_path: reports/report.json
+      - from_step: s1
+        output_id: source_text
+        as_path: texts/source_text.txt
+      binding:
+        allowed: true
+        require_output_id: true
+        object_shape:
+        - from_step
+        - output_id
+        - as_path
+        allowed_selectors: []
+        selector_rules: {}
+    limited_port: []
+  outputs:
+    port:
+    - id: package_zip
+      type: file
+      path: package.zip
+      format: application/zip
+      description: Deterministic ZIP containing staged files and both manifests.
+    - id: manifest_json
+      type: file
+      path: manifest.json
+      format: application/json
+      description: Deterministic manifest describing packaged files.
+    - id: manifest_csv
+      type: file
+      path: manifest.csv
+      format: text/csv
+      description: Deterministic manifest CSV describing packaged files.
+    limited_port: []
+deliverables:
+  port:
+  - deliverable_id: package_artifacts
+    description: Package zip and manifests.
+    outputs:
+    - package_zip
+    - manifest_json
+    - manifest_csv
+  limited_port: []

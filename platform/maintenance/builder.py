@@ -82,15 +82,7 @@ def _module_contract_sources(ctx: MaintenanceContext, module_id: str) -> List[Pa
     if p.exists():
         sources.append(p)
 
-    # Prefer canonical tenant params schema under platform/schemas if present.
-    ps = ctx.repo_root / "platform" / "schemas" / "work_order_modules" / f"{mid}.schema.json"
-    if ps.exists():
-        sources.append(ps)
-    else:
-        ts = mdir / "tenant_params.schema.json"
-        if ts.exists():
-            sources.append(ts)
-
+    # Include output schema when present (used for chaining/UI rules).
     osch = mdir / "output_schema.json"
     if osch.exists():
         sources.append(osch)
@@ -212,75 +204,66 @@ def _default_binding_rules(field_type: Optional[str], item_type: Optional[str], 
 
 
 def _compile_module_contract_rules(ctx: MaintenanceContext, module_id: str) -> List[Dict[str, Any]]:
-    """Compile the per-module rules rows for module_contract_rules.csv."""
+    """Compile the per-module rules rows for module_contract_rules.csv.
+
+    Source of truth: modules/<module_id>/module.yml only.
+    No platform-level schemas are consulted.
+    """
     mid = canon_module_id(module_id)
     if not mid:
         return []
     mdir = ctx.modules_dir / mid
     myml = _read_yaml(mdir / "module.yml")
     ports = myml.get("ports") or {}
-    ports_in = ports.get("inputs") or []
-    ports_out = ports.get("outputs") or []
+    if not isinstance(ports, dict):
+        raise ValueError(f"Invalid ports for module {mid}")
+    p_inputs = ports.get("inputs") or {}
+    p_outputs = ports.get("outputs") or {}
+    if not isinstance(p_inputs, dict) or not isinstance(p_outputs, dict):
+        raise ValueError(f"Invalid ports.inputs/ports.outputs for module {mid}")
+    in_port = p_inputs.get("port") or []
+    in_limited = p_inputs.get("limited_port") or []
+    out_port = p_outputs.get("port") or []
+    out_limited = p_outputs.get("limited_port") or []
+    if not all(isinstance(x, list) for x in (in_port, in_limited, out_port, out_limited)):
+        raise ValueError(f"ports.*.port and ports.*.limited_port must be lists for module {mid}")
 
-    # Tenant schema: canonical source for tenant-editable inputs.
-    schema_path = ctx.repo_root / "platform" / "schemas" / "work_order_modules" / f"{mid}.schema.json"
-    if not schema_path.exists():
-        schema_path = mdir / "tenant_params.schema.json"
-    tenant_schema = _read_json(schema_path) if schema_path.exists() else {}
-    schema_props, schema_required = _extract_schema_rules(tenant_schema)
-
-    # Output schema: helps chaining selectors + UI.
+    # Output schema: optional; used only to enrich content_schema_json.
     output_schema = _read_json(mdir / "output_schema.json") if (mdir / "output_schema.json").exists() else {}
     out_props = (output_schema.get("properties") or {}) if isinstance(output_schema.get("properties"), dict) else {}
-
-    # Build a quick index of module.yml ports for metadata merging.
-    ports_in_by_id: Dict[str, Dict[str, Any]] = {}
-    for p in ports_in:
-        if isinstance(p, dict) and str(p.get("id") or "").strip():
-            ports_in_by_id[str(p.get("id")).strip()] = dict(p)
-
-    ports_out_by_id: Dict[str, Dict[str, Any]] = {}
-    for p in ports_out:
-        if isinstance(p, dict) and str(p.get("id") or "").strip():
-            ports_out_by_id[str(p.get("id")).strip()] = dict(p)
 
     module_hash = _compute_module_hash(ctx, mid)
     rows: List[Dict[str, Any]] = []
 
-    # INPUTS: tenant-visible (port) from tenant schema if present, else from module.yml.
-    if schema_props:
-        for fid, spec in schema_props.items():
-            yml_meta = ports_in_by_id.get(fid, {})
-            # visibility: tenant unless explicitly platform in module.yml
-            vis = str(yml_meta.get("visibility", "tenant")).strip().lower() or "tenant"
-            port_scope = "limited_port" if vis == "platform" else "port"
-
-            raw_type = spec.get("type")
-            ptype = _schema_primary_type(raw_type) or str(yml_meta.get("type") or "").strip() or "string"
-            itype = _schema_item_type(spec.get("items"))
-            fmt = str(yml_meta.get("format") or spec.get("format") or "").strip()
-            desc = str(yml_meta.get("description") or spec.get("description") or "").strip()
-            required = (fid in schema_required) or bool(yml_meta.get("required", False))
-            default_val = yml_meta.get("default", spec.get("default", None))
-
-            minimum = spec.get("minimum")
-            maximum = spec.get("maximum")
-            min_len = spec.get("minLength")
-            max_len = spec.get("maxLength")
-            min_items = spec.get("minItems")
-            max_items = spec.get("maxItems")
-            pattern = spec.get("pattern")
-            enum = spec.get("enum")
-            examples = spec.get("examples")
-
-            binding_rules = _default_binding_rules(ptype, itype, int(max_items) if isinstance(max_items, int) else None)
-
-            rule_obj = {
-                "io": "input",
-                "id": fid,
-                "schema": spec,
-                "binding": binding_rules,
-            }
+    def _compile_inputs(port_scope: str, plist: List[Dict[str, Any]]) -> None:
+        for p in plist:
+            if not isinstance(p, dict):
+                continue
+            fid = str(p.get("id") or "").strip()
+            if not fid:
+                continue
+            ptype = str(p.get("type") or "string").strip()
+            itype = str(p.get("item_type") or "").strip()
+            fmt = str(p.get("format") or "").strip()
+            desc = str(p.get("description") or "").strip()
+            required = bool(p.get("required", False))
+            default_val = p.get("default", None)
+            schema = p.get("schema") or {}
+            minimum = schema.get("minimum")
+            maximum = schema.get("maximum")
+            min_len = schema.get("minLength")
+            max_len = schema.get("maxLength")
+            min_items = schema.get("minItems")
+            max_items = schema.get("maxItems")
+            pattern = schema.get("pattern")
+            enum = schema.get("enum")
+            examples = schema.get("examples")
+            custom_binding = p.get("binding")
+            if isinstance(custom_binding, dict) and custom_binding:
+                binding_rules = custom_binding
+            else:
+                binding_rules = _default_binding_rules(ptype, itype or None, int(max_items) if isinstance(max_items, int) else None)
+            rule_obj = {"io": "input", "id": fid, "schema": schema, "binding": binding_rules}
 
             rows.append(
                 {
@@ -291,7 +274,7 @@ def _compile_module_contract_rules(ctx: MaintenanceContext, module_id: str) -> L
                     "field_name": f"inputs.{fid}",
                     "field_id": fid,
                     "type": ptype,
-                    "item_type": itype or "",
+                    "item_type": itype,
                     "format": fmt,
                     "required": "true" if required else "false",
                     "default_json": "" if default_val is None else _json_dumps_compact(default_val),
@@ -309,85 +292,56 @@ def _compile_module_contract_rules(ctx: MaintenanceContext, module_id: str) -> L
                     "content_schema_json": "",
                     "binding_json": _json_dumps_compact(binding_rules),
                     "rule_json": _json_dumps_compact(rule_obj),
+                    "platform_limit_json": "",
                 }
             )
 
-    else:
-        # No tenant schema: use module.yml for tenant-visible inputs.
-        for fid, yml_meta in ports_in_by_id.items():
-            vis = str(yml_meta.get("visibility", "tenant")).strip().lower() or "tenant"
-            port_scope = "limited_port" if vis == "platform" else "port"
-            ptype = str(yml_meta.get("type") or "string").strip()
-            fmt = str(yml_meta.get("format") or "").strip()
-            desc = str(yml_meta.get("description") or "").strip()
-            required = bool(yml_meta.get("required", False))
-            default_val = yml_meta.get("default", None)
-            binding_rules = _default_binding_rules(ptype, None, None)
-            rule_obj = {"io": "input", "id": fid, "schema": {}, "binding": binding_rules}
-            rows.append(
-                {
-                    "module_id": mid,
-                    "module_hash": module_hash,
-                    "io": "INPUT",
-                    "port_scope": port_scope,
-                    "field_name": f"inputs.{fid}",
-                    "field_id": fid,
-                    "type": ptype,
-                    "item_type": "",
-                    "format": fmt,
-                    "required": "true" if required else "false",
-                    "default_json": "" if default_val is None else _json_dumps_compact(default_val),
-                    "min_value": "",
-                    "max_value": "",
-                    "min_length": "",
-                    "max_length": "",
-                    "min_items": "",
-                    "max_items": "",
-                    "regex": "",
-                    "enum_json": "",
-                    "description": desc,
-                    "examples_json": "",
-                    "path": "",
-                    "content_schema_json": "",
-                    "binding_json": _json_dumps_compact(binding_rules),
-                    "rule_json": _json_dumps_compact(rule_obj),
-                }
-            )
+    _compile_inputs("port", in_port)
+    _compile_inputs("limited_port", in_limited)
 
-    # Ensure platform-only inputs present even if not in tenant schema.
-    if isinstance(ports_in, list):
-        for p in ports_in:
+    def _compile_outputs(port_scope: str, plist: List[Dict[str, Any]]) -> None:
+        for p in plist:
             if not isinstance(p, dict):
                 continue
             fid = str(p.get("id") or "").strip()
             if not fid:
                 continue
-            vis = str(p.get("visibility", "tenant")).strip().lower() or "tenant"
-            if vis != "platform":
-                continue
-            # If already captured from schema loop, it will be port_scope limited_port. Otherwise add.
-            if any(r.get("io") == "INPUT" and r.get("field_id") == fid for r in rows):
-                continue
-            ptype = str(p.get("type") or "string").strip()
+            otype = str(p.get("type") or "file").strip()
             fmt = str(p.get("format") or "").strip()
             desc = str(p.get("description") or "").strip()
-            required = bool(p.get("required", False))
-            default_val = p.get("default", None)
-            binding_rules = _default_binding_rules(ptype, None, None)
-            rule_obj = {"io": "input", "id": fid, "schema": {}, "binding": binding_rules}
+            path = str(p.get("path") or "").lstrip("/").strip()
+
+            # Best-effort content schema extraction from output_schema.json.
+            content_schema: Any = {}
+            if output_schema and path:
+                if fid == "report" and isinstance(out_props.get("report_schema"), dict):
+                    content_schema = out_props.get("report_schema")
+                elif "jsonlines" in fmt and isinstance(out_props.get("results_line_schema"), dict):
+                    content_schema = out_props.get("results_line_schema")
+                elif isinstance(out_props.get(f"{fid}_schema"), dict):
+                    content_schema = out_props.get(f"{fid}_schema")
+
+            rule_obj = {
+                "io": "output",
+                "id": fid,
+                "path": path,
+                "format": fmt,
+                "content_schema": content_schema if content_schema else None,
+            }
+
             rows.append(
                 {
                     "module_id": mid,
                     "module_hash": module_hash,
-                    "io": "INPUT",
-                    "port_scope": "limited_port",
-                    "field_name": f"inputs.{fid}",
+                    "io": "OUTPUT",
+                    "port_scope": port_scope,
+                    "field_name": f"outputs.{fid}",
                     "field_id": fid,
-                    "type": ptype,
+                    "type": otype,
                     "item_type": "",
                     "format": fmt,
-                    "required": "true" if required else "false",
-                    "default_json": "" if default_val is None else _json_dumps_compact(default_val),
+                    "required": "",
+                    "default_json": "",
                     "min_value": "",
                     "max_value": "",
                     "min_length": "",
@@ -398,69 +352,16 @@ def _compile_module_contract_rules(ctx: MaintenanceContext, module_id: str) -> L
                     "enum_json": "",
                     "description": desc,
                     "examples_json": "",
-                    "path": "",
-                    "content_schema_json": "",
-                    "binding_json": _json_dumps_compact(binding_rules),
+                    "path": path,
+                    "content_schema_json": "" if not content_schema else _json_dumps_compact(content_schema),
+                    "binding_json": "",
                     "rule_json": _json_dumps_compact(rule_obj),
+                    "platform_limit_json": "",
                 }
             )
 
-    # OUTPUTS: from module.yml ports.outputs.
-    for fid, yml_meta in ports_out_by_id.items():
-        vis = str(yml_meta.get("visibility", "tenant")).strip().lower() or "tenant"
-        port_scope = "limited_port" if vis == "platform" else "port"
-        otype = str(yml_meta.get("type") or "file").strip()
-        fmt = str(yml_meta.get("format") or "").strip()
-        desc = str(yml_meta.get("description") or "").strip()
-        path = str(yml_meta.get("path") or "").lstrip("/").strip()
-
-        # Best-effort content schema extraction from output_schema.json.
-        content_schema: Any = {}
-        if output_schema and path:
-            if fid == "report" and isinstance(out_props.get("report_schema"), dict):
-                content_schema = out_props.get("report_schema")
-            elif "jsonlines" in fmt and isinstance(out_props.get("results_line_schema"), dict):
-                content_schema = out_props.get("results_line_schema")
-            elif isinstance(out_props.get(f"{fid}_schema"), dict):
-                content_schema = out_props.get(f"{fid}_schema")
-
-        rule_obj = {
-            "io": "output",
-            "id": fid,
-            "path": path,
-            "format": fmt,
-            "content_schema": content_schema if content_schema else None,
-        }
-
-        rows.append(
-            {
-                "module_id": mid,
-                "module_hash": module_hash,
-                "io": "OUTPUT",
-                "port_scope": port_scope,
-                "field_name": f"outputs.{fid}",
-                "field_id": fid,
-                "type": otype,
-                "item_type": "",
-                "format": fmt,
-                "required": "",
-                "default_json": "",
-                "min_value": "",
-                "max_value": "",
-                "min_length": "",
-                "max_length": "",
-                "min_items": "",
-                "max_items": "",
-                "regex": "",
-                "enum_json": "",
-                "description": desc,
-                "examples_json": "",
-                "path": path,
-                "content_schema_json": "" if not content_schema else _json_dumps_compact(content_schema),
-                "binding_json": "",
-                "rule_json": _json_dumps_compact(rule_obj),
-            }
-        )
+    _compile_outputs("port", out_port)
+    _compile_outputs("limited_port", out_limited)
 
     # Stable sort.
     rows = sorted(rows, key=lambda r: (r["module_id"], r["io"], r["port_scope"], r["field_name"]))
@@ -523,6 +424,7 @@ def _write_module_contract_rules(ctx: MaintenanceContext, modules: List[Dict[str
         "content_schema_json",
         "binding_json",
         "rule_json",
+        "platform_limit_json",
     ]
 
     # Stable sort for the full file too.
@@ -616,6 +518,61 @@ def _scan_tenants(ctx: MaintenanceContext) -> List[Dict[str, Any]]:
         consumers = [c for c in consumers if c]
         out.append({"tenant_id": tid, "allow_release_consumers": consumers})
     return out
+
+
+def _write_workorders_index(ctx: MaintenanceContext, tenants: List[Dict[str, Any]]) -> None:
+    """Write maintenance-state/workorders_index.csv.
+
+    Purpose:
+      - enforce global uniqueness of work_order_id across all tenants
+      - provide a centralized queue/index for Orchestrator and preflight workflows
+    """
+    rows: List[Dict[str, str]] = []
+    seen: Dict[str, str] = {}
+    for t in tenants:
+        tid = str(t.get("tenant_id", "") or "").strip()
+        if not tid:
+            continue
+        wdir = ctx.tenants_dir / tid / "workorders"
+        if not wdir.exists():
+            continue
+        for wp in sorted(wdir.glob("*.yml"), key=lambda p: p.name):
+            wo = _read_yaml(wp)
+            wid = str(wo.get("work_order_id") or wp.stem).strip()
+            if not wid:
+                continue
+            validate_id("work_order_id", wid, "work_order_id")
+            # Enforce global uniqueness across tenants
+            if wid in seen and seen[wid] != tid:
+                raise ValueError(f"work_order_id must be globally unique: {wid} used by tenants {seen[wid]} and {tid}")
+            seen[wid] = tid
+
+            enabled = bool(wo.get("enabled", True))
+            meta = wo.get("metadata") or {}
+            title = str(meta.get("title", "") or "").strip()
+            notes = str(meta.get("notes", "") or "").strip()
+            schedule = str(wo.get("schedule_cron", "") or wo.get("cron", "") or "").strip()
+
+            rows.append({
+                "tenant_id": tid,
+                "work_order_id": wid,
+                "enabled": "true" if enabled else "false",
+                "schedule_cron": schedule,
+                "title": title,
+                "notes": notes,
+                "path": str(wp.relative_to(ctx.repo_root)),
+            })
+
+    rows = sorted(rows, key=lambda r: (r["enabled"] != "true", r["tenant_id"], r["work_order_id"]))
+    _write_csv(ctx.ms_dir / "workorders_index.csv", rows, [
+        "tenant_id",
+        "work_order_id",
+        "enabled",
+        "schedule_cron",
+        "title",
+        "notes",
+        "path",
+    ])
 
 
 def _load_global_reasons(ctx: MaintenanceContext) -> List[Dict[str, Any]]:
@@ -809,27 +766,170 @@ def _write_tenant_relationships(ctx: MaintenanceContext, tenants: List[Dict[str,
     _write_csv(ctx.ms_dir / "tenant_relationships.csv", deduped, ["source_tenant_id","target_tenant_id"])
 
 
-def _write_module_requirements_index(ctx: MaintenanceContext, modules: List[Dict[str, Any]]) -> None:
-    src = ctx.repo_root / "platform" / "modules" / "requirements.csv"
-    rows = read_csv(src)
-    module_ids = {m["module_id"] for m in modules}
-    out=[]
-    for r in rows:
-        mid = canon_module_id(r.get("module_id", ""))
-        if not mid:
-            continue
-        if mid not in module_ids:
-            raise ValueError(f"requirements.csv references unknown module_id {mid}")
-        out.append({
-            "module_id": mid,
-            "requirement_type": str(r.get("requirement_type","")).strip(),
-            "requirement_key": str(r.get("requirement_key","")).strip(),
-            "requirement_value": str(r.get("requirement_value","")).strip(),
-            "note": str(r.get("note","")).strip(),
-        })
-    _write_csv(ctx.ms_dir / "module_requirements_index.csv", out,
-               ["module_id","requirement_type","requirement_key","requirement_value","note"])
 
+
+def _write_module_requirements_index(ctx: MaintenanceContext, modules: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """Write module_requirements_index.csv.
+
+    Source of truth: modules/<module_id>/module.yml (requirements block).
+    platform/modules/requirements.csv is deprecated and must be header-only.
+    """
+    legacy = read_csv(ctx.repo_root / "platform" / "modules" / "requirements.csv")
+    if legacy:
+        raise ValueError(
+            "platform/modules/requirements.csv is deprecated and must be header-only. "
+            "Move requirements to modules/<module_id>/module.yml under 'requirements:'."
+        )
+
+    module_ids = [m["module_id"] for m in modules]
+    out: List[Dict[str, str]] = []
+
+    for mid in module_ids:
+        mdir = ctx.modules_dir / mid
+        myml = _read_yaml(mdir / "module.yml")
+        req = myml.get("requirements") or {}
+        if not isinstance(req, dict):
+            continue
+
+        def _emit(req_type: str, item: Any) -> None:
+            if isinstance(item, str):
+                name = item.strip()
+                note = ""
+                val = ""
+            elif isinstance(item, dict):
+                name = str(item.get("name") or "").strip()
+                note = str(item.get("note") or "").strip()
+                val = "" if item.get("default") is None else str(item.get("default"))
+            else:
+                return
+            if not name:
+                return
+            out.append(
+                {
+                    "module_id": mid,
+                    "requirement_type": req_type,
+                    "requirement_key": name,
+                    "requirement_value": val,
+                    "note": note,
+                }
+            )
+
+        for it in (req.get("secrets") or []):
+            _emit("secret", it)
+        for it in (req.get("vars") or []):
+            _emit("var", it)
+
+    _write_csv(
+        ctx.ms_dir / "module_requirements_index.csv",
+        out,
+        ["module_id", "requirement_type", "requirement_key", "requirement_value", "note"],
+    )
+    return out
+
+
+def _write_secretstore_template(ctx: MaintenanceContext, modules: List[Dict[str, Any]], req_rows: List[Dict[str, str]]) -> None:
+    """Regenerate platform/secretstore/secretstore.template.json from module requirements.
+
+    Template keys are module-scoped. Secret names are allowed to be non-unique across modules.
+    Values are placeholders only (safe to commit).
+    """
+    mods: Dict[str, Dict[str, Any]] = {}
+    for m in modules:
+        mid = m["module_id"]
+        mods[mid] = {"secrets": {}, "vars": {}}
+
+    for r in req_rows:
+        mid = (r.get("module_id") or "").strip()
+        rtype = (r.get("requirement_type") or "").strip()
+        key = (r.get("requirement_key") or "").strip()
+        val = r.get("requirement_value")
+        if not mid or not key or mid not in mods:
+            continue
+        if rtype == "secret":
+            mods[mid]["secrets"][key] = "REPLACE_ME"
+        elif rtype == "var":
+            mods[mid]["vars"][key] = val if isinstance(val, str) and val != "" else "REPLACE_ME"
+
+    integrations: Dict[str, Dict[str, Any]] = {}
+
+    # Integration requirements derived from runtime profiles.
+    # These are platform-level secrets/vars that are not tied to a module.
+    # They live under the top-level "integrations" key in secretstore JSON.
+    runtime_profiles = sorted(ctx.config_dir.glob("runtime_profile*.yml"))
+    required_integ: Dict[str, Dict[str, List[str]]] = {}
+
+    has_dropbox_delivery = any(str(m.get("module_id", "")).strip() == "deliver_dropbox" for m in modules)
+
+    def _add_integration_req(integration_id: str, *, secrets: List[str], vars: List[str]) -> None:
+        blk = required_integ.setdefault(integration_id, {"secrets": [], "vars": []})
+        for s in secrets:
+            if s not in blk["secrets"]:
+                blk["secrets"].append(s)
+        for v in vars:
+            if v not in blk["vars"]:
+                blk["vars"].append(v)
+
+    def _extract_kinds(adapter_obj: Any) -> List[str]:
+        if not isinstance(adapter_obj, dict):
+            return []
+        kind = str(adapter_obj.get("kind", "") or "").strip()
+        if kind and kind != "multi":
+            return [kind]
+        if kind == "multi":
+            inner = adapter_obj.get("stores") or adapter_obj.get("publishers") or []
+            out: List[str] = []
+            if isinstance(inner, list):
+                for it in inner:
+                    if isinstance(it, dict):
+                        k = str(it.get("kind", "") or "").strip()
+                        if k:
+                            out.append(k)
+            return out
+        return []
+
+    for rp in runtime_profiles:
+        try:
+            y = _read_yaml(rp)
+        except Exception:
+            continue
+        adapters = y.get("adapters") or {}
+        if not isinstance(adapters, dict):
+            continue
+        # Artifact store requirements
+        kinds = _extract_kinds(adapters.get("artifact_store") or {})
+        if "s3" in kinds:
+            _add_integration_req(
+                "artifact_store_s3",
+                secrets=["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+                vars=["AWS_DEFAULT_REGION", "PLATFORM_ARTIFACTS_S3_BUCKET", "PLATFORM_ARTIFACTS_S3_PREFIX"],
+            )
+
+        # OAuth / tenant credentials requirements
+        tcs = adapters.get("tenant_credentials_store")
+        if isinstance(tcs, dict) and str(tcs.get("kind", "") or "").strip():
+            _add_integration_req(
+                "oauth_global",
+                secrets=["OAUTH_STATE_SIGNING_KEY", "TOKEN_ENCRYPTION_KEY"],
+                vars=[],
+            )
+            if has_dropbox_delivery:
+                _add_integration_req(
+                    "oauth_dropbox",
+                    secrets=["DROPBOX_APP_KEY", "DROPBOX_APP_SECRET"],
+                    vars=["DROPBOX_SCOPES"],
+                )
+
+    for integration_id, blk in sorted(required_integ.items(), key=lambda x: x[0]):
+        integrations[integration_id] = {"secrets": {}, "vars": {}}
+        for k in sorted(blk.get("secrets") or []):
+            integrations[integration_id]["secrets"][k] = "REPLACE_ME"
+        for k in sorted(blk.get("vars") or []):
+            integrations[integration_id]["vars"][k] = "REPLACE_ME"
+
+    payload = {"version": 1, "generated_at": "MAINTENANCE", "modules": mods, "integrations": integrations}
+    out_path = ctx.repo_root / "platform" / "secretstore" / "secretstore.template.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 def _write_module_artifacts_policy(ctx: MaintenanceContext, modules: List[Dict[str, Any]]) -> None:
     cfg = _read_yaml(ctx.config_dir / "platform_policy.yml")
@@ -873,6 +973,7 @@ def _write_manifest(ctx: MaintenanceContext) -> None:
         "reason_catalog.csv",
         "reason_policy.csv",
         "tenant_relationships.csv",
+        "workorders_index.csv",
         "module_requirements_index.csv",
         "module_artifacts_policy.csv",
         "module_contract_rules.csv",
@@ -906,7 +1007,9 @@ def run_maintenance(repo_root: Path) -> None:
     _ensure_reason_policy(ctx, reason_registry)
 
     _write_tenant_relationships(ctx, tenants)
-    _write_module_requirements_index(ctx, modules)
+    _write_workorders_index(ctx, tenants)
+    req_rows = _write_module_requirements_index(ctx, modules)
+    _write_secretstore_template(ctx, modules, req_rows)
     _write_module_artifacts_policy(ctx, modules)
     _write_module_contract_rules(ctx, modules)
     _write_platform_policy(ctx)

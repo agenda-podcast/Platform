@@ -1,0 +1,32 @@
+profile_name: dev_github
+description: "Current repository-backed behavior: CSV ledgers + local python module execution + GitHub Releases publishing."
+adapters:
+  registry:
+    kind: repo_csv
+    settings:
+      modules_csv: platform/modules/modules.csv
+
+  run_state_store:
+    kind: billing_state_csv
+    settings:
+      billing_state_dir: .billing-state
+
+  ledger_writer:
+    kind: billing_state_csv
+    settings:
+      billing_state_dir: .billing-state
+
+  artifact_store:
+    kind: local_fs
+    settings:
+      base_dir: runtime/object_store
+
+  execution_backend:
+    kind: local_python
+    settings:
+      modules_dir: modules
+
+  artifact_publisher:
+    kind: github_releases
+    settings:
+      enabled: true

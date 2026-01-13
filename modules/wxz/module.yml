@@ -1,59 +1,291 @@
 module_id: wxz
 name: google_search_pages
 version: 0.2.0
-description: "Google Custom Search (web pages only): fetch up to 100 results per query, up to 5 queries per run."
+kind: transform
+description: 'Google Custom Search (web pages only): fetch up to 100 results per query,
+  up to 5 queries per run.'
+requirements:
+  secrets:
+    - name: GOOGLE_SEARCH_API_KEY
+      note: Google API key for Custom Search API.
+    - name: GOOGLE_SEARCH_ENGINE_ID
+      note: Custom Search Engine (cx) id.
 
 supports_downloadable_artifacts: true
 produces_manifest: true
-
 cache:
   enabled: true
   retention_default: 1w
   key_inputs:
-    - queries
-    - safe
-    - max_items_per_query
-    - lang
-
+  - queries
+  - safe
+  - max_items_per_query
+  - lang
 ports:
   inputs:
-    - id: queries
-      type: array
-      required: true
-      visibility: tenant
-      format: application/json
-      description: "List of web search queries."
-    - id: safe
+    port:
+    - id: cr
       type: string
       required: false
-      visibility: tenant
-      default: "active"
+      default: null
       format: text/plain
-      description: "SafeSearch: off|active."
+      case_sensitive: false
+      description: Optional country restriction expression (e.g., countryUS).
+      schema:
+        nullable: true
+    - id: date_restrict
+      type: string
+      required: false
+      default: null
+      format: text/plain
+      case_sensitive: false
+      description: 'Optional relative date window. Pattern: d[number], w[number],
+        m[number], y[number]. Example: d7 for last 7 days.'
+      schema:
+        nullable: true
+        pattern: ^(d|w|m|y)\d+$
+    - id: dedupe
+      type: object
+      required: false
+      default:
+        enabled: true
+        strip_tracking_params: true
+      format: application/json
+      case_sensitive: false
+      description: Deduplication
+    - id: exact_terms
+      type: string
+      required: false
+      default: null
+      format: text/plain
+      case_sensitive: false
+      description: Optional phrase that must appear in results.
+      schema:
+        nullable: true
+        maxLength: 256
+    - id: exclude_terms
+      type: string
+      required: false
+      default: null
+      format: text/plain
+      case_sensitive: false
+      description: Optional terms to exclude from results.
+      schema:
+        nullable: true
+        maxLength: 256
+    - id: file_type
+      type: string
+      required: false
+      default: null
+      format: text/plain
+      case_sensitive: false
+      description: Optional file extension restriction (e.g., pdf).
+      schema:
+        nullable: true
+        maxLength: 16
+    - id: filter_duplicates
+      type: boolean
+      required: false
+      default: true
+      format: text/plain
+      case_sensitive: false
+      description: Google duplicate content filter. True => filter=1.
+    - id: gl
+      type: string
+      required: false
+      default: null
+      format: text/plain
+      case_sensitive: false
+      description: Optional two-letter country code for geolocation boosting (e.g.,
+        us, gb).
+      schema:
+        nullable: true
+        pattern: ^[a-z]{2}$
+    - id: high_range
+      type: string
+      required: false
+      default: null
+      format: text/plain
+      case_sensitive: false
+      description: Optional numeric high range appended to query with low_range.
+      schema:
+        nullable: true
+        maxLength: 32
+    - id: hl
+      type: string
+      required: false
+      default: null
+      format: text/plain
+      case_sensitive: false
+      description: Optional UI language code (e.g., en, es, ru).
+      schema:
+        nullable: true
+        minLength: 2
+        maxLength: 16
+    - id: hq
+      type: string
+      required: false
+      default: null
+      format: text/plain
+      case_sensitive: false
+      description: Optional terms that are AND-appended to the query.
+      schema:
+        nullable: true
+        maxLength: 256
+    - id: link_site
+      type: string
+      required: false
+      default: null
+      format: text/plain
+      case_sensitive: false
+      description: 'Optional: all results should link to this URL.'
+      schema:
+        nullable: true
+        maxLength: 1024
+    - id: low_range
+      type: string
+      required: false
+      default: null
+      format: text/plain
+      case_sensitive: false
+      description: Optional numeric low range appended to query with high_range.
+      schema:
+        nullable: true
+        maxLength: 32
+    - id: lr
+      type: string
+      required: false
+      default: null
+      format: text/plain
+      case_sensitive: false
+      description: 'Optional document language restriction. Example values: lang_en,
+        lang_ru.'
+      schema:
+        nullable: true
     - id: max_items_per_query
       type: integer
       required: false
-      visibility: tenant
-      default: 10
+      default: 100
       format: text/plain
-      description: "Max results per query (1-10 per request; module paginates up to 100 per query)."
+      case_sensitive: false
+      description: Requested max results per query (hard-capped at 100 per query).
+        The module always pages by 10 results until it reaches the cap or runs out
+        of results.
+      schema:
+        minimum: 1
+        maximum: 100
+        examples:
+        - 50
+        - 100
+    - id: or_terms
+      type: string
+      required: false
+      default: null
+      format: text/plain
+      case_sensitive: false
+      description: Optional OR terms; each result must contain at least one of these
+        terms.
+      schema:
+        nullable: true
+        maxLength: 256
+    - id: queries
+      type: array
+      required: true
+      format: application/json
+      case_sensitive: false
+      description: 'List of full search request strings. The module runs up to one
+        Google Custom Search request per query string. Example: ["federal reserve
+        inflation outlook", "tesla FSD data valuation"].'
+      schema:
+        minItems: 1
+        maxItems: 5
+        items:
+          minLength: 1
+          maxLength: 256
+      item_type: string
+    - id: rights
+      type: string
+      required: false
+      default: null
+      format: text/plain
+      case_sensitive: false
+      description: Optional licensing filter string.
+      schema:
+        nullable: true
+    - id: safe
+      type: string
+      required: false
+      default: active
+      format: text/plain
+      case_sensitive: false
+      description: 'SafeSearch filtering. ENUM: active, off. Default active.'
+      schema:
+        enum:
+        - active
+        - 'off'
+    - id: site_search
+      type: string
+      required: false
+      default: null
+      format: text/plain
+      case_sensitive: false
+      description: 'Optional site to include or exclude (use with site_search_filter).
+        Example: reuters.com.'
+      schema:
+        nullable: true
+        maxLength: 256
+    - id: site_search_filter
+      type: string
+      required: false
+      default: null
+      format: text/plain
+      case_sensitive: false
+      description: 'If site_search is set: ENUM i=include, e=exclude.'
+      schema:
+        nullable: true
+        enum:
+        - i
+        - e
+        - null
+    - id: sort
+      type: string
+      required: false
+      default: null
+      format: text/plain
+      case_sensitive: false
+      description: Optional sort expression (engine-dependent).
+      schema:
+        nullable: true
+        maxLength: 128
+    limited_port:
     - id: lang
       type: string
       required: false
-      visibility: platform
-      default: "en"
+      default: en
       format: text/plain
-      description: "Platform-only language hint used for output annotations."
+      case_sensitive: false
+      schema:
+        minLength: 1
+        maxLength: 32
+      description: Platform-only language hint used for output annotations.
   outputs:
+    port:
     - id: results
       type: file
-      visibility: tenant
       path: results.jsonl
       format: application/x-jsonlines
-      description: "One JSON object per line: query + search result item."
+      description: 'One JSON object per line: query + search result item.'
     - id: report
       type: file
-      visibility: tenant
       path: report.json
       format: application/json
-      description: "Run summary (timing, counts, errors)."
+      description: Run summary (timing, counts, errors).
+    limited_port: []
+deliverables:
+  port:
+  - deliverable_id: tenant_outputs
+    description: Tenant-visible outputs.
+    outputs:
+    - results
+    - report
+  limited_port: []
