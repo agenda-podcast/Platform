@@ -47,6 +47,9 @@ jobs:
           # Preflight/plan-only validation (defaults enrichment + deliverables/bindings).
           python -m platform.cli integrity-validate --tenant-id nxlkGI --work-order-id UbjkpxZO
 
+          # Secretstore requirements preflight (offline mode skips secret enforcement).
+          python -m platform.cli secretstore-validate --tenant-id nxlkGI --work-order-id UbjkpxZO
+
           # Seed a historical sentinel row to ensure billing-state is append-only (SoT).
           python - <<'PY'
           import csv

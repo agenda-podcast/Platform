@@ -54,6 +54,14 @@ jobs:
         run: |
           python scripts/bootstrap_billing_state_from_release.py             --repo "${{ github.repository }}"             --tag "${BILLING_STATE_RELEASE_TAG}"             --billing-state-dir "${BILLING_STATE_DIR}"
 
+      - name: Secretstore preflight (validate required secrets)
+        env:
+          SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m platform.cli secretstore-validate
+
       - name: Run orchestrator
         env:
           SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}

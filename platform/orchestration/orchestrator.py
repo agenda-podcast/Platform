@@ -14,7 +14,6 @@ import yaml
 from ..billing.state import BillingState
 from ..common.id_codec import canon_module_id, canon_tenant_id, canon_work_order_id, id_key, dedupe_tenants_credits
 from ..common.id_policy import generate_unique_id, validate_id
-from ..github.releases import ensure_release, upload_release_assets, get_release_numeric_id, get_release_assets_numeric_ids
 from ..orchestration.module_exec import execute_module_runner, derive_cache_key
 from ..utils.csvio import read_csv
 from ..utils.fs import ensure_dir
@@ -33,6 +32,7 @@ from .idempotency import (
 from .status_reducer import StatusInputs, reduce_workorder_status
 
 from ..secretstore.loader import load_secretstore, env_for_module
+from ..secretstore.requirements import validate_required_secrets_for_modules
 
 
 def _parse_iso_z(s: str) -> datetime:
@@ -1019,6 +1019,72 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             run_id=work_order_id,
             runtime_profile_name=runtime_profile_name,
         )
+
+        # Secretstore requirements preflight (before any ledger spend is posted).
+        # Many transform modules require secrets (AI providers, search APIs, etc.), not only delivery.
+        offline_ok = (os.environ.get("PLATFORM_OFFLINE") or "").strip() == "1"
+        try:
+            missing_secrets = validate_required_secrets_for_modules(
+                load_module_yaml_fn=registry.load_module_yaml,
+                store=store,
+                module_ids=[str(p.get("module_id") or "") for p in plan],
+                env=dict(os.environ),
+                offline_ok=offline_ok,
+            )
+        except Exception as e:
+            missing_secrets = {"__validation__": [f"secretstore validation error: {e}"]}
+
+        if missing_secrets:
+            rc = _reason_code(reason_idx, "GLOBAL", "", "missing_required_secret")
+            human_note = "Missing required secrets for one or more modules"
+
+            workorders_log.append(
+                {
+                    "work_order_id": work_order_id,
+                    "tenant_id": tenant_id,
+                    "status": "FAILED",
+                    "created_at": created_at,
+                    "started_at": started_at,
+                    "ended_at": utcnow_iso(),
+                    "note": human_note,
+                    "metadata_json": json.dumps(
+                        {
+                            "workorder_path": item["path"],
+                            "reason_code": rc,
+                            "reason_slug": "missing_required_secret",
+                            "missing": missing_secrets,
+                            "offline_ok": offline_ok,
+                        },
+                        separators=(",", ":"),
+                    ),
+                }
+            )
+            try:
+                run_state.create_run(
+                    tenant_id=ctx.tenant_id,
+                    work_order_id=ctx.work_order_id,
+                    metadata={
+                        "workorder_path": str(item.get("path") or ""),
+                        "runtime_profile_name": ctx.runtime_profile_name,
+                        "artifacts_requested": artifacts_requested,
+                        "requested_deliverables_by_step": per_step_requested_deliverables,
+                        "deliverables_source_by_step": per_step_deliverables_source,
+                        "missing_required_secret": missing_secrets,
+                    },
+                )
+                run_state.set_run_status(
+                    tenant_id=ctx.tenant_id,
+                    work_order_id=ctx.work_order_id,
+                    status="FAILED",
+                    metadata={"reason_code": rc, "reason_slug": "missing_required_secret"},
+                )
+            except Exception:
+                pass
+            print(f"[secretstore] missing required secrets; failing workorder {tenant_id}/{work_order_id}")
+            for mid in sorted(missing_secrets.keys()):
+                names = missing_secrets.get(mid) or []
+                print(f"[secretstore] - {mid}: {', '.join(names)}")
+            continue
         try:
             run_state.create_run(
                 tenant_id=ctx.tenant_id,
