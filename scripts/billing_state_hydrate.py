@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+import sys
+from pathlib import Path as _Path
+
+# Ensure repo root is on sys.path so local 'platform' package wins over stdlib 'platform' module
+_REPO_ROOT = _Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+if "platform" in sys.modules and not hasattr(sys.modules["platform"], "__path__"):
+    del sys.modules["platform"]
+
 """
 Hydrate a local billing-state directory for an orchestrator run.
 

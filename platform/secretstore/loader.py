@@ -60,14 +60,13 @@ def _decrypt_gpg_json(gpg_path: Path, passphrase: str) -> Dict[str, Any]:
             "-d",
             str(gpg_path),
         ],
-        input=(passphrase + "\n").encode("utf-8"),
-        text=False,
+        input=f"{passphrase}\n",
+        text=True,
         capture_output=True,
     )
     if proc.returncode != 0:
         # Do NOT include passphrase; stderr is safe.
-        stderr_b = proc.stderr or b""
-        stderr = stderr_b.decode("utf-8", errors="replace").strip()
+        stderr = (proc.stderr or "").strip()
         try:
             digest = hashlib.sha256(gpg_path.read_bytes()).hexdigest()[:16]
         except Exception:
@@ -83,8 +82,7 @@ def _decrypt_gpg_json(gpg_path: Path, passphrase: str) -> Dict[str, Any]:
             f"Failed to decrypt secretstore (sha256[:16]={digest}): {stderr}"
         )
 
-    stdout_b = proc.stdout or b""
-    out = stdout_b.decode("utf-8", errors="replace").strip()
+    out = (proc.stdout or "").strip()
     if not out:
         return {}
     try:
