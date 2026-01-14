@@ -66,7 +66,8 @@ def _decrypt_gpg_json(gpg_path: Path, passphrase: str) -> Dict[str, Any]:
     )
     if proc.returncode != 0:
         # Do NOT include passphrase; stderr is safe.
-        stderr = (proc.stderr or "").strip()
+        stderr_b = proc.stderr or b""
+        stderr = stderr_b.decode("utf-8", errors="replace").strip()
         try:
             digest = hashlib.sha256(gpg_path.read_bytes()).hexdigest()[:16]
         except Exception:
@@ -82,8 +83,8 @@ def _decrypt_gpg_json(gpg_path: Path, passphrase: str) -> Dict[str, Any]:
             f"Failed to decrypt secretstore (sha256[:16]={digest}): {stderr}"
         )
 
-    out_bytes = proc.stdout or b""
-    out = out_bytes.decode("utf-8", errors="strict").strip()
+    stdout_b = proc.stdout or b""
+    out = stdout_b.decode("utf-8", errors="replace").strip()
     if not out:
         return {}
     try:
@@ -180,4 +181,5 @@ def env_for_integration(store: SecretStore, integration_id: str) -> Dict[str, st
                 continue
             env[kk] = "" if v is None else str(v)
     return env
+
 
