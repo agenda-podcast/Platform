@@ -10,6 +10,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 
+MODULE_ID = "deliver_email"
+MAX_PACKAGE_BYTES = 20866662
+
+
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -19,7 +23,6 @@ def _write_json(path: Path, obj: Dict[str, Any]) -> None:
 
 
 def _as_local_path(inp: Any) -> Tuple[Path, Dict[str, Any]]:
-    """Resolve an input that may be a string path or an OutputRecord-like dict."""
     meta: Dict[str, Any] = {}
     if isinstance(inp, dict):
         meta = dict(inp)
@@ -29,10 +32,7 @@ def _as_local_path(inp: Any) -> Tuple[Path, Dict[str, Any]]:
         if uri.startswith("file://"):
             return Path(uri.replace("file://", "", 1)), meta
         if meta.get("path"):
-            p = Path(str(meta["path"]))
-            if p.is_absolute():
-                return p, meta
-            return p, meta
+            return Path(str(meta["path"])), meta
         raise ValueError("Unsupported file input dict (expected path/as_path/uri)")
     if isinstance(inp, str) and inp.strip():
         return Path(inp.strip()), meta
@@ -61,7 +61,19 @@ def _sha256_file(p: Path) -> str:
     return h.hexdigest()
 
 
-def _send_via_smtp(*, host: str, port: int, use_tls: bool, username: str, password: str, from_email: str, to_email: str, subject: str, body: str, attachment_path: Path) -> str:
+def _send_via_smtp(
+    *,
+    host: str,
+    port: int,
+    use_tls: bool,
+    username: str,
+    password: str,
+    from_email: str,
+    to_email: str,
+    subject: str,
+    body: str,
+    attachment_path: Path,
+) -> str:
     msg = EmailMessage()
     msg["From"] = from_email
     msg["To"] = to_email
@@ -80,49 +92,22 @@ def _send_via_smtp(*, host: str, port: int, use_tls: bool, username: str, passwo
             s.starttls()
             s.ehlo()
             if username:
+                if not password:
+                    raise RuntimeError("EMAIL_SMTP_PASSWORD is required when EMAIL_SMTP_USERNAME is set")
                 s.login(username, password)
             s.send_message(msg)
             return message_id
 
     with smtplib.SMTP(host=host, port=port, timeout=30) as s:
         if username:
+            if not password:
+                raise RuntimeError("EMAIL_SMTP_PASSWORD is required when EMAIL_SMTP_USERNAME is set")
             s.login(username, password)
         s.send_message(msg)
         return message_id
 
 
-def _send_to_dev_outbox(*, outputs_dir: Path, from_email: str, to_email: str, subject: str, body: str, attachment_path: Path) -> Tuple[str, str]:
-    outbox = outputs_dir / "outbox"
-    outbox.mkdir(parents=True, exist_ok=True)
-
-    message_id = make_msgid(domain="dev.outbox")
-    eml_path = outbox / "message.eml"
-
-    msg = EmailMessage()
-    msg["From"] = from_email
-    msg["To"] = to_email
-    msg["Subject"] = subject
-    msg["Date"] = formatdate(localtime=False)
-    msg["Message-ID"] = message_id
-    msg.set_content(body)
-
-    data = attachment_path.read_bytes()
-    msg.add_attachment(data, maintype="application", subtype="zip", filename=attachment_path.name)
-
-    eml_path.write_bytes(msg.as_bytes())
-    return message_id, str(eml_path)
-
-
-MAX_PACKAGE_BYTES = 20866662
-
-
 def run(*, params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
-    """Deliver the provided package.zip via email.
-
-    Policy:
-      - If package bytes >= MAX_PACKAGE_BYTES, fail with reason_slug=package_too_large_for_email.
-      - No link fallback.
-    """
     outputs_dir.mkdir(parents=True, exist_ok=True)
 
     inputs = params.get("inputs") if isinstance(params.get("inputs"), dict) else params
@@ -132,90 +117,162 @@ def run(*, params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
     module_run_id = str(params.get("module_run_id") or "").strip()
 
     report_path = "report.json"
-    delivery_attempted = False
+
+    delivery_log: Dict[str, Any] = {
+        "schema_version": 1,
+        "module_id": MODULE_ID,
+        "tenant_id": tenant_id,
+        "work_order_id": work_order_id,
+        "step_id": step_id,
+        "module_run_id": module_run_id,
+        "started_at": _utcnow_iso(),
+        "stage": "init",
+        "package_path": "",
+        "package_bytes_stat": 0,
+        "package_bytes_meta": None,
+        "size_threshold": MAX_PACKAGE_BYTES,
+        "smtp_host_present": False,
+        "smtp_port_present": False,
+        "smtp_username_present": False,
+        "recipient_email": "",
+        "from_email": "",
+        "use_tls": None,
+        "provider": "smtp",
+        "message_id": "",
+        "error": "",
+    }
 
     try:
         pkg_val = (inputs or {}).get("package_zip")
         pkg_path, pkg_meta = _as_local_path(pkg_val)
+        delivery_log["package_path"] = str(pkg_path)
+
         if not pkg_path.exists():
             raise FileNotFoundError(str(pkg_path))
 
-        bytes_hint = _int_or_none(pkg_meta.get("bytes"))
-        pkg_bytes = int(bytes_hint) if bytes_hint is not None and int(bytes_hint) > 0 else int(pkg_path.stat().st_size)
+        bytes_meta = _int_or_none(pkg_meta.get("bytes"))
+        bytes_stat = int(pkg_path.stat().st_size)
+        delivery_log["package_bytes_stat"] = bytes_stat
+        delivery_log["package_bytes_meta"] = bytes_meta
 
-        # Enforce size cap before hashing or reading attachment into memory.
-        if pkg_bytes >= MAX_PACKAGE_BYTES:
+        print(
+            f"[deliver_email] package_bytes_stat={bytes_stat} package_bytes_meta={bytes_meta} threshold={MAX_PACKAGE_BYTES}"
+        )
+
+        if bytes_stat >= MAX_PACKAGE_BYTES:
             err = {
                 "type": "DeliveryError",
                 "reason_slug": "package_too_large_for_email",
-                "message": f"package bytes {pkg_bytes} exceed threshold {MAX_PACKAGE_BYTES}",
+                "message": f"package bytes {bytes_stat} exceed threshold {MAX_PACKAGE_BYTES}",
                 "tenant_id": tenant_id,
                 "work_order_id": work_order_id,
                 "step_id": step_id,
                 "module_run_id": module_run_id,
             }
+            delivery_log["stage"] = "size_gate_failed"
+            _write_json(outputs_dir / "delivery_log.json", delivery_log)
             _write_json(outputs_dir / report_path, err)
-            return {"status": "FAILED", "reason_slug": "package_too_large_for_email", "report_path": report_path, "output_ref": str(outputs_dir), "refund_eligible": True}
+            return {
+                "status": "FAILED",
+                "reason_slug": "package_too_large_for_email",
+                "report_path": report_path,
+                "output_ref": str(outputs_dir),
+                "refund_eligible": True,
+            }
 
         sha_hint = str(pkg_meta.get("sha256") or "").strip()
         pkg_sha256 = sha_hint if sha_hint else _sha256_file(pkg_path)
 
         recipient = str((inputs or {}).get("recipient_email") or "").strip()
         if not recipient:
-            recipient = str(os.environ.get("DELIVER_EMAIL_DEFAULT_RECIPIENT") or "").strip()
-        if not recipient:
-            raise ValueError("recipient_email is required (or set DELIVER_EMAIL_DEFAULT_RECIPIENT)")
+            raise ValueError("recipient_email is required")
+        delivery_log["recipient_email"] = recipient
 
-        from_email = str(os.environ.get("EMAIL_FROM_EMAIL") or "noreply@example.com").strip() or "noreply@example.com"
-        subject = f"Platform delivery: {tenant_id}/{work_order_id}"
-        body = "Attached: package.zip\n"
+        from_email = str(os.environ.get("EMAIL_FROM_EMAIL") or "").strip()
+        if not from_email:
+            raise ValueError("EMAIL_FROM_EMAIL is required")
+        delivery_log["from_email"] = from_email
 
         smtp_host = str(os.environ.get("EMAIL_SMTP_HOST") or "").strip()
         smtp_port = _int_or_none(os.environ.get("EMAIL_SMTP_PORT"))
-        use_tls = str(os.environ.get("EMAIL_SMTP_USE_TLS") or "true").strip().lower() == "true"
+
+        smtp_use_tls_in = (inputs or {}).get("smtp_use_tls")
+        if isinstance(smtp_use_tls_in, bool):
+            use_tls = smtp_use_tls_in
+        else:
+            use_tls = str(os.environ.get("EMAIL_SMTP_USE_TLS") or "true").strip().lower() == "true"
+
         username = str(os.environ.get("EMAIL_SMTP_USERNAME") or "").strip()
         password = str(os.environ.get("EMAIL_SMTP_PASSWORD") or "").strip()
 
-        provider = "outbox_stub"
-        remote_object_id = ""
-        remote_path = ""
-        verification_status = "written"
+        delivery_log["smtp_host_present"] = bool(smtp_host)
+        delivery_log["smtp_port_present"] = bool(smtp_port)
+        delivery_log["smtp_username_present"] = bool(username)
+        delivery_log["use_tls"] = bool(use_tls)
 
-        if smtp_host and smtp_port:
-            provider = "smtp"
-            verification_status = "sent"
-            delivery_attempted = True
-            remote_object_id = _send_via_smtp(host=smtp_host, port=int(smtp_port), use_tls=use_tls, username=username, password=password, from_email=from_email, to_email=recipient, subject=subject, body=body, attachment_path=pkg_path)
-        else:
-            delivery_attempted = True
-            remote_object_id, remote_path = _send_to_dev_outbox(outputs_dir=outputs_dir, from_email=from_email, to_email=recipient, subject=subject, body=body, attachment_path=pkg_path)
+        print(
+            f"[deliver_email] smtp_host_present={bool(smtp_host)} smtp_port_present={bool(smtp_port)} use_tls={bool(use_tls)} smtp_username_present={bool(username)}"
+        )
+
+        if not smtp_host or not smtp_port:
+            raise RuntimeError("SMTP is not configured: set EMAIL_SMTP_HOST and EMAIL_SMTP_PORT")
+
+        subject = str((inputs or {}).get("subject") or "").strip()
+        if not subject:
+            subject = f"Platform delivery: {tenant_id}/{work_order_id}"
+
+        body = str((inputs or {}).get("body") or "").strip()
+        if not body:
+            body = "Attached: package.zip\n"
+
+        delivery_log["stage"] = "smtp_send_message"
+        message_id = _send_via_smtp(
+            host=smtp_host,
+            port=int(smtp_port),
+            use_tls=bool(use_tls),
+            username=username,
+            password=password,
+            from_email=from_email,
+            to_email=recipient,
+            subject=subject,
+            body=body,
+            attachment_path=pkg_path,
+        )
+
+        delivery_log["message_id"] = message_id
+        delivery_log["stage"] = "completed"
 
         receipt = {
             "schema_version": 1,
-            "provider": provider,
+            "provider": "smtp",
             "tenant_id": tenant_id,
             "work_order_id": work_order_id,
             "step_id": step_id,
             "module_run_id": module_run_id,
             "delivered_at": _utcnow_iso(),
-            "verification_status": verification_status,
-            "remote_path": remote_path,
-            "remote_object_id": remote_object_id,
+            "verification_status": "sent",
+            "remote_path": "",
+            "remote_object_id": message_id,
             "share_link": "",
-            "bytes": int(pkg_bytes),
+            "bytes": int(bytes_stat),
             "sha256": pkg_sha256,
-            # Backward-compatible, provider-specific fields:
             "recipient_email": recipient,
             "from_email": from_email,
             "subject": subject,
-            "message_id": remote_object_id,
-            "package": {"path": str(pkg_path), "bytes": int(pkg_bytes), "sha256": pkg_sha256},
+            "message_id": message_id,
+            "package": {"path": str(pkg_path), "bytes": int(bytes_stat), "sha256": pkg_sha256},
         }
+
+        _write_json(outputs_dir / "delivery_log.json", delivery_log)
         _write_json(outputs_dir / "delivery_receipt.json", receipt)
 
         return {"status": "COMPLETED", "reason_slug": "", "report_path": "", "output_ref": str(outputs_dir), "refund_eligible": False}
 
     except Exception as e:
+        delivery_log["error"] = str(e)
+        delivery_log["stage"] = "failed"
+        _write_json(outputs_dir / "delivery_log.json", delivery_log)
+
         err = {
             "type": "DeliveryError",
             "reason_slug": "delivery_failed",
@@ -226,4 +283,11 @@ def run(*, params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
             "module_run_id": module_run_id,
         }
         _write_json(outputs_dir / report_path, err)
-        return {"status": "FAILED", "reason_slug": "delivery_failed", "report_path": report_path, "output_ref": str(outputs_dir), "refund_eligible": False}
+
+        return {
+            "status": "FAILED",
+            "reason_slug": "delivery_failed",
+            "report_path": report_path,
+            "output_ref": str(outputs_dir),
+            "refund_eligible": True,
+        }

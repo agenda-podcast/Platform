@@ -1,8 +1,8 @@
 module_id: deliver_email
 name: deliver_email
-version: 0.1.0
+version: 0.2.0
 kind: delivery
-description: "System delivery module: send package.zip via email (attachment only)."
+description: "System delivery module: send package.zip via email (SMTP attachment)."
 
 metadata:
   max_package_bytes: 20866662
@@ -10,16 +10,19 @@ metadata:
 requirements:
   secrets:
     - name: EMAIL_SMTP_HOST
-      note: "SMTP host; if unset, uses dev outbox stub."
+      note: "SMTP host for email delivery (required)."
     - name: EMAIL_SMTP_PORT
-      note: "SMTP port; if unset, uses dev outbox stub."
+      note: "SMTP port for email delivery (required)."
+    - name: EMAIL_SMTP_USERNAME
+      note: "SMTP username (optional; if unset, no SMTP AUTH is performed)."
+    - name: EMAIL_SMTP_PASSWORD
+      note: "SMTP password (optional; if unset, no SMTP AUTH is performed)."
+    - name: EMAIL_FROM_EMAIL
+      note: "Sender email address (required)."
   vars:
     - name: EMAIL_SMTP_USE_TLS
       value: "true"
       note: "Use STARTTLS when connecting to SMTP."
-    - name: DELIVER_EMAIL_DEFAULT_RECIPIENT
-      value: ""
-      note: "Default recipient for dev runs when recipient_email input is omitted."
 
 ports:
   inputs:
@@ -36,9 +39,24 @@ ports:
         description: "Optional manifest for the delivered package."
       - id: recipient_email
         type: string
+        required: true
+        format: text/plain
+        description: "Recipient email address."
+      - id: subject
+        type: string
         required: false
         format: text/plain
-        description: "Recipient email; falls back to DELIVER_EMAIL_DEFAULT_RECIPIENT."
+        description: "Email subject. Defaults to 'Platform delivery: <tenant>/<work_order>'."
+      - id: body
+        type: string
+        required: false
+        format: text/plain
+        description: "Email body. Defaults to 'Attached: package.zip'."
+      - id: smtp_use_tls
+        type: boolean
+        required: false
+        format: application/json
+        description: "Use STARTTLS when connecting to SMTP. Defaults to EMAIL_SMTP_USE_TLS."
     limited_port: []
   outputs:
     port:
@@ -47,6 +65,11 @@ ports:
         path: delivery_receipt.json
         format: application/json
         description: "Delivery receipt with provider metadata and verification status."
+      - id: delivery_log_json
+        type: file
+        path: delivery_log.json
+        format: application/json
+        description: "Detailed, auditable delivery log (attempt metadata, config checks, result)."
     limited_port: []
 
 deliverables:
@@ -55,4 +78,8 @@ deliverables:
       description: "Delivery receipt (tenant-visible)."
       outputs:
         - delivery_receipt_json
+    - deliverable_id: delivery_log
+      description: "Delivery detailed log (tenant-visible)."
+      outputs:
+        - delivery_log_json
   limited_port: []
