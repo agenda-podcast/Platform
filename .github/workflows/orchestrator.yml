@@ -17,6 +17,9 @@ jobs:
   run:
     needs: [consistency_validation]
     runs-on: ubuntu-latest
+    # IMPORTANT: Environment-scoped secrets (e.g., SECRETSTORE_PASSPHRASE) are only injected
+    # when the job explicitly targets that environment.
+    environment: Main
     env:
       BILLING_STATE_DIR: .billing-state
       RUNTIME_DIR: runtime
