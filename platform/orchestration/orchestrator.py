@@ -107,6 +107,18 @@ def _has_secret_value(*, store_env: dict[str, str], key: str, module_id: str) ->
             return True
     return False
 
+def _secret_presence_source(*, store_env: dict[str, str], key: str, module_id: str) -> str:
+    """Return where the secret value is resolved from: env | secretstore | missing."""
+    candidates = [key, f"{module_id}_{key}"]
+    for k in candidates:
+        v = (os.environ.get(k) or "").strip()
+        if v:
+            return "env"
+        sv = (store_env.get(k) or "").strip()
+        if sv:
+            return "secretstore"
+    return "missing"
+
 
 def _preflight_assert_required_secrets(
     *,
@@ -134,19 +146,36 @@ def _preflight_assert_required_secrets(
             continue
         store_env = env_for_module(store, mid)
 
+        enforced: list[str] = []
+        present: list[dict[str, str]] = []
+        missing_local: list[str] = []
+
         for rr in reqs.get(mid, []):
             key = rr["key"]
             note = rr.get("note", "")
             if not _is_secret_enforced(note=note, platform_offline=platform_offline):
                 continue
-            if _has_secret_value(store_env=store_env, key=key, module_id=mid):
+
+            enforced.append(key)
+            src_kind = _secret_presence_source(store_env=store_env, key=key, module_id=mid)
+            if src_kind != "missing":
+                present.append({"key": key, "source": src_kind})
                 continue
+
+            missing_local.append(key)
             missing.append({
                 "step_id": sid,
                 "module_id": mid,
                 "secret_key": key,
                 "note": note,
             })
+
+        if enforced:
+            present_compact = [f"{d['key']}@{d['source']}" for d in present]
+            print(
+                f"[preflight][secrets] step_id={sid} module_id={mid} "
+                f"enforced={enforced} present={present_compact} missing={missing_local}"
+            )
 
     if missing:
         raise PreflightSecretError(missing=missing)
@@ -1156,6 +1185,16 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
         except PreflightSecretError as e:
             rc = _reason_code(reason_idx, "GLOBAL", "", "secrets_missing")
             human_note = "Preflight failed: missing required secrets for one or more enabled steps"
+            ended = utcnow_iso()
+            # Emit a deterministic, grep-friendly console log so GitHub Actions users can
+            # immediately see what is missing without opening CSV artifacts.
+            try:
+                missing_compact = [
+                    f"{m.get('step_id')}:{m.get('module_id')}:{m.get('secret_key')}" for m in (e.missing or [])
+                ]
+            except Exception:
+                missing_compact = []
+            print(f"[preflight][FAILED] work_order_id={work_order_id} reason_code={rc} missing={missing_compact}")
             meta = {
                 "workorder_path": str(item.get("path") or ""),
                 "reason_code": rc,
@@ -1167,7 +1206,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 "status": "FAILED",
                 "created_at": created_at,
                 "started_at": started_at,
-                "ended_at": utcnow_iso(),
+                "ended_at": ended,
                 "note": human_note,
                 "metadata_json": json.dumps(meta, separators=(",", ":")),
             })
@@ -1176,7 +1215,12 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                     tenant_id=ctx.tenant_id,
                     work_order_id=ctx.work_order_id,
                     status="FAILED",
-                    metadata={"reason_code": rc, "missing_secrets": e.missing},
+                    metadata={
+                        "reason_code": rc,
+                        "missing_secrets": e.missing,
+                        "note": human_note,
+                        "ended_at": ended,
+                    },
                 )
             except Exception:
                 pass

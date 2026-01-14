@@ -1,13 +1,13 @@
 module_id,requirement_type,requirement_key,requirement_value,note
+deliver_email,secret,EMAIL_SMTP_HOST,,SMTP host for email delivery (required).
+deliver_email,secret,EMAIL_SMTP_PORT,,SMTP port for email delivery (required).
+deliver_email,secret,EMAIL_SMTP_USERNAME,,SMTP username (optional; if unset, no SMTP AUTH is performed).
+deliver_email,secret,EMAIL_SMTP_PASSWORD,,SMTP password (optional; if unset, no SMTP AUTH is performed).
+deliver_email,secret,EMAIL_FROM_EMAIL,,Sender email address (required).
+deliver_email,var,EMAIL_SMTP_USE_TLS,,Use STARTTLS when connecting to SMTP.
 deliver_dropbox,secret,DROPBOX_ACCESS_TOKEN,,"Dropbox OAuth access token; if unset, uses dev stub."
 deliver_dropbox,var,DROPBOX_CHUNK_BYTES,,Upload chunk size in bytes for resumable uploads.
 deliver_dropbox,var,DROPBOX_CREATE_SHARE_LINK,,"If true, attempt to create or reuse a share link after upload."
-deliver_email,secret,EMAIL_SMTP_HOST,,SMTP host for email delivery (required).
-deliver_email,secret,EMAIL_SMTP_PORT,,SMTP port for email delivery (required).
-deliver_email,secret,EMAIL_SMTP_USERNAME,,"SMTP username (optional; if unset, no SMTP AUTH is performed)."
-deliver_email,secret,EMAIL_SMTP_PASSWORD,,"SMTP password (optional; if unset, no SMTP AUTH is performed)."
-deliver_email,secret,EMAIL_FROM_EMAIL,,Sender email address (required).
-deliver_email,var,EMAIL_SMTP_USE_TLS,,Use STARTTLS when connecting to SMTP.
 deliver_onedrive,secret,ONEDRIVE_ACCESS_TOKEN,,"Microsoft Graph OAuth access token with Files.ReadWrite; if unset, uses dev stub."
 deliver_onedrive,var,ONEDRIVE_CHUNK_BYTES,,Upload chunk size in bytes for resumable uploads (Graph upload session).
 deliver_onedrive,var,ONEDRIVE_CREATE_SHARE_LINK,,"If true, attempt to create or reuse a share link after upload."
