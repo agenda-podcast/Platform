@@ -12,7 +12,7 @@ steps:
   deliverables:
   - tenant_outputs
   inputs:
-    bytes: 26214400
+    bytes: 16214400
     seed: email_threshold
 - step_id: p2
   step_name: package_big_file
