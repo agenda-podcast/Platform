@@ -29,7 +29,7 @@ def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
     outputs_dir.mkdir(parents=True, exist_ok=True)
 
     inputs = params.get("inputs") if isinstance(params.get("inputs"), dict) else {}
-    nbytes = _int_or(inputs.get("bytes") if "bytes" in inputs else params.get("bytes"), 26214400)
+    nbytes = _int_or(inputs.get("bytes") if "bytes" in inputs else params.get("bytes"), 16214400)
     seed = str(inputs.get("seed") if "seed" in inputs else params.get("seed") or "seed")
 
     if nbytes <= 0:
