@@ -64,6 +64,21 @@ def _release_view_json(tag: str, *, repo_root: Optional[Path] = None) -> Dict[st
     return obj
 
 
+def get_release_numeric_id(tag: str, *, repo_root: Optional[Path] = None) -> int:
+    """Return the GitHub numeric release id for the given tag.
+
+    Some workflows use the numeric id to reference assets for deletion or audit.
+    """
+    obj = _release_view_json(tag, repo_root=repo_root)
+    rid = obj.get("id")
+    if rid is None:
+        raise RuntimeError(f"Release view JSON for {tag} did not include an id")
+    try:
+        return int(rid)
+    except (TypeError, ValueError) as e:
+        raise RuntimeError(f"Release id for {tag} is not an int: {rid}") from e
+
+
 def list_release_assets(tag: str, *, repo_root: Optional[Path] = None) -> List[Dict[str, object]]:
     obj = _release_view_json(tag, repo_root=repo_root)
     assets = obj.get("assets") or []
