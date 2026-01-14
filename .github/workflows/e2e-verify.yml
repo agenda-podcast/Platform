@@ -47,9 +47,6 @@ jobs:
           # Preflight/plan-only validation (defaults enrichment + deliverables/bindings).
           python -m platform.cli integrity-validate --tenant-id nxlkGI --work-order-id UbjkpxZO
 
-          # Secretstore requirements preflight (offline mode skips secret enforcement).
-          python -m platform.cli secretstore-validate --tenant-id nxlkGI --work-order-id UbjkpxZO
-
           # Seed a historical sentinel row to ensure billing-state is append-only (SoT).
           python - <<'PY'
           import csv
@@ -157,5 +154,36 @@ jobs:
           python -m platform.cli orchestrator             --runtime-profile config/runtime_profile.dev_github.yml             --billing-state-dir .billing-state-e2e-email             --runtime-dir runtime-e2e-email
 
           python scripts/e2e_assert_email_threshold.py             --billing-state-dir .billing-state-e2e-email             --runtime-dir runtime-e2e-email             --tenant-id nxlkGI             --work-order-id EmTh0ld1
+
+          mv maintenance-state/workorders_index.csv.bak maintenance-state/workorders_index.csv
+
+      - name: Secret preflight negative scenario
+        run: |
+          set -euo pipefail
+
+          rm -rf .billing-state-e2e-secret runtime-e2e-secret
+          cp -a billing-state-seed .billing-state-e2e-secret
+          mkdir -p runtime-e2e-secret
+
+          # Swap workorders index to run the secret preflight fixture only.
+          cp maintenance-state/workorders_index.csv maintenance-state/workorders_index.csv.bak
+          cp scripts/fixtures/workorders_index_secret_preflight.csv maintenance-state/workorders_index.csv
+
+          # Temporarily enable the fixture workorder (keep it disabled in repo default).
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('tenants/nxlkGI/workorders/SeCrEt01.yml')
+          s = p.read_text(encoding='utf-8')
+          if 'enabled: false' in s:
+              s = s.replace('enabled: false', 'enabled: true', 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+
+          python -m platform.cli integrity-validate --tenant-id nxlkGI --work-order-id SeCrEt01
+
+          # Run without PLATFORM_OFFLINE so secrets are enforced.
+          python -m platform.cli orchestrator             --runtime-profile config/runtime_profile.dev_github.yml             --billing-state-dir .billing-state-e2e-secret             --runtime-dir runtime-e2e-secret
+
+          python scripts/e2e_assert_secret_preflight.py             --billing-state-dir .billing-state-e2e-secret             --tenant-id nxlkGI             --work-order-id SeCrEt01
 
           mv maintenance-state/workorders_index.csv.bak maintenance-state/workorders_index.csv

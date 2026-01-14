@@ -370,3 +370,43 @@ def test_deliver_dropbox_transient_error_but_verified_succeeds(tmp_path: Path, m
     stored = stub_root / remote_path.lstrip("/")
     assert stored.exists()
     assert stored.stat().st_size == int(receipt["bytes"])
+
+
+def test_deliver_onedrive_transient_error_but_verified_succeeds(tmp_path: Path, monkeypatch) -> None:
+    backend, _, workorder, _ = _build_packaged_inputs(tmp_path)
+
+    # Ensure real OneDrive is not used.
+    monkeypatch.delenv("ONEDRIVE_ACCESS_TOKEN", raising=False)
+    monkeypatch.setenv("ONEDRIVE_CREATE_SHARE_LINK", "false")
+
+    # Simulate a timeout after the dev stub completes the upload.
+    monkeypatch.setenv("ONEDRIVE_DEV_STUB_SIMULATE_UPLOAD_TIMEOUT", "1")
+
+    out_dir = tmp_path / "runs" / workorder.tenant_id / workorder.work_order_id / "s3"
+    out_dir.mkdir(parents=True)
+    step = StepSpec(
+        step_id="s3",
+        module_id="deliver_onedrive",
+        inputs={
+            "package_zip": {"from_step": "s2", "output_id": "package_zip"},
+            "manifest_json": {"from_step": "s2", "output_id": "manifest_json"},
+            "remote_base_path": "/Apps/Platform",
+        },
+        deliverables=[],
+        metadata={"idempotency_key": "od_timeout"},
+    )
+
+    backend.execute_step(repo_root=_repo_root(), workorder=workorder, step=step, outputs_dir=out_dir)
+
+    receipt_path = out_dir / "delivery_receipt.json"
+    assert receipt_path.exists()
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    validate_delivery_receipt(receipt)
+    assert receipt.get("provider") == "onedrive"
+    assert receipt.get("verification_status") == "verified_after_transient_error"
+
+    remote_path = str(receipt.get("remote_path") or "")
+    stub_root = tmp_path / "onedrive_stub"
+    stored = stub_root / remote_path.lstrip("/")
+    assert stored.exists()
+    assert stored.stat().st_size == int(receipt["bytes"])

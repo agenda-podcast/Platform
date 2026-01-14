@@ -6,6 +6,9 @@ deliver_email,secret,EMAIL_SMTP_HOST,,"SMTP host; if unset, uses dev outbox stub
 deliver_email,secret,EMAIL_SMTP_PORT,,"SMTP port; if unset, uses dev outbox stub."
 deliver_email,var,EMAIL_SMTP_USE_TLS,,Use STARTTLS when connecting to SMTP.
 deliver_email,var,DELIVER_EMAIL_DEFAULT_RECIPIENT,,Default recipient for dev runs when recipient_email input is omitted.
+deliver_onedrive,secret,ONEDRIVE_ACCESS_TOKEN,,"Microsoft Graph OAuth access token with Files.ReadWrite; if unset, uses dev stub."
+deliver_onedrive,var,ONEDRIVE_CHUNK_BYTES,,Upload chunk size in bytes for resumable uploads (Graph upload session).
+deliver_onedrive,var,ONEDRIVE_CREATE_SHARE_LINK,,"If true, attempt to create or reuse a share link after upload."
 wxi,secret,GOOGLE_SEARCH_API_KEY,,Google Custom Search API key (used by wxi).
 wxi,secret,GOOGLE_SEARCH_ENGINE_ID,,Custom Search Engine (cx) id (used by wxi).
 wxz,secret,GOOGLE_SEARCH_API_KEY,,Google API key for Custom Search API.

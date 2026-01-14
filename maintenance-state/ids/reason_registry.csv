@@ -8,6 +8,7 @@ reason_code,scope,module_id,reason_key,reason_slug,category_id,description
 4tf5VYHR,GLOBAL,,a4R,package_failed,14,Packaging step failed; package could not be generated.
 5akf0krM,MODULE,U2T,0aG,artifacts_download_not_allowed_by_module,14,"Artifacts were purchased, but this module does not support downloadable release artifacts."
 74CGVRFH,MODULE,U2T,lBy,artifacts_download_not_allowed_by_platform,14,"Artifacts were purchased, but platform policy disables downloadable release artifacts for this module."
+8biIwj4p,GLOBAL,,s3C,secrets_missing,14,Required secrets for one or more enabled steps were not provided (secretstore or environment overrides).
 CBkm3RR2,MODULE,9SD,Ntd,bad_input_format,01,Input was present but not in a supported format.
 CLCx3f2T,MODULE,wxz,r0D,artifacts_download_not_allowed_by_module,14,"Artifacts were purchased, but this module does not support downloadable release artifacts."
 DcmMYx9B,GLOBAL,,MEy,not_enough_credits,16,Tenant credits do not cover estimated work order spend.

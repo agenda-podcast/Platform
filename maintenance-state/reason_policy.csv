@@ -8,6 +8,7 @@ reason_code,refundable,notes
 4tf5VYHR,true,System module failure is refundable.
 5akf0krM,true,
 74CGVRFH,true,
+8biIwj4p,false,
 CBkm3RR2,true,
 CLCx3f2T,true,
 DcmMYx9B,false,
@@ -39,4 +40,3 @@ nw98r9W4,false,
 tMtj6jby,false,
 woegbftA,false,
 yzd6l3Ns,false,
-Zs3Cr3t1,true,Preflight secret validation failures are refundable if any step charges were posted.

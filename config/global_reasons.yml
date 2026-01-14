@@ -35,3 +35,7 @@ reasons:
   reason_slug: package_too_large_for_email
   category_id: '14'
   description: Package size exceeds email attachment limits; email delivery not possible.
+- reason_key: s3C
+  reason_slug: secrets_missing
+  category_id: '14'
+  description: Required secrets for one or more enabled steps were not provided (secretstore or environment overrides).

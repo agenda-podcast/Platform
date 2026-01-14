@@ -5,8 +5,6 @@ import json
 import os
 from pathlib import Path
 
-import yaml
-
 from .infra.config import load_runtime_profile
 from .infra.factory import build_infra
 
@@ -16,7 +14,6 @@ from .cache.prune import run_cache_prune
 from .orchestration.module_exec import execute_module_runner
 
 from .secretstore.loader import load_secretstore, env_for_module
-from .secretstore.requirements import load_module_yaml_from_repo, validate_required_secrets_for_modules
 
 from .billing.state import BillingState
 from .billing.topup import TopupRequest, apply_admin_topup
@@ -26,7 +23,6 @@ from .billing.payments import (
 )
 
 from .consistency.validator import validate_all_workorders, integrity_validate
-from .utils.csvio import read_csv
 
 
 def _repo_root() -> Path:
@@ -255,134 +251,6 @@ def cmd_integrity_validate(args: argparse.Namespace) -> int:
     return 0
 
 
-def _enabled_workorder_paths(repo_root: Path, tenant_id: str = "", work_order_id: str = "", path: str = "") -> List[Path]:
-    if path:
-        wp = Path(path)
-        if not wp.is_absolute():
-            wp = (repo_root / wp)
-        return [wp.resolve()]
-
-    idx_path = repo_root / "maintenance-state" / "workorders_index.csv"
-    if idx_path.exists():
-        rows = read_csv(idx_path)
-        matches: List[Path] = []
-        for r in rows:
-            enabled = str(r.get("enabled", "")).strip().lower() == "true"
-            if not enabled:
-                continue
-            rel = str(r.get("path", "")).strip()
-            if not rel:
-                continue
-            tid = str(r.get("tenant_id", "")).strip()
-            wid = str(r.get("work_order_id", "")).strip()
-            if tenant_id and tid != tenant_id:
-                continue
-            if work_order_id and wid != work_order_id:
-                continue
-            matches.append((repo_root / rel).resolve())
-        return matches
-
-    # Fallback: scan tenants/<tenant_id>/workorders/*.yml
-    out: List[Path] = []
-    tenants_dir = repo_root / "tenants"
-    if not tenants_dir.exists():
-        return out
-    for tdir in sorted(tenants_dir.iterdir(), key=lambda p: p.name):
-        if not tdir.is_dir():
-            continue
-        if tenant_id and tdir.name != tenant_id:
-            continue
-        wdir = tdir / "workorders"
-        if not wdir.exists():
-            continue
-        for wp in sorted(wdir.glob("*.yml"), key=lambda p: p.name):
-            if work_order_id and wp.stem != work_order_id:
-                continue
-            out.append(wp.resolve())
-    return out
-
-
-def cmd_secretstore_validate(args: argparse.Namespace) -> int:
-    repo_root = _repo_root()
-
-    tenant_id = str(getattr(args, "tenant_id", "") or "").strip()
-    work_order_id = str(getattr(args, "work_order_id", "") or "").strip()
-    path = str(getattr(args, "path", "") or "").strip()
-
-    offline_ok = (os.environ.get("PLATFORM_OFFLINE") or "").strip() == "1"
-    store = load_secretstore(repo_root)
-
-    wps = _enabled_workorder_paths(repo_root, tenant_id=tenant_id, work_order_id=work_order_id, path=path)
-    if not wps:
-        print("secretstore validation: no enabled workorders found")
-        return 0
-
-    failures: List[Dict[str, Any]] = []
-
-    def _load_module_yaml(mid: str) -> Dict[str, Any]:
-        return load_module_yaml_from_repo(repo_root, mid)
-
-    for wp in wps:
-        if not wp.exists():
-            failures.append({"path": str(wp), "error": "workorder file not found"})
-            continue
-
-        w = yaml.safe_load(wp.read_text(encoding="utf-8")) or {}
-        if not isinstance(w, dict):
-            failures.append({"path": str(wp), "error": "workorder is not a YAML mapping"})
-            continue
-
-        if not bool(w.get("enabled", True)):
-            continue
-
-        steps = w.get("steps") or []
-        module_ids: Set[str] = set()
-        if isinstance(steps, list):
-            for s in steps:
-                if not isinstance(s, dict):
-                    continue
-                if not bool(s.get("enabled", True)):
-                    continue
-                mid = str(s.get("module_id") or "").strip()
-                if mid:
-                    module_ids.add(mid)
-
-        missing = validate_required_secrets_for_modules(
-            load_module_yaml_fn=_load_module_yaml,
-            store=store,
-            module_ids=sorted(module_ids),
-            env=dict(os.environ),
-            offline_ok=offline_ok,
-        )
-        if missing:
-            failures.append(
-                {
-                    "path": str(wp),
-                    "tenant_id": str(w.get("tenant_id") or ""),
-                    "work_order_id": str(w.get("work_order_id") or ""),
-                    "missing": missing,
-                }
-            )
-
-    if failures:
-        print("secretstore validation FAILED")
-        for f in failures:
-            p = str(f.get("path") or "")
-            err = str(f.get("error") or "")
-            if err:
-                print(f"- {p}: {err}")
-                continue
-            miss = f.get("missing") or {}
-            print(f"- {p}:")
-            for mid in sorted(miss.keys()):
-                names = miss.get(mid) or []
-                print(f"  - {mid}: {', '.join(names)}")
-        return 2
-
-    print("secretstore validation OK")
-    return 0
-
-
 def cmd_runtime_print(args: argparse.Namespace) -> int:
     repo_root = _repo_root()
     profile = load_runtime_profile(repo_root, cli_path=str(getattr(args, 'runtime_profile', '') or ''))
@@ -431,13 +299,6 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--tenant-id", default="")
     sp.add_argument("--path", default="")
     sp.set_defaults(func=cmd_integrity_validate)
-
-
-    sp = sub.add_parser("secretstore-validate", help="Validate required secrets for enabled workorders (pre-exec)")
-    sp.add_argument("--work-order-id", default="")
-    sp.add_argument("--tenant-id", default="")
-    sp.add_argument("--path", default="")
-    sp.set_defaults(func=cmd_secretstore_validate)
 
 
     sp = sub.add_parser("module-exec", help="Execute a single module runner")

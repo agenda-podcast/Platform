@@ -14,6 +14,7 @@ import yaml
 from ..billing.state import BillingState
 from ..common.id_codec import canon_module_id, canon_tenant_id, canon_work_order_id, id_key, dedupe_tenants_credits
 from ..common.id_policy import generate_unique_id, validate_id
+from ..github.releases import ensure_release, upload_release_assets, get_release_numeric_id, get_release_assets_numeric_ids
 from ..orchestration.module_exec import execute_module_runner, derive_cache_key
 from ..utils.csvio import read_csv
 from ..utils.fs import ensure_dir
@@ -32,7 +33,6 @@ from .idempotency import (
 from .status_reducer import StatusInputs, reduce_workorder_status
 
 from ..secretstore.loader import load_secretstore, env_for_module
-from ..secretstore.requirements import validate_required_secrets_for_modules
 
 
 def _parse_iso_z(s: str) -> datetime:
@@ -42,6 +42,114 @@ def _parse_iso_z(s: str) -> datetime:
         s = s.replace("Z", "+00:00")
     return datetime.fromisoformat(s)
 
+
+class PreflightSecretError(RuntimeError):
+    def __init__(self, *, missing: list[dict[str, str]]):
+        super().__init__("Missing required secrets for enabled steps")
+        self.missing = missing
+
+
+def _load_module_secret_requirements(repo_root: Path) -> dict[str, list[dict[str, str]]]:
+    """Load secret requirements for modules from maintenance-state/module_requirements_index.csv.
+
+    Row format:
+      module_id,requirement_type,requirement_key,requirement_value,note
+
+    Only requirement_type=secret rows are returned.
+    """
+    path = repo_root / "maintenance-state" / "module_requirements_index.csv"
+    rows = read_csv(path) if path.exists() else []
+    out: dict[str, list[dict[str, str]]] = {}
+    for r in rows:
+        if str(r.get("requirement_type", "")).strip() != "secret":
+            continue
+        mid = canon_module_id(str(r.get("module_id", "")).strip())
+        key = str(r.get("requirement_key", "")).strip()
+        note = str(r.get("note", "")).strip()
+        if not (mid and key):
+            continue
+        out.setdefault(mid, []).append({"key": key, "note": note})
+    return out
+
+
+def _is_secret_enforced(*, note: str, platform_offline: bool) -> bool:
+    """Determine if a secret requirement should be enforced.
+
+    Rules:
+      - If PLATFORM_OFFLINE=1, do not enforce secrets (modules may use deterministic mocks).
+      - If the requirement note contains "if unset" (case-insensitive), do not enforce (dev stub allowed).
+      - Otherwise, enforce.
+    """
+    if platform_offline:
+        return False
+    n = (note or "").lower()
+    if "if unset" in n:
+        return False
+    return True
+
+
+def _has_secret_value(*, store_env: dict[str, str], key: str, module_id: str) -> bool:
+    """Check whether the secret is present via environment overrides or secretstore injection.
+
+    A secret is considered present if:
+      - os.environ has a non-empty value for the key (or module-prefixed key), OR
+      - injected store env has a non-empty value for the key (or module-prefixed key).
+
+    Empty string values are treated as missing.
+    """
+    candidates = [key, f"{module_id}_{key}"]
+    for k in candidates:
+        v = (os.environ.get(k) or "").strip()
+        if v:
+            return True
+        sv = (store_env.get(k) or "").strip()
+        if sv:
+            return True
+    return False
+
+
+def _preflight_assert_required_secrets(
+    *,
+    repo_root: Path,
+    store: Any,
+    plan: list[dict[str, Any]],
+) -> None:
+    """Preflight gate: ensure required secrets exist for all enabled steps.
+
+    - Builds the set of enabled steps (provided as execution plan).
+    - Resolves per-module secret requirements from maintenance-state/module_requirements_index.csv.
+    - Asserts that every enforced secret exists in secretstore or env overrides.
+    - Applies to all module kinds.
+
+    Raises PreflightSecretError on missing enforced secrets.
+    """
+    platform_offline = (os.getenv("PLATFORM_OFFLINE") or "").strip() == "1"
+    reqs = _load_module_secret_requirements(repo_root)
+
+    missing: list[dict[str, str]] = []
+    for step in plan:
+        sid = str(step.get("step_id") or "").strip()
+        mid = canon_module_id(step.get("module_id") or "")
+        if not mid:
+            continue
+        store_env = env_for_module(store, mid)
+
+        for rr in reqs.get(mid, []):
+            key = rr["key"]
+            note = rr.get("note", "")
+            if not _is_secret_enforced(note=note, platform_offline=platform_offline):
+                continue
+            if _has_secret_value(store_env=store_env, key=key, module_id=mid):
+                continue
+            missing.append({
+                "step_id": sid,
+                "module_id": mid,
+                "secret_key": key,
+                "note": note,
+            })
+
+    if missing:
+        raise PreflightSecretError(missing=missing)
 
 def _cache_dirname(cache_key: str) -> str:
     """Stable, filesystem-safe directory name for a cache key."""
@@ -1019,72 +1127,6 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             run_id=work_order_id,
             runtime_profile_name=runtime_profile_name,
         )
-
-        # Secretstore requirements preflight (before any ledger spend is posted).
-        # Many transform modules require secrets (AI providers, search APIs, etc.), not only delivery.
-        offline_ok = (os.environ.get("PLATFORM_OFFLINE") or "").strip() == "1"
-        try:
-            missing_secrets = validate_required_secrets_for_modules(
-                load_module_yaml_fn=registry.load_module_yaml,
-                store=store,
-                module_ids=[str(p.get("module_id") or "") for p in plan],
-                env=dict(os.environ),
-                offline_ok=offline_ok,
-            )
-        except Exception as e:
-            missing_secrets = {"__validation__": [f"secretstore validation error: {e}"]}
-
-        if missing_secrets:
-            rc = _reason_code(reason_idx, "GLOBAL", "", "missing_required_secret")
-            human_note = "Missing required secrets for one or more modules"
-
-            workorders_log.append(
-                {
-                    "work_order_id": work_order_id,
-                    "tenant_id": tenant_id,
-                    "status": "FAILED",
-                    "created_at": created_at,
-                    "started_at": started_at,
-                    "ended_at": utcnow_iso(),
-                    "note": human_note,
-                    "metadata_json": json.dumps(
-                        {
-                            "workorder_path": item["path"],
-                            "reason_code": rc,
-                            "reason_slug": "missing_required_secret",
-                            "missing": missing_secrets,
-                            "offline_ok": offline_ok,
-                        },
-                        separators=(",", ":"),
-                    ),
-                }
-            )
-            try:
-                run_state.create_run(
-                    tenant_id=ctx.tenant_id,
-                    work_order_id=ctx.work_order_id,
-                    metadata={
-                        "workorder_path": str(item.get("path") or ""),
-                        "runtime_profile_name": ctx.runtime_profile_name,
-                        "artifacts_requested": artifacts_requested,
-                        "requested_deliverables_by_step": per_step_requested_deliverables,
-                        "deliverables_source_by_step": per_step_deliverables_source,
-                        "missing_required_secret": missing_secrets,
-                    },
-                )
-                run_state.set_run_status(
-                    tenant_id=ctx.tenant_id,
-                    work_order_id=ctx.work_order_id,
-                    status="FAILED",
-                    metadata={"reason_code": rc, "reason_slug": "missing_required_secret"},
-                )
-            except Exception:
-                pass
-            print(f"[secretstore] missing required secrets; failing workorder {tenant_id}/{work_order_id}")
-            for mid in sorted(missing_secrets.keys()):
-                names = missing_secrets.get(mid) or []
-                print(f"[secretstore] - {mid}: {', '.join(names)}")
-            continue
         try:
             run_state.create_run(
                 tenant_id=ctx.tenant_id,
@@ -1107,6 +1149,39 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
         except Exception:
             # Orchestrator continues even if run-state logging fails (dev mode ergonomics).
             pass
+
+        # Preflight secret requirements gate (all module kinds).
+        try:
+            _preflight_assert_required_secrets(repo_root=repo_root, store=store, plan=plan)
+        except PreflightSecretError as e:
+            rc = _reason_code(reason_idx, "GLOBAL", "", "secrets_missing")
+            human_note = "Preflight failed: missing required secrets for one or more enabled steps"
+            meta = {
+                "workorder_path": str(item.get("path") or ""),
+                "reason_code": rc,
+                "missing_secrets": e.missing,
+            }
+            workorders_log.append({
+                "work_order_id": work_order_id,
+                "tenant_id": tenant_id,
+                "status": "FAILED",
+                "created_at": created_at,
+                "started_at": started_at,
+                "ended_at": utcnow_iso(),
+                "note": human_note,
+                "metadata_json": json.dumps(meta, separators=(",", ":")),
+            })
+            try:
+                run_state.set_run_status(
+                    tenant_id=ctx.tenant_id,
+                    work_order_id=ctx.work_order_id,
+                    status="FAILED",
+                    metadata={"reason_code": rc, "missing_secrets": e.missing},
+                )
+            except Exception:
+                pass
+            continue
+
 
         # current balance
         trow = None

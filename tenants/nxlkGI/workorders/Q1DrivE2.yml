@@ -1,0 +1,78 @@
+work_order_id: Q1DrivE2
+enabled: false
+mode: PARTIAL_ALLOWED
+metadata:
+  title: OneDrive delivery verification.
+  created_at: '2026-01-13T22:55:00Z'
+  notes: 'Steps chaining demo: 9SD -> wxi -> U2T -> package_std -> deliver_onedrive (dev stub by default).'
+steps:
+- step_id: a1
+  step_name: derive_queries
+  module_id: 9SD
+  kind: transform
+  reuse_output_type: cache
+  deliverables:
+  - tenant_outputs
+  inputs:
+    topic: Word News Today
+    language: en
+    freshness_days: '7'
+- step_id: b2
+  step_name: search_images
+  module_id: wxi
+  kind: transform
+  reuse_output_type: cache
+  deliverables:
+  - metadata
+  - thumbnails
+  inputs:
+    queries:
+      from_step: a1
+      from_file: derived_queries.txt
+      selector: lines
+      take: 5
+    safe: active
+    max_items_per_query: 10
+- step_id: c3
+  step_name: seed_text
+  module_id: U2T
+  kind: transform
+  reuse_output_type: cache
+  deliverables:
+  - tenant_outputs
+  inputs:
+    topic:
+      from_step: b2
+      from_file: results.jsonl
+      selector: jsonl_first
+      json_path: $.title
+- step_id: p4
+  step_name: package_outputs
+  module_id: package_std
+  kind: packaging
+  deliverables:
+  - package_artifacts
+  inputs:
+    bound_outputs:
+    - from_step: a1
+      output_id: derived_queries
+      as_path: derived_queries.txt
+    - from_step: a1
+      output_id: report
+      as_path: derive_queries_report.json
+- step_id: d5
+  step_name: deliver_to_onedrive_stub
+  module_id: deliver_onedrive
+  kind: delivery
+  deliverables:
+  - delivery_receipt
+  inputs:
+    package_zip:
+      from_step: p4
+      output_id: package_zip
+    manifest_json:
+      from_step: p4
+      output_id: manifest_json
+    remote_base_path: /Apps/Platform/E2E
+promotions: []
+artifacts_requested: true

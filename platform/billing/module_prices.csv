@@ -7,6 +7,7 @@ bigfile_gen,__run__,5,1970-01-01,,true,E2E helper module: run.
 bigfile_gen,tenant_outputs,2,1970-01-01,,true,E2E helper module: tenant outputs.
 deliver_dropbox,__run__,1,1970-01-01,,true,System module: delivery step run (dropbox).
 deliver_email,__run__,1,1970-01-01,,true,System module: delivery step run (email).
+deliver_onedrive,__run__,1,1970-01-01,,true,System module: delivery step run (onedrive).
 package_std,__run__,1,1970-01-01,,true,System module: packaging step run.
 package_std,package_artifacts,0,1970-01-01,,true,System module: packaging deliverable artifacts.
 wxi,__run__,5,1970-01-01,,true,Auto-added by Maintenance. Migrated: price_run_credits.
