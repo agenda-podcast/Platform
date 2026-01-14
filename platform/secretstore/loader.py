@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
 import subprocess
@@ -44,6 +46,8 @@ def _decrypt_gpg_json(gpg_path: Path, passphrase: str) -> Dict[str, Any]:
     if not gpg_path.exists():
         return {}
     # gpg writes plaintext to stdout
+    # NOTE: gpg treats --passphrase-fd as line-oriented; always provide a
+    # trailing newline to avoid edge cases across versions.
     proc = subprocess.run(
         [
             "gpg",
@@ -56,13 +60,27 @@ def _decrypt_gpg_json(gpg_path: Path, passphrase: str) -> Dict[str, Any]:
             "-d",
             str(gpg_path),
         ],
-        input=passphrase,
+        input=f"{passphrase}\n",
         text=True,
         capture_output=True,
     )
     if proc.returncode != 0:
         # Do NOT include passphrase; stderr is safe.
-        raise RuntimeError(f"Failed to decrypt secretstore: {proc.stderr.strip()}")
+        stderr = (proc.stderr or "").strip()
+        try:
+            digest = hashlib.sha256(gpg_path.read_bytes()).hexdigest()[:16]
+        except Exception:
+            digest = "unknown"
+
+        if "Bad session key" in stderr or "decryption failed" in stderr:
+            raise RuntimeError(
+                "Failed to decrypt secretstore: gpg reported a bad session key. "
+                "This almost always means the passphrase is incorrect for the current "
+                f"secretstore.json.gpg (sha256[:16]={digest}). gpg stderr: {stderr}"
+            )
+        raise RuntimeError(
+            f"Failed to decrypt secretstore (sha256[:16]={digest}): {stderr}"
+        )
 
     out = (proc.stdout or "").strip()
     if not out:
@@ -80,7 +98,19 @@ def load_secretstore(repo_root: Path) -> SecretStore:
     If SECRETSTORE_PASSPHRASE is missing/empty, returns an empty store.
     """
     gpg_path = repo_root / "platform" / "secretstore" / "secretstore.json.gpg"
-    passphrase = (os.environ.get("SECRETSTORE_PASSPHRASE") or "").strip()
+
+    # Accept either a raw passphrase or a base64-encoded passphrase.
+    # Base64 is helpful when operators accidentally introduce whitespace/newlines.
+    passphrase_b64 = (os.environ.get("SECRETSTORE_PASSPHRASE_B64") or "").strip()
+    if passphrase_b64:
+        try:
+            passphrase = base64.b64decode(passphrase_b64).decode("utf-8", errors="strict")
+        except Exception as e:
+            raise RuntimeError(f"SECRETSTORE_PASSPHRASE_B64 is set but could not be decoded: {e}")
+    else:
+        # Important: do not .strip() full whitespace; keep intentional leading/trailing spaces.
+        # Only remove line endings that commonly get introduced by copy/paste.
+        passphrase = (os.environ.get("SECRETSTORE_PASSPHRASE") or "").rstrip("\r\n")
 
     if not passphrase:
         # Silent by default; caller may log a warning.
