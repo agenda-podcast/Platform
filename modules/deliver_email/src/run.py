@@ -12,7 +12,9 @@ from typing import Any, Dict, Tuple
 
 
 MODULE_ID = "deliver_email"
-MAX_PACKAGE_BYTES = 20866662  # 19.9 MiB-ish safety threshold for GitHub/email constraints
+MAX_PACKAGE_BYTES = 20866662
+# 19.9 MiB-ish safety threshold for GitHub and email constraints.
+# Keep MAX_PACKAGE_BYTES on a standalone line (digits only) so E2E tests can parse it reliably.
 
 
 def _utcnow_iso() -> str:
