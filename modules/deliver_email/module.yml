@@ -1,59 +1,94 @@
-id: deliver_email
+module_id: deliver_email
 name: deliver_email
+version: 0.2.2
 kind: delivery
-version: "1.0.0"
+description: "System delivery module: send package.zip via email (SMTP attachment)."
 
-entrypoint:
-  runtime: python
-  path: src/run.py
+metadata:
+  # 19.9MB threshold (bytes) used across the platform to keep email delivery within common provider limits.
+  max_package_bytes: 20866662
 
 requirements:
   secrets:
-    required:
-      - EMAIL_SMTP_HOST
-      - EMAIL_SMTP_PORT
-      - EMAIL_FROM_EMAIL
-    optional:
-      - EMAIL_SMTP_USERNAME
-      - EMAIL_SMTP_PASSWORD
+    - name: EMAIL_SMTP_HOST
+      note: "SMTP host for email delivery (required)."
+    - name: EMAIL_SMTP_PORT
+      note: "SMTP port for email delivery (required)."
+    - name: EMAIL_FROM_EMAIL
+      note: "Sender email address used in the From header (required)."
+    - name: EMAIL_SMTP_USERNAME
+      note: "SMTP username (optional; if set, EMAIL_SMTP_PASSWORD must also be set)."
+    - name: EMAIL_SMTP_PASSWORD
+      note: "SMTP password (optional; required if EMAIL_SMTP_USERNAME is set)."
   vars:
-    optional:
-      - EMAIL_SMTP_USE_TLS
+    - name: EMAIL_SMTP_USE_TLS
+      value: "true"
+      note: "Whether to use STARTTLS. Defaults to true."
 
-contract:
+ports:
   inputs:
-    - id: recipient_email
-      kind: string
-      required: true
-    - id: subject
-      kind: string
-      required: false
-      default_json: '"Your delivery"'
-    - id: body
-      kind: string
-      required: false
-      default_json: '"Attached is your requested deliverable."'
-    - id: package_zip
-      kind: file
-      required: true
-    - id: manifest_json
-      kind: file
-      required: false
-
+    port:
+      - id: recipient_email
+        type: string
+        required: true
+        description: "Recipient email address."
+        examples:
+          - "recipient@example.com"
+      - id: subject
+        type: string
+        required: false
+        description: "Email subject."
+        # JSON string default, represented safely in YAML
+        default_json: '"Your delivery"'
+      - id: body
+        type: string
+        required: false
+        description: "Email body (plain text)."
+        default_json: '"Please find your delivery attached."'
+      - id: package_zip
+        type: file
+        required: true
+        format: application/zip
+        description: "package.zip produced by packaging step."
+      - id: manifest_json
+        type: file
+        required: false
+        format: application/json
+        description: "Optional manifest.json for the package."
+    limited_port: []
   outputs:
-    - id: delivery_receipt_json
-      kind: file
-      required: true
-    - id: delivery_log_json
-      kind: file
-      required: true
-    - id: report_json
-      kind: file
-      required: true
+    port:
+      - id: delivery_receipt_json
+        type: file
+        path: delivery_receipt.json
+        format: application/json
+        description: "Delivery receipt (status, message, timestamps)."
+      - id: delivery_log_json
+        type: file
+        path: delivery_log.json
+        format: application/json
+        description: "Detailed, auditable delivery log (attempt metadata, config checks, result)."
+      - id: report_json
+        type: file
+        path: report.json
+        format: application/json
+        description: "Machine-readable failure report (root cause and diagnostics)."
+    limited_port: []
 
 deliverables:
-  - id: __run__
-    outputs:
-      - delivery_receipt_json
-      - delivery_log_json
-      - report_json
+  port:
+    - deliverable_id: __run__
+      description: "Run delivery step."
+      outputs:
+        - delivery_receipt_json
+        - delivery_log_json
+        - report_json
+    - deliverable_id: delivery_receipt
+      description: "Delivery receipt (tenant-visible)."
+      outputs:
+        - delivery_receipt_json
+    - deliverable_id: delivery_log
+      description: "Delivery detailed log (tenant-visible)."
+      outputs:
+        - delivery_log_json
+  limited_port: []
