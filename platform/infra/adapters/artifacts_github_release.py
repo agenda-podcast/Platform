@@ -116,7 +116,8 @@ class GitHubReleaseArtifactStore(ArtifactStore):
             shutil.copyfile(str(lp), str(staged))
 
             self.io.upload(tag=tag, file_paths=[staged], overwrite=True)
-            return f"github_release:{tag}/{asset_name}"
+            # Use a URI-style scheme to match platform-wide artifact reference conventions.
+            return f"github_release://{tag}/{asset_name}"
         finally:
             shutil.rmtree(str(tmp_dir), ignore_errors=True)
 

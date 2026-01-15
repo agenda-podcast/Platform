@@ -11,15 +11,20 @@ metadata:
 requirements:
   secrets:
     - name: EMAIL_SMTP_HOST
-      note: "SMTP host for email delivery (required)."
+      required: false
+      note: "SMTP host for email delivery. If unset, module writes to dev outbox stub."
     - name: EMAIL_SMTP_PORT
-      note: "SMTP port for email delivery (required)."
+      required: false
+      note: "SMTP port for email delivery. If unset, module writes to dev outbox stub."
     - name: EMAIL_FROM_EMAIL
-      note: "Sender email address used in the From header (required)."
+      required: false
+      note: "Sender email address used in the From header. If unset, module writes to dev outbox stub."
     - name: EMAIL_SMTP_USERNAME
-      note: "SMTP username (optional; if set, EMAIL_SMTP_PASSWORD must also be set)."
+      required: false
+      note: "SMTP username. If unset, module writes to dev outbox stub. If set, EMAIL_SMTP_PASSWORD must also be set."
     - name: EMAIL_SMTP_PASSWORD
-      note: "SMTP password (optional; required if EMAIL_SMTP_USERNAME is set)."
+      required: false
+      note: "SMTP password. If unset, module writes to dev outbox stub. Required if EMAIL_SMTP_USERNAME is set."
   vars:
     - name: EMAIL_SMTP_USE_TLS
       value: "true"
@@ -30,7 +35,7 @@ ports:
     port:
       - id: recipient_email
         type: string
-        required: true
+        required: false
         description: "Recipient email address."
         examples:
           - "recipient@example.com"

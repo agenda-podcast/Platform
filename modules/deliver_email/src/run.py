@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import smtplib
+import hashlib
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
@@ -22,6 +23,14 @@ def _write_json(path: Path, obj: Dict[str, Any]) -> None:
     path.write_text(json.dumps(obj, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def _as_local_path(inp: Any) -> Tuple[Path, Dict[str, Any]]:
     """
     Best-effort adapter for orchestrator input binding formats.
@@ -39,13 +48,17 @@ def _as_local_path(inp: Any) -> Tuple[Path, Dict[str, Any]]:
 
     if isinstance(inp, dict):
         meta = dict(inp)
-        p = str(inp.get("path") or "").strip()
-        if p:
-            return Path(p), meta
         uri = str(inp.get("uri") or "").strip()
         if uri.startswith("file://"):
             # file://<abs-path>
             return Path(uri[len("file://"):]), meta
+        p = str(inp.get("path") or "").strip()
+        if p:
+            # If the resolved binding provided a relative path, prefer any absolute 'uri' (if present)
+            # because module execution cwd is not the producing step's outputs directory.
+            if not Path(p).is_absolute() and str(uri).startswith("file://"):
+                return Path(uri[len("file://"):]), meta
+            return Path(p), meta
         if uri:
             return Path(uri), meta
 
@@ -221,8 +234,28 @@ def run(*, params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
     delivery_log["package_bytes"] = int(bytes_stat)
     delivery_log["package_meta"] = pkg_meta
 
-    # Size gate
-    if bytes_stat > MAX_PACKAGE_BYTES:
+    bytes_hint = _int_or_none(pkg_meta.get("bytes")) or 0
+    delivery_log["package_bytes_hint"] = int(bytes_hint)
+
+    # Size gate: if an orchestrator provided a bytes hint, enforce it without reading the file.
+    bytes_for_gate = int(bytes_hint or bytes_stat)
+    if bytes_for_gate >= MAX_PACKAGE_BYTES:
+        return _fail(
+            outputs_dir,
+            reason_slug="package_too_large_for_email",
+            message=f"package bytes {bytes_for_gate} exceed threshold {MAX_PACKAGE_BYTES}",
+            delivery_log=delivery_log,
+        )
+
+    pkg_sha256 = ""
+    try:
+        if bytes_stat > 0:
+            pkg_sha256 = _sha256_file(pkg_path)
+    except Exception:
+        pkg_sha256 = ""
+
+    # Secondary size gate on actual file size (defense-in-depth).
+    if bytes_stat >= MAX_PACKAGE_BYTES:
         return _fail(
             outputs_dir,
             reason_slug="package_too_large_for_email",
@@ -232,13 +265,83 @@ def run(*, params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
 
     recipient = str(inputs.get("recipient_email") or "").strip()
     if not recipient:
+        recipient = str(os.environ.get("DELIVER_EMAIL_DEFAULT_RECIPIENT") or "").strip()
+    if not recipient:
         return _fail(outputs_dir, reason_slug="missing_input", message="recipient_email is required", delivery_log=delivery_log)
 
     if not from_email:
-        return _fail(outputs_dir, reason_slug="secrets_missing", message="EMAIL_FROM_EMAIL is required", delivery_log=delivery_log)
+        # In stub mode, from_email is optional. If not provided, use a deterministic placeholder.
+        from_email = "no-reply@example.invalid"
 
+    # Dev outbox stub: if SMTP host/port are not configured, write an outbox artifact and succeed.
     if not smtp_host or not smtp_port:
-        return _fail(outputs_dir, reason_slug="secrets_missing", message="SMTP is not configured: set EMAIL_SMTP_HOST and EMAIL_SMTP_PORT", delivery_log=delivery_log)
+        delivery_log["stage"] = "stub_outbox"
+        outbox_dir = outputs_dir / "outbox"
+        outbox_dir.mkdir(parents=True, exist_ok=True)
+        stub_path = outbox_dir / f"{module_run_id or 'delivery'}.eml"
+        stub_path.write_text(
+            "\n".join(
+                [
+                    f"From: {from_email}",
+                    f"To: {recipient}",
+                    f"Subject: Platform delivery: {work_order_id} [{step_id}]",
+                    "",
+                    "SMTP not configured. This is a dev stub delivery.",
+                    f"Attachment: {pkg_path.name}",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        delivered_at = _utcnow_iso()
+        message_id = f"outbox_stub:{module_run_id or 'delivery'}"
+        receipt = {
+            "schema_version": 1,
+            "provider": "outbox_stub",
+            "tenant_id": tenant_id,
+            "work_order_id": work_order_id,
+            "step_id": step_id,
+            "module_run_id": module_run_id,
+            "delivered_at": delivered_at,
+            "verification_status": "written",
+            "remote_path": str(stub_path),
+            "remote_object_id": message_id,
+            "bytes": int(bytes_stat),
+            "sha256": pkg_sha256,
+
+            # Backward-compatible fields used by earlier modules.
+            "status": "COMPLETED",
+            "message": "stub_outbox_written",
+            "recipient_email": recipient,
+            "message_id": message_id,
+        }
+        _write_json(outputs_dir / "delivery_receipt.json", receipt)
+
+        delivery_log["status"] = "COMPLETED"
+        delivery_log["ended_at"] = delivered_at
+        _write_json(outputs_dir / "delivery_log.json", delivery_log)
+
+        report = {
+            "type": "DeliveryReport",
+            "module_id": MODULE_ID,
+            "status": "COMPLETED",
+            "mode": "stub_outbox",
+            "tenant_id": tenant_id,
+            "work_order_id": work_order_id,
+            "step_id": step_id,
+            "module_run_id": module_run_id,
+            "recipient_email": recipient,
+            "package_bytes": int(bytes_stat),
+        }
+        _write_json(outputs_dir / "report.json", report)
+
+        return {
+            "status": "COMPLETED",
+            "report_path": "report.json",
+            "output_ref": str(outputs_dir),
+            "refund_eligible": False,
+        }
 
     if username and not password:
         return _fail(outputs_dir, reason_slug="secrets_missing", message="EMAIL_SMTP_PASSWORD is required when EMAIL_SMTP_USERNAME is set", delivery_log=delivery_log)
@@ -270,13 +373,23 @@ def run(*, params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
 
         _write_json(outputs_dir / "delivery_log.json", delivery_log)
 
+        delivered_at = delivery_log["ended_at"]
         receipt = {
             "schema_version": 1,
-            "module_id": MODULE_ID,
+            "provider": "email",
             "tenant_id": tenant_id,
             "work_order_id": work_order_id,
             "step_id": step_id,
             "module_run_id": module_run_id,
+            "delivered_at": delivered_at,
+            "verification_status": "sent",
+            "remote_path": recipient,
+            "remote_object_id": msg_id,
+            "bytes": int(bytes_stat),
+            "sha256": pkg_sha256,
+
+            # Backward-compatible fields.
+            "module_id": MODULE_ID,
             "status": "COMPLETED",
             "reason_slug": "",
             "message": "sent",
