@@ -1,11 +1,8 @@
 module_id: deliver_email
 name: deliver_email
-version: 0.2.1
+version: 0.2.2
 kind: delivery
-description: "System delivery module: send package.zip via email (SMTP attachment)."
-
-metadata:
-  max_package_bytes: 20866662
+description: "System delivery module: send package.zip via SMTP email (sender-owned)."
 
 requirements:
   secrets:
@@ -13,70 +10,80 @@ requirements:
       note: "SMTP host for email delivery (required)."
     - name: EMAIL_SMTP_PORT
       note: "SMTP port for email delivery (required)."
-    - name: EMAIL_SMTP_USERNAME
-      note: "SMTP username (optional; if unset, no SMTP AUTH is performed)."
-    - name: EMAIL_SMTP_PASSWORD
-      note: "SMTP password (required if EMAIL_SMTP_USERNAME is set)."
     - name: EMAIL_FROM_EMAIL
       note: "Sender email address (required)."
+    - name: EMAIL_SMTP_USERNAME
+      note: "SMTP username (optional; if unset, no SMTP AUTH is attempted)."
+    - name: EMAIL_SMTP_PASSWORD
+      note: "SMTP password (required if EMAIL_SMTP_USERNAME is set)."
   vars:
     - name: EMAIL_SMTP_USE_TLS
+      value: "true"
       note: "Use STARTTLS when connecting to SMTP. Default true."
+
+contract:
   inputs:
     port:
+      - id: recipient_email
+        type: string
+        required: true
+        description: "Recipient email address (tenant-provided)."
+      - id: subject
+        type: string
+        required: false
+        default_json: ""Your delivery""
+        description: "Email subject."
+      - id: body
+        type: string
+        required: false
+        default_json: ""See attached.""
+        description: "Email body."
       - id: package_zip
         type: file
         required: true
         format: application/zip
-        description: "ZIP file to deliver."
+        description: "Package ZIP to deliver (typically from package_std)."
+        binding:
+          allowed: true
+          allowed_selectors: ["file"]
       - id: manifest_json
         type: file
         required: false
         format: application/json
-        description: "Optional manifest for the delivered package."
-      - id: recipient_email
-        type: string
-        required: true
-        description: "Recipient email address."
-      - id: subject
-        type: string
-        required: false
-        description: "Email subject (optional)."
-      - id: body
-        type: string
-        required: false
-        description: "Email body (optional)."
+        description: "Optional manifest.json to include/inspect."
+        binding:
+          allowed: true
+          allowed_selectors: ["file"]
+
     limited_port: []
+
   outputs:
     port:
       - id: delivery_receipt_json
         type: file
+        path: delivery_receipt.json
         format: application/json
-        description: "Delivery receipt (status, message, timestamps)."
+        description: "Delivery receipt (tenant-visible) with send attempt summary."
       - id: delivery_log_json
         type: file
+        path: delivery_log.json
         format: application/json
-        description: "Detailed, auditable delivery log (attempt metadata, config checks, result)."
+        description: "Detailed delivery audit log (non-secret)."
       - id: report_json
         type: file
+        path: report.json
         format: application/json
-        description: "Machine-readable failure report (for orchestrator to surface root cause)."
+        description: "Machine-readable status report for the module run."
     limited_port: []
 
 deliverables:
   port:
-    - deliverable_id: __run__
-      description: "Run delivery step."
-      outputs:
-        - delivery_receipt_json
-        - delivery_log_json
-        - report_json
     - deliverable_id: delivery_receipt
       description: "Delivery receipt (tenant-visible)."
       outputs:
         - delivery_receipt_json
     - deliverable_id: delivery_log
-      description: "Delivery detailed log (tenant-visible)."
+      description: "Delivery audit log (non-secret)."
       outputs:
         - delivery_log_json
   limited_port: []
