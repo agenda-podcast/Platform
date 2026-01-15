@@ -1,5 +1,5 @@
 tenant_id,work_order_id,enabled,schedule_cron,title,notes,path
+nxlkGI,EmTh0ld1,true,,Email threshold oversize package E2E,,tenants/nxlkGI/workorders/EmTh0ld1.yml
 nxlkGI,UbjkpxZO,true,,New module verification.,Steps chaining demo: 9SD -> wxi -> U2T.,tenants/nxlkGI/workorders/UbjkpxZO.yml
-nxlkGI,EmTh0ld1,false,,Email threshold oversize package E2E,,tenants/nxlkGI/workorders/EmTh0ld1.yml
 nxlkGI,Q1DrivE2,false,,OneDrive delivery verification.,Steps chaining demo: 9SD -> wxi -> U2T -> package_std -> deliver_onedrive (dev stub by default).,tenants/nxlkGI/workorders/Q1DrivE2.yml
 nxlkGI,SeCrEt01,false,,Secret preflight negative scenario.,Intentionally fails when required module secrets are missing and PLATFORM_OFFLINE is not set.,tenants/nxlkGI/workorders/SeCrEt01.yml
