@@ -1,6 +1,6 @@
 module_id: deliver_email
 name: deliver_email
-version: 0.2.0
+version: 0.2.1
 kind: delivery
 description: "System delivery module: send package.zip via email (SMTP attachment)."
 
@@ -16,15 +16,12 @@ requirements:
     - name: EMAIL_SMTP_USERNAME
       note: "SMTP username (optional; if unset, no SMTP AUTH is performed)."
     - name: EMAIL_SMTP_PASSWORD
-      note: "SMTP password (optional; if unset, no SMTP AUTH is performed)."
+      note: "SMTP password (required if EMAIL_SMTP_USERNAME is set)."
     - name: EMAIL_FROM_EMAIL
       note: "Sender email address (required)."
   vars:
     - name: EMAIL_SMTP_USE_TLS
-      value: "true"
-      note: "Use STARTTLS when connecting to SMTP."
-
-ports:
+      note: "Use STARTTLS when connecting to SMTP. Default true."
   inputs:
     port:
       - id: package_zip
@@ -40,40 +37,40 @@ ports:
       - id: recipient_email
         type: string
         required: true
-        format: text/plain
         description: "Recipient email address."
       - id: subject
         type: string
         required: false
-        format: text/plain
-        description: "Email subject. Defaults to 'Platform delivery: <tenant>/<work_order>'."
+        description: "Email subject (optional)."
       - id: body
         type: string
         required: false
-        format: text/plain
-        description: "Email body. Defaults to 'Attached: package.zip'."
-      - id: smtp_use_tls
-        type: boolean
-        required: false
-        format: application/json
-        description: "Use STARTTLS when connecting to SMTP. Defaults to EMAIL_SMTP_USE_TLS."
+        description: "Email body (optional)."
     limited_port: []
   outputs:
     port:
       - id: delivery_receipt_json
         type: file
-        path: delivery_receipt.json
         format: application/json
-        description: "Delivery receipt with provider metadata and verification status."
+        description: "Delivery receipt (status, message, timestamps)."
       - id: delivery_log_json
         type: file
-        path: delivery_log.json
         format: application/json
         description: "Detailed, auditable delivery log (attempt metadata, config checks, result)."
+      - id: report_json
+        type: file
+        format: application/json
+        description: "Machine-readable failure report (for orchestrator to surface root cause)."
     limited_port: []
 
 deliverables:
   port:
+    - deliverable_id: __run__
+      description: "Run delivery step."
+      outputs:
+        - delivery_receipt_json
+        - delivery_log_json
+        - report_json
     - deliverable_id: delivery_receipt
       description: "Delivery receipt (tenant-visible)."
       outputs:
