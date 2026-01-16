@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import os
 import hashlib
 import shutil
@@ -41,6 +42,36 @@ def _parse_iso_z(s: str) -> datetime:
     if s.endswith("Z"):
         s = s.replace("Z", "+00:00")
     return datetime.fromisoformat(s)
+
+def _parse_ttl_days_by_place_type(cfg: dict) -> dict[tuple[str, str], int]:
+    """Parse platform_config.cache_ttl_policy.ttl_days_by_place_type into a mapping.
+
+    Returns: {(place, type): days}
+    Raises: ValueError on invalid or missing structures.
+    """
+    root = cfg.get('cache_ttl_policy') or {}
+    entries = root.get('ttl_days_by_place_type')
+    if not isinstance(entries, list):
+        raise ValueError('Invalid platform_config.cache_ttl_policy.ttl_days_by_place_type: expected list')
+    out: dict[tuple[str, str], int] = {}
+    rx = re.compile(r'^(?P<place>[a-z0-9_]+):(?P<type>[a-z0-9_]+)=(?P<days>[0-9]+)$')
+    for raw in entries:
+        if not isinstance(raw, str):
+            raise ValueError('Invalid platform_config.cache_ttl_policy.ttl_days_by_place_type entry: expected string')
+        s = raw.strip()
+        m = rx.match(s)
+        if not m:
+            raise ValueError(f"Invalid cache_ttl_policy.ttl_days_by_place_type entry {s!r} (expected 'place:type=days')")
+        place = m.group('place')
+        typ = m.group('type')
+        days = int(m.group('days'))
+        if days <= 0:
+            raise ValueError(f"Invalid cache_ttl_policy.ttl_days_by_place_type entry {s!r} (days must be positive)")
+        k = (place, typ)
+        if k in out:
+            raise ValueError(f"Duplicate cache_ttl_policy.ttl_days_by_place_type rules for place={place!r} type={typ!r}")
+        out[k] = days
+    return out
 
 
 class PreflightSecretError(RuntimeError):
@@ -226,7 +257,7 @@ TRANSACTION_ITEMS_HEADERS = [
 ]
 TENANTS_CREDITS_HEADERS = ["tenant_id","credits_available","updated_at","status"]
 
-CACHE_INDEX_HEADERS = ["cache_key","tenant_id","module_id","created_at","expires_at","cache_id"]
+CACHE_INDEX_HEADERS = ["place","type","ref","created_at","expires_at"]
 
 PROMOTION_REDEMPTIONS_HEADERS = ["redemption_id","tenant_id","promo_code","credits_granted","created_at","note","metadata_json"]
 
@@ -381,7 +412,19 @@ def _load_workorders_queue(repo_root: Path) -> Tuple[str, List[Dict[str, Any]]]:
     Fallback: directory scan is allowed only when PLATFORM_DEV_SCAN_WORKORDERS=1 or index missing.
     Returns (queue_source, items).
     """
-    idx_path = repo_root / 'maintenance-state' / 'workorders_index.csv'
+    # Optional override for verification runners.
+    # When set, orchestrator uses this CSV as the canonical queue.
+    # This keeps default behavior unchanged while enabling deterministic
+    # selection for "verify a specific workorder" flows.
+    override = str(os.environ.get('PLATFORM_WORKORDERS_INDEX_PATH', '') or '').strip()
+    if override:
+        o = Path(override)
+        if o.is_absolute():
+            idx_path = o
+        else:
+            idx_path = (repo_root / o).resolve()
+    else:
+        idx_path = repo_root / 'maintenance-state' / 'workorders_index.csv'
     # Dev-only override: allow directory scan when explicitly enabled.
     # NOTE: this helper is used both in production code and unit tests; it must not
     # depend on locals from run_orchestrator().
@@ -405,7 +448,12 @@ def _load_workorders_queue(repo_root: Path) -> Tuple[str, List[Dict[str, Any]]]:
             continue
         w = _repo_yaml(wpath)
         out.append({'tenant_id': tenant_id, 'work_order_id': work_order_id, 'workorder': w, 'path': rel})
-    return ('maintenance-state/workorders_index.csv', out)
+    src = str(idx_path)
+    try:
+        src = str(idx_path.resolve().relative_to(repo_root.resolve()))
+    except Exception:
+        src = str(idx_path)
+    return (src, out)
 
 
 def _load_reason_index(repo_root: Path) -> ReasonIndex:
@@ -999,8 +1047,14 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
     from platform.consistency.validator import ConsistencyValidationError, load_rules_table, validate_workorder_preflight
 
     module_rules_by_id = load_rules_table(repo_root)
-
     run_since = utcnow_iso()
+    from platform.config.load_platform_config import load_platform_config
+    platform_cfg = load_platform_config(repo_root)
+    cache_ttl_days_by_place_type = _parse_ttl_days_by_place_type(platform_cfg)
+    cache_ttl_days = cache_ttl_days_by_place_type.get(('cache','module_run'))
+    if cache_ttl_days is None:
+        raise ValueError("Missing cache TTL rule for 'cache:module_run' in platform/config/platform_config.yml")
+
     reason_idx = _load_reason_index(repo_root)
     tenant_rel = _load_tenant_relationships(repo_root)
     prices = _load_module_prices(repo_root)
@@ -1590,7 +1644,9 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
 
             cache_row = None
             for r in cache_index:
-                if str(r.get("cache_key", "")).strip() == cache_key:
+                if (str(r.get('place','')).strip() == 'cache'
+                    and str(r.get('type','')).strip() == 'module_run'
+                    and str(r.get('ref','')).strip() == cache_key):
                     cache_row = r
                     break
 
@@ -1826,26 +1882,31 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                     _copy_tree(out_dir, cache_dir)
 
                 now_dt = datetime.now(timezone.utc).replace(microsecond=0)
-                exp_dt = now_dt + timedelta(days=30)
+                exp_dt = now_dt + timedelta(days=int(cache_ttl_days))
                 if cache_row is None:
                     cache_index.append({
-                        "cache_key": cache_key,
-                        "tenant_id": tenant_id,
-                        "module_id": mid,
-                        "created_at": now_dt.isoformat().replace("+00:00", "Z"),
-                        "expires_at": exp_dt.isoformat().replace("+00:00", "Z"),
-                        "cache_id": "",
+                        'place': 'cache',
+                        'type': 'module_run',
+                        'ref': cache_key,
+                        'created_at': now_dt.isoformat().replace('+00:00', 'Z'),
+                        'expires_at': exp_dt.isoformat().replace('+00:00', 'Z'),
                     })
                 else:
                     # Extend expiry forward if needed; keep created_at stable.
                     try:
-                        old_exp = _parse_iso_z(str(cache_row.get("expires_at", "")))
+                        old_exp = _parse_iso_z(str(cache_row.get('expires_at', '')))
                     except Exception:
                         old_exp = datetime(1970, 1, 1, tzinfo=timezone.utc)
                     if exp_dt > old_exp:
-                        cache_row["expires_at"] = exp_dt.isoformat().replace("+00:00", "Z")
-                    cache_row["tenant_id"] = tenant_id
-                    cache_row["module_id"] = mid
+                        cache_row['expires_at'] = exp_dt.isoformat().replace('+00:00', 'Z')
+
+
+                # Persist cache_index.csv after any mutation so cache entries are durable even if later steps fail.
+                try:
+                    billing.save_table("cache_index.csv", cache_index, headers=CACHE_INDEX_HEADERS)
+                except Exception as e:
+                    print(f"[cache_index][WARN] failed to persist cache_index.csv mid-run: {e}")
+
 
             # Refund policy
             # - Refund reasons are governed by reason_catalog.csv (refundable=true)
@@ -2094,6 +2155,14 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                 separators=(",", ":"),
             ),
         })
+
+    # Persist cache_index.csv updates (required for durable cache behavior across runs).
+    # This is intentionally scoped to cache_index only: other billing-state tables are
+    # written via the ledger/runstate adapters.
+    try:
+        billing.save_table("cache_index.csv", cache_index, headers=CACHE_INDEX_HEADERS)
+    except Exception as e:
+        print(f"[cache_index][WARN] failed to persist cache_index.csv: {e}")
 
     # Adapter mode: orchestrator no longer persists billing-state tables directly.
     # LedgerWriter and RunStateStore are the only write paths.

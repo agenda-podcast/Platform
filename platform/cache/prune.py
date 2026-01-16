@@ -1,21 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import List
 
 from ..billing.state import BillingState
 from ..github.actions_cache import delete_cache, list_caches
 from ..utils.csvio import read_csv, write_csv
-from ..utils.time import utcnow_iso
 
 
 @dataclass
 class CachePruneResult:
-    updated_rows: int
+    rows_before: int
+    rows_after: int
     deleted_caches: int
-    registered_orphans: int
 
 
 def _parse_iso_z(s: str) -> datetime:
@@ -26,69 +25,72 @@ def _parse_iso_z(s: str) -> datetime:
     return datetime.fromisoformat(s)
 
 
-def run_cache_prune(billing_state_dir: Path, dry_run: bool = True) -> CachePruneResult:
+def run_cache_prune(billing_state_dir: Path) -> CachePruneResult:
+    """Prune expired GitHub Actions caches.
+
+    Behavior (per policy):
+      - Reads billing-state cache_index.csv
+      - Removes expired caches from GitHub Actions cache storage
+      - Removes corresponding rows from cache_index.csv
+      - Writes nothing else
+
+    Expected cache_index.csv headers:
+      place,type,ref,created_at,expires_at
+
+    Notes:
+      - place,type are logical; this pruner currently acts on place=cache.
+      - ref is treated as the Actions cache key.
+    """
+
     billing = BillingState(billing_state_dir)
     billing.validate_minimal(required_files=["cache_index.csv"])
 
-    cache_index = read_csv(billing.path("cache_index.csv"))
+    rows = read_csv(billing.path("cache_index.csv"))
+    rows_before = len(rows)
 
-    # 1) Fetch current repo caches from Actions.
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+
+    # Map current caches by key for deterministic lookup.
     caches = list_caches()
     by_key = {c.key: c for c in caches}
 
-    updated = 0
+    kept: List[dict] = []
     deleted = 0
-    registered = 0
 
-    # 2) Fill in cache_id for known keys.
-    for row in cache_index:
-        k = str(row.get("cache_key", "")).strip()
-        if not k:
-            continue
-        if row.get("cache_id"):
-            continue
-        entry = by_key.get(k)
-        if entry:
-            row["cache_id"] = str(entry.id)
-            updated += 1
+    for r in rows:
+        place = str(r.get("place", "")).strip()
+        ref = str(r.get("ref", "")).strip()
+        exp_s = str(r.get("expires_at", "")).strip()
 
-    # 3) Register orphans: caches that exist in GitHub but not in cache_index.
-    known_keys = {str(r.get("cache_key", "")).strip() for r in cache_index if r.get("cache_key")}
-    now = datetime.now(timezone.utc).replace(microsecond=0)
-    for c in caches:
-        if c.key in known_keys:
+        # Only manage explicit cache entries.
+        if place != "cache" or not ref:
+            kept.append(r)
             continue
-        # Orphan => add with 1y hold as per design.
-        hold_exp = now + timedelta(days=365)
-        cache_index.append({
-            "cache_key": c.key,
-            "tenant_id": "",
-            "module_id": "",
-            "created_at": c.created_at,
-            "expires_at": hold_exp.isoformat().replace("+00:00", "Z"),
-            "cache_id": str(c.id),
-        })
-        registered += 1
 
-    # 4) Delete expired caches with cache_id.
-    for row in cache_index:
-        cid = str(row.get("cache_id", "")).strip()
-        if not cid:
-            continue
         try:
-            exp = _parse_iso_z(str(row.get("expires_at", "")))
+            exp = _parse_iso_z(exp_s)
         except Exception:
+            # Invalid expiry is treated as non-expired to avoid destructive behavior.
+            kept.append(r)
             continue
-        if exp <= now:
-            if not dry_run:
-                try:
-                    delete_cache(int(cid))
-                    deleted += 1
-                except Exception:
-                    pass
 
-    # Persist
-    write_csv(billing.path("cache_index.csv"), cache_index, ["cache_key","tenant_id","module_id","created_at","expires_at","cache_id"])
-    billing.write_state_manifest(["cache_index.csv"])
+        if exp > now:
+            kept.append(r)
+            continue
 
-    return CachePruneResult(updated_rows=updated, deleted_caches=deleted, registered_orphans=registered)
+        entry = by_key.get(ref)
+        if entry is not None:
+            try:
+                delete_cache(int(entry.id))
+                deleted += 1
+            except Exception:
+                # If deletion fails, keep the row so it can be retried.
+                kept.append(r)
+                continue
+        # If the cache does not exist, drop the row anyway.
+
+    # Persist: write only cache_index.csv (no manifest, no evidence).
+    headers = ["place", "type", "ref", "created_at", "expires_at"]
+    write_csv(billing.path("cache_index.csv"), kept, headers)
+
+    return CachePruneResult(rows_before=rows_before, rows_after=len(kept), deleted_caches=deleted)

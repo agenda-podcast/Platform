@@ -22,8 +22,6 @@ Policy:
 This script is designed to run in CI (GitHub Actions) and locally.
 """
 
-from __future__ import annotations
-
 import argparse
 import os
 import shutil

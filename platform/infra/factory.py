@@ -51,7 +51,7 @@ class InfraBundle:
     #
     # Earlier iterations of the repository exposed adapter instances under
     # shorter names (infra.ledger, infra.run_state, infra.artifacts). Several
-    # scripts (including E2E verification helpers) still rely on that API.
+    # scripts (including offline verification helpers) still rely on that API.
     #
     # Keep these aliases to avoid hard failures, while the canonical fields
     # remain: ledger_writer, run_state_store, artifact_store.
@@ -576,7 +576,7 @@ def build_infra(
     #   2) Runtime profile adapter settings
     #   3) Repo defaults
     #
-    # This is critical for CI/E2E workflows that pass --billing-state-dir/--runtime-dir.
+    # This is critical for CI/offline workflows that pass --billing-state-dir/--runtime-dir.
     if billing_state_dir is None:
         bs_override = str(profile.adapters["run_state_store"].settings.get("billing_state_dir", "") or "").strip()
         if bs_override:

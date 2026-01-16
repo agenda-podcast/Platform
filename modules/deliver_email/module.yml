@@ -2,98 +2,119 @@ module_id: deliver_email
 name: deliver_email
 version: 0.2.2
 kind: delivery
-description: "System delivery module: send package.zip via email (SMTP attachment)."
-
+description: 'System delivery module: send package.zip via email (SMTP attachment).'
 metadata:
-  # 19.9MB threshold (bytes) used across the platform to keep email delivery within common provider limits.
   max_package_bytes: 20866662
-
 requirements:
   secrets:
-    - name: EMAIL_SMTP_HOST
-      required: false
-      note: "SMTP host for email delivery. If unset, module writes to dev outbox stub."
-    - name: EMAIL_SMTP_PORT
-      required: false
-      note: "SMTP port for email delivery. If unset, module writes to dev outbox stub."
-    - name: EMAIL_FROM_EMAIL
-      required: false
-      note: "Sender email address used in the From header. If unset, module writes to dev outbox stub."
-    - name: EMAIL_SMTP_USERNAME
-      required: false
-      note: "SMTP username. If unset, module writes to dev outbox stub. If set, EMAIL_SMTP_PASSWORD must also be set."
-    - name: EMAIL_SMTP_PASSWORD
-      required: false
-      note: "SMTP password. If unset, module writes to dev outbox stub. Required if EMAIL_SMTP_USERNAME is set."
+  - name: EMAIL_SMTP_HOST
+    required: false
+    note: SMTP host for email delivery. If unset, module writes to dev outbox stub.
+  - name: EMAIL_SMTP_PORT
+    required: false
+    note: SMTP port for email delivery. If unset, module writes to dev outbox stub.
+  - name: EMAIL_FROM_EMAIL
+    required: false
+    note: Sender email address used in the From header. If unset, module writes to
+      dev outbox stub.
+  - name: EMAIL_SMTP_USERNAME
+    required: false
+    note: SMTP username. If unset, module writes to dev outbox stub. If set, EMAIL_SMTP_PASSWORD
+      must also be set.
+  - name: EMAIL_SMTP_PASSWORD
+    required: false
+    note: SMTP password. If unset, module writes to dev outbox stub. Required if EMAIL_SMTP_USERNAME
+      is set.
   vars:
-    - name: EMAIL_SMTP_USE_TLS
-      value: "true"
-      note: "Whether to use STARTTLS. Defaults to true."
-
+  - name: EMAIL_SMTP_USE_TLS
+    value: 'true'
+    note: Whether to use STARTTLS. Defaults to true.
 ports:
   inputs:
     port:
-      - id: recipient_email
-        type: string
-        required: false
-        description: "Recipient email address."
-        examples:
-          - "recipient@example.com"
-      - id: subject
-        type: string
-        required: false
-        description: "Email subject."
-        # JSON string default, represented safely in YAML
-        default_json: '"Your delivery"'
-      - id: body
-        type: string
-        required: false
-        description: "Email body (plain text)."
-        default_json: '"Please find your delivery attached."'
-      - id: package_zip
-        type: file
-        required: true
-        format: application/zip
-        description: "package.zip produced by packaging step."
-      - id: manifest_json
-        type: file
-        required: false
-        format: application/json
-        description: "Optional manifest.json for the package."
+    - id: recipient_email
+      type: string
+      required: false
+      description: Recipient email address.
+      examples:
+      - recipient@example.com
+    - id: subject
+      type: string
+      required: false
+      description: Email subject.
+      default_json: '"Your delivery"'
+    - id: body
+      type: string
+      required: false
+      description: Email body (plain text).
+      default_json: '"Please find your delivery attached."'
+    - id: package_zip
+      type: file
+      required: true
+      format: application/zip
+      description: package.zip produced by packaging step.
+    - id: manifest_json
+      type: file
+      required: false
+      format: application/json
+      description: Optional manifest.json for the package.
     limited_port: []
   outputs:
     port:
-      - id: delivery_receipt_json
-        type: file
-        path: delivery_receipt.json
-        format: application/json
-        description: "Delivery receipt (status, message, timestamps)."
-      - id: delivery_log_json
-        type: file
-        path: delivery_log.json
-        format: application/json
-        description: "Detailed, auditable delivery log (attempt metadata, config checks, result)."
-      - id: report_json
-        type: file
-        path: report.json
-        format: application/json
-        description: "Machine-readable failure report (root cause and diagnostics)."
+    - id: delivery_receipt_json
+      type: file
+      path: delivery_receipt.json
+      format: application/json
+      description: Delivery receipt (status, message, timestamps).
+    - id: delivery_log_json
+      type: file
+      path: delivery_log.json
+      format: application/json
+      description: Detailed, auditable delivery log (attempt metadata, config checks,
+        result).
+    - id: report_json
+      type: file
+      path: report.json
+      format: application/json
+      description: Machine-readable failure report (root cause and diagnostics).
     limited_port: []
-
 deliverables:
   port:
-    - deliverable_id: __run__
-      description: "Run delivery step."
-      outputs:
-        - delivery_receipt_json
-        - delivery_log_json
-        - report_json
-    - deliverable_id: delivery_receipt
-      description: "Delivery receipt (tenant-visible)."
-      outputs:
-        - delivery_receipt_json
-    - deliverable_id: delivery_log
-      description: "Delivery detailed log (tenant-visible)."
-      outputs:
-        - delivery_log_json
+  - deliverable_id: __run__
+    description: Run delivery step.
+    outputs:
+    - delivery_receipt_json
+    - delivery_log_json
+    - report_json
+  - deliverable_id: delivery_receipt
+    description: Delivery receipt (tenant-visible).
+    outputs:
+    - delivery_receipt_json
+  - deliverable_id: delivery_log
+    description: Delivery detailed log (tenant-visible).
+    outputs:
+    - delivery_log_json
   limited_port: []
+testing:
+  self_test:
+    description: Deterministic offline self-test using dev stub mode (no secrets required).
+    params:
+      tenant_id: selftestTENANT
+      work_order_id: selftestWO
+      step_id: s_deliver
+      module_run_id: selftest
+      inputs:
+        package_zip:
+          fixture: testing/fixtures/package.zip
+          bytes: 0
+        manifest_json:
+          fixture: testing/fixtures/manifest.json
+          bytes: 0
+        recipient_email: recipient@example.invalid
+    expect:
+      status: COMPLETED
+      files:
+      - delivery_receipt.json
+      - delivery_log.json
+      - report.json
+      - outbox/selftest.eml

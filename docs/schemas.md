@@ -50,3 +50,31 @@ Compatibility policy:
 Determinism rules:
 - For enabled workorders, `step.kind` must match the referenced module contract `module.yml.kind`.
 - Validators and orchestrator logic must use `kind` and must not infer packaging/delivery from module_id naming.
+
+## Module self-test contract (`module.yml: testing.self_test`)
+
+Purpose:
+- Provide a deterministic, offline executable smoke test for a module.
+- Used by `scripts/verify_module.py` and the **Verify Modules** workflow.
+
+Schema (recommended):
+- `testing` (object)
+  - `self_test` (object)
+    - `description` (string, optional)
+    - `params` (object, required)
+      - A params payload passed to the module entrypoint `src/run.py:run`.
+      - The runner supports the following signatures:
+        - `run(params=params, outputs_dir=outputs_dir)`
+        - `run(params, outputs_dir)` (legacy)
+    - `expect` (object, required)
+      - `status` (string, required): expected result status.
+      - `files` (list[string], optional): file paths expected to exist under `outputs_dir`.
+
+Fixture helper for file inputs:
+- Any dict value containing a `fixture: <relative-path>` key will be resolved by the runner into:
+  - `uri: file://<absolute-path>`
+  - `path: <absolute-path>`
+  - plus any other provided metadata fields.
+
+Constraint:
+- Self-tests must be deterministic and must not require secrets unless the module declares those secrets under `requirements.secrets`.

@@ -201,13 +201,13 @@ def cmd_admin_topup(args: argparse.Namespace) -> int:
 
 
 def cmd_cache_prune(args: argparse.Namespace) -> int:
-    res = run_cache_prune(Path(args.billing_state_dir).resolve(), dry_run=bool(args.dry_run))
+    res = run_cache_prune(Path(args.billing_state_dir).resolve())
     print(
         json.dumps(
             {
-                "updated_rows": res.updated_rows,
-                "deleted_caches": res.deleted_caches,
-                "registered_orphans": res.registered_orphans,
+                'rows_before': res.rows_before,
+                'rows_after': res.rows_after,
+                'deleted_caches': res.deleted_caches,
             }
         )
     )
@@ -315,7 +315,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("cache-prune", help="Prune Actions caches and update cache_index")
     sp.add_argument("--billing-state-dir", default=".billing-state")
-    sp.add_argument("--dry-run", action="store_true")
     sp.set_defaults(func=cmd_cache_prune)
 
     sp = sub.add_parser("admin-topup", help="Admin: apply a ledger top-up to billing-state")

@@ -14,7 +14,7 @@ from typing import Any, Dict, Tuple
 MODULE_ID = "deliver_email"
 MAX_PACKAGE_BYTES = 20866662
 # 19.9 MiB-ish safety threshold for GitHub and email constraints.
-# Keep MAX_PACKAGE_BYTES on a standalone line (digits only) so E2E tests can parse it reliably.
+# Keep MAX_PACKAGE_BYTES on a standalone line (digits only) so automated checks can parse it reliably.
 
 
 def _utcnow_iso() -> str:
@@ -75,6 +75,16 @@ def _int_or_none(v: Any) -> int | None:
         return int(s)
     except Exception:
         return None
+
+
+def _domain_of_email(addr: str) -> str:
+    s = str(addr or '').strip().lower()
+    if '@' not in s:
+        return ''
+    dom = s.split('@', 1)[1].strip()
+    # Normalize: strip surrounding brackets, trailing dot.
+    dom = dom.strip('<>').strip().rstrip('.')
+    return dom
 
 
 def _fail(outputs_dir: Path, *, reason_slug: str, message: str, delivery_log: Dict[str, Any]) -> Dict[str, Any]:
@@ -270,6 +280,40 @@ def run(*, params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
         recipient = str(os.environ.get("DELIVER_EMAIL_DEFAULT_RECIPIENT") or "").strip()
     if not recipient:
         return _fail(outputs_dir, reason_slug="missing_input", message="recipient_email is required", delivery_log=delivery_log)
+
+    # Platform email stoplist enforcement (domain-based).
+    # This is evaluated before any delivery mode (stub or real SMTP), so blocked recipients
+    # fail deterministically.
+    stoplist_enabled = False
+    stoplist_domains: list[str] = []
+    try:
+        from platform.config.load_platform_config import load_platform_config
+
+        repo_root = Path(__file__).resolve().parents[3]
+        cfg = load_platform_config(repo_root)
+        es = cfg.get('email_stoplist') or {}
+        stoplist_enabled = bool(es.get('enabled'))
+        raw = es.get('stoplist_domains') or []
+        if isinstance(raw, str):
+            raw = [raw]
+        if isinstance(raw, list):
+            stoplist_domains = [str(x).strip().lower() for x in raw if str(x).strip()]
+    except Exception as e:
+        return _fail(outputs_dir, reason_slug="internal_error", message=f"platform_config_load_failed: {type(e).__name__}: {e}", delivery_log=delivery_log)
+
+    recipient_domain = _domain_of_email(recipient)
+    delivery_log['stoplist'] = {
+        'enabled': bool(stoplist_enabled),
+        'recipient_domain': recipient_domain,
+        'stoplist_domains_count': len(stoplist_domains),
+    }
+    if stoplist_enabled and recipient_domain and recipient_domain in set(stoplist_domains):
+        return _fail(
+            outputs_dir,
+            reason_slug="recipient_domain_stoplisted",
+            message=f"recipient domain is stoplisted: {recipient_domain}",
+            delivery_log=delivery_log,
+        )
 
     if not from_email:
         # In stub mode, from_email is optional. If not provided, use a deterministic placeholder.

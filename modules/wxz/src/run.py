@@ -74,7 +74,7 @@ def run(params: Dict[str, Any], outputs_dir: str) -> Dict[str, Any]:
     dedupe_enabled = bool(dedupe_cfg.get("enabled", True))
     strip_tracking = bool(dedupe_cfg.get("strip_tracking_params", True))
 
-    # Optional offline/mock mode (used for deterministic CI/E2E runs).
+    # Optional offline/mock mode (used for deterministic CI/offline runs).
     # If enabled, the module will not call Google and will instead emit a small
     # deterministic result set.
     mock_mode = bool(params.get("mock_mode")) or (os.getenv("PLATFORM_OFFLINE") or "").strip() == "1"

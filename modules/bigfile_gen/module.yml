@@ -2,7 +2,7 @@ module_id: bigfile_gen
 name: Big File Generator
 kind: transform
 version: 1
-description: Generate a deterministic, high-entropy binary file of a specified size for E2E testing.
+description: Generate a deterministic, high-entropy binary file of a specified size for size and threshold testing.
 entrypoint: python -m modules.bigfile_gen
 ports:
   inputs:

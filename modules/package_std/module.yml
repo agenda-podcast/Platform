@@ -61,3 +61,22 @@ deliverables:
     - manifest_json
     - manifest_csv
   limited_port: []
+testing:
+  self_test:
+    description: 'Deterministic offline self-test: package a single fixture file.'
+    params:
+      inputs:
+        bound_outputs:
+        - step_id: s1
+          module_id: package_std
+          output_id: fixture
+          content_type: text/plain
+          as_path: hello.txt
+          uri:
+            fixture: testing/fixtures/hello.txt
+    expect:
+      status: COMPLETED
+      files:
+      - package.zip
+      - manifest.json
+      - manifest.csv

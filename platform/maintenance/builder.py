@@ -499,6 +499,72 @@ def _scan_modules(ctx: MaintenanceContext) -> List[Dict[str, Any]]:
     return out
 
 
+
+
+def _write_modules_index(ctx: MaintenanceContext) -> None:
+    """Write maintenance-state/modules_index.csv.
+
+    Purpose:
+      - provide deterministic, stable module options for UI dropdowns
+      - avoid scanning modules/ at runtime for interactive workflows
+
+    Design:
+      - stable sort by module_id
+      - include commonly used display fields (name, kind, version)
+    """
+    rows = []
+    if not ctx.modules_dir.exists():
+        _write_csv(ctx.ms_dir / "modules_index.csv", [], [
+            "module_id",
+            "name",
+            "kind",
+            "version",
+            "supports_downloadable_artifacts",
+            "path",
+        ])
+        return
+
+    for p in sorted(ctx.modules_dir.iterdir(), key=lambda x: x.name):
+        if not p.is_dir():
+            continue
+        mid = p.name.strip()
+        if not mid:
+            continue
+        validate_id("module_id", mid, "module_id")
+
+        module_yml = p / "module.yml"
+        if not module_yml.exists():
+            raise FileNotFoundError(str(module_yml))
+        data = _read_yaml(module_yml)
+        declared = str(data.get("module_id", "") or "").strip()
+        if declared and declared != mid:
+            raise ValueError(f"module.yml module_id mismatch: folder={mid} declared={declared}")
+
+        name = str(data.get("name", "") or "").strip()
+        kind = str(data.get("kind", "") or "").strip()
+        version = str(data.get("version", "") or "").strip()
+        supports_downloadable = bool(data.get("supports_downloadable_artifacts", True))
+
+        rows.append({
+            "module_id": mid,
+            "name": name,
+            "kind": kind,
+            "version": version,
+            "supports_downloadable_artifacts": "true" if supports_downloadable else "false",
+            "path": str(p.relative_to(ctx.repo_root)),
+        })
+
+    rows = sorted(rows, key=lambda r: (r.get("module_id", ""), r.get("name", "")))
+    _write_csv(ctx.ms_dir / "modules_index.csv", rows, [
+        "module_id",
+        "name",
+        "kind",
+        "version",
+        "supports_downloadable_artifacts",
+        "path",
+    ])
+
+
 def _scan_tenants(ctx: MaintenanceContext) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     if not ctx.tenants_dir.exists():
@@ -974,6 +1040,7 @@ def _write_manifest(ctx: MaintenanceContext) -> None:
         "reason_policy.csv",
         "tenant_relationships.csv",
         "workorders_index.csv",
+        "modules_index.csv",
         "module_requirements_index.csv",
         "module_artifacts_policy.csv",
         "module_contract_rules.csv",
@@ -1007,6 +1074,7 @@ def run_maintenance(repo_root: Path) -> None:
     _ensure_reason_policy(ctx, reason_registry)
 
     _write_tenant_relationships(ctx, tenants)
+    _write_modules_index(ctx)
     _write_workorders_index(ctx, tenants)
     req_rows = _write_module_requirements_index(ctx, modules)
     _write_secretstore_template(ctx, modules, req_rows)

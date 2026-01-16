@@ -1,0 +1,5 @@
+reasons:
+  - reason_key: 7cD
+    reason_slug: recipient_domain_stoplisted
+    category_id: '15'
+    description: Recipient email domain is blocked by platform email_stoplist policy.

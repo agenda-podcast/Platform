@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "module_id": "package_std",
+  "files": [
+    {
+      "dest_path": "payload.txt",
+      "bytes": 18,
+      "sha256": "",
+      "content_type": "text/plain",
+      "source_step_id": "s1",
+      "source_module_id": "U2T",
+      "source_output_id": "text",
+      "source_path": "payload.txt",
+      "source_uri": "fixture"
+    }
+  ]
+}

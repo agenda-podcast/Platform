@@ -73,6 +73,6 @@ steps:
     manifest_json:
       from_step: p4
       output_id: manifest_json
-    remote_base_path: /Apps/Platform/E2E
+    remote_base_path: /Apps/Platform/Demo
 promotions: []
 artifacts_requested: true

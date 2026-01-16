@@ -1,0 +1,32 @@
+# Platform configuration (single source of truth)
+#
+# Contract:
+# - All keys are required. Missing keys must fail fast.
+# - No hidden defaults beyond what is explicitly declared here.
+# - Unknown keys must fail fast (prevents silent drift).
+
+verify_mode:
+  # When enabled, CI_VERIFY may execute platform-level verification logic.
+  enabled: false
+  # Tenants that are exempt from verify_mode when enabled (Base62 tenant IDs).
+  exempt_tenant_ids: []
+
+email_stoplist:
+  # When enabled, delivery via email may be blocked for listed domains.
+  enabled: false
+  # Domain stoplist examples: "example.com", "mailinator.com".
+  stoplist_domains: []
+
+cache_ttl_policy:
+  # When enabled, the platform may apply TTL-based cache pruning policies.
+  enabled: false
+  # TTL rules are declared as strings in the form "place:type=days".
+  # - place: a logical area (example: "cache", "billing_state")
+  # - type: a logical sub-type within the place (example: "module_run", "artifact")
+  # - days: positive integer number of days
+  #
+  # Recommended starter set (disabled by default):
+  ttl_days_by_place_type:
+    - "cache:module_run=7"
+    - "cache:artifact_zip=14"
+    - "cache:delivery_tmp=3"

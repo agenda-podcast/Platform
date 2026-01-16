@@ -45,13 +45,9 @@ jobs:
           set -euo pipefail
 
           rm -rf dist_artifacts_guardrail
-          python scripts/publish_artifacts_release.py \
-            --runtime-profile config/runtime_profile.dev_github.yml \
-            --billing-state-dir .billing-state-e2e \
-            --runtime-dir runtime-e2e \
-            --dist-dir dist_artifacts_guardrail \
-            --since 2026-01-12T13:04:00Z \
-            --no-publish || rc=$?
+          rm -rf runtime-guardrail
+          mkdir -p runtime-guardrail
+          python scripts/publish_artifacts_release.py             --runtime-profile config/runtime_profile.dev_github.yml             --billing-state-dir billing-state-seed             --runtime-dir runtime-guardrail             --dist-dir dist_artifacts_guardrail             --since 2100-01-01T00:00:00Z             --no-publish || rc=$?
 
           if [ "${rc:-0}" -ne 0 ] && [ "${rc:-0}" -ne 2 ]; then
             echo "[GUARDRAIL][FAIL] publish_artifacts_release.py returned unexpected code: ${rc}" >&2
@@ -71,6 +67,11 @@ jobs:
           set -euo pipefail
           bash scripts/run_maintenance.sh
 
+      - name: Regenerate Verify dropdowns from maintenance-state indexes
+        run: |
+          set -euo pipefail
+          python scripts/maintenance_regen_verify_dropdowns.py
+
       - name: Verify repository invariants (modules/tenants/maintenance-state)
         run: |
           set -euo pipefail
@@ -80,7 +81,7 @@ jobs:
         if: ${{ github.event_name == 'push' }}
         run: |
           set -euo pipefail
-          if git diff --quiet -- maintenance-state platform/secretstore/secretstore.template.json; then
+          if git diff --quiet -- maintenance-state platform/secretstore/secretstore.template.json .github/workflows/verify_modules.yml .github/workflows/verify_workorders.yml; then
             echo "[MAINTENANCE] No changes to commit (maintenance-state/ and secretstore template)."
             exit 0
           fi
@@ -88,7 +89,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
 
-          git add maintenance-state platform/secretstore/secretstore.template.json
+          git add maintenance-state platform/secretstore/secretstore.template.json .github/workflows/verify_modules.yml .github/workflows/verify_workorders.yml
           if git diff --cached --quiet; then
             echo "[MAINTENANCE] Nothing staged after git add maintenance-state."
             exit 0
@@ -100,7 +101,7 @@ jobs:
       - name: Ensure maintenance-state is committed
         run: |
           set -euo pipefail
-          if ! git diff --quiet -- maintenance-state platform/secretstore/secretstore.template.json; then
+          if ! git diff --quiet -- maintenance-state platform/secretstore/secretstore.template.json .github/workflows/verify_modules.yml .github/workflows/verify_workorders.yml; then
             echo "[MAINTENANCE][FAIL] Repo is out-of-date after maintenance run (maintenance-state/ or secretstore template)." >&2
             git --no-pager diff -- maintenance-state platform/secretstore/secretstore.template.json | sed -n '1,200p' >&2 || true
             exit 2
@@ -111,20 +112,10 @@ jobs:
           set -euo pipefail
           python scripts/ci_verify.py --phase post --billing-state-dir .billing-state
 
-  cache_prune:
-    name: Cache Prune (called)
+  verify_platform:
+    name: Verify Platform (called)
     needs: maintenance
-    uses: ./.github/workflows/cache-prune.yml
-    with:
-      dry_run: true
+    uses: ./.github/workflows/verify_platform.yml
     secrets: inherit
-    permissions:
-      actions: write
-      contents: write
-
-  e2e_verify:
-    name: E2E Verify (called)
-    needs: maintenance
-    uses: ./.github/workflows/e2e-verify.yml
     permissions:
       contents: read

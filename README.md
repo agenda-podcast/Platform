@@ -75,24 +75,44 @@ pytest -q
 
 ```bash
 python scripts/ci_verify.py --phase pre
-python scripts/ci_verify.py --phase e2e
+python scripts/ci_verify.py --phase post
 ```
 
-### 3) Run the offline E2E parity sequence (matches `.github/workflows/e2e-verify.yml`)
+### 3) Offline publish guardrail (no-publish)
 
-The orchestrator runs all work orders that are `enabled: true`. The example below assumes tenant `nxlkGI` work order `UbjkpxZO` is enabled (it is enabled in this repository).
+Run the publisher in *no-op* mode to validate it imports and executes end-to-end without requiring a runtime snapshot.
 
 ```bash
-python -m platform.cli consistency-validate
-python -m platform.cli integrity-validate
+set -euo pipefail
+rm -rf dist_artifacts_guardrail runtime-guardrail
+mkdir -p runtime-guardrail
+PLATFORM_OFFLINE=1 python scripts/publish_artifacts_release.py \
+  --runtime-profile config/runtime_profile.dev_github.yml \
+  --billing-state-dir billing-state-seed \
+  --runtime-dir runtime-guardrail \
+  --dist-dir dist_artifacts_guardrail \
+  --since 2100-01-01T00:00:00Z \
+  --no-publish
+```
 
-python -m platform.cli orchestrator --runtime-profile config/runtime_profile.dev_github.yml --billing-state-dir .billing-state-e2e --runtime-dir runtime-e2e
-python -m platform.cli orchestrator --runtime-profile config/runtime_profile.dev_github.yml --billing-state-dir .billing-state-e2e --runtime-dir runtime-e2e
+## Verification
 
-python scripts/publish_artifacts_release.py --runtime-profile config/runtime_profile.dev_github.yml --billing-state-dir .billing-state-e2e --runtime-dir runtime-e2e --since "$(cat .since_ts)" --no-publish
+This repository uses three verification workflows with progressively broader scope:
 
-python scripts/e2e_assert_chaining.py --runtime-dir runtime-e2e --tenant-id nxlkGI --work-order-id UbjkpxZO
-python scripts/e2e_assert_idempotency.py --billing-state-dir .billing-state-e2e --tenant-id nxlkGI --work-order-id UbjkpxZO
+- **Verify Platform**: repository invariants only (no module execution).
+- **Verify Modules**: executes a single module `testing.self_test`.
+- **Verify Workorders**: executes a real platform-tenant workorder (`tenant_id=000000`).
+
+Details, including dropdown generation, manual overrides, and cache cleanup policy:
+- `docs/verification.md`
+
+Local entrypoints:
+
+```bash
+set -euo pipefail
+python scripts/verify_platform.py
+python scripts/verify_module.py --module-id <module_id>
+python scripts/verify_workorder.py --work-order-id <work_order_id>
 ```
 
 ## Admin top-up (development)
@@ -105,5 +125,6 @@ python -m platform.cli admin-topup --tenant-id nxlkGI --amount-credits 1000 --to
 
 ## Canonical references
 
-- `docs/release_checklist.md` is the canonical operator checklist and verification posture.
-- `docs/schemas.md` is the canonical schema and validation reference for work orders and module contracts.
+- `docs/verification.md` documents the verification workflows (Platform, Modules, Workorders), dropdown generation, manual overrides, and cache cleanup model.
+- `docs/release_checklist.md` is the pre-merge operator checklist.
+- `docs/schemas.md` defines canonical schemas and validation rules for module contracts and workorders.

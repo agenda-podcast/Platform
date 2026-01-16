@@ -12,17 +12,21 @@ python scripts/ci_verify.py --phase pre
 python scripts/ci_verify.py --phase post
 ```
 
-## Optional offline E2E sanity (dev stubs)
+## Optional offline publish guardrail (no-publish)
 
-These steps avoid network dependencies and rely on dev stubs when credentials are not configured.
+This step is the preferred offline smoke-check for the publisher script. It validates that the script imports, loads the registries, and executes without requiring a prebuilt runtime snapshot.
 
 ```bash
-python -m platform.cli maintenance
-bash scripts/run_orchestrator.sh
-python scripts/e2e_assert_chaining.py
-python scripts/e2e_assert_artifacts_packaging.py
-python scripts/e2e_assert_email_threshold.py
-python scripts/e2e_assert_idempotency.py
+set -euo pipefail
+rm -rf dist_artifacts_guardrail runtime-guardrail
+mkdir -p runtime-guardrail
+PLATFORM_OFFLINE=1 python scripts/publish_artifacts_release.py \
+  --runtime-profile config/runtime_profile.dev_github.yml \
+  --billing-state-dir billing-state-seed \
+  --runtime-dir runtime-guardrail \
+  --dist-dir dist_artifacts_guardrail \
+  --since 2100-01-01T00:00:00Z \
+  --no-publish
 ```
 
 ## Policy checkpoints (must hold)
@@ -44,4 +48,14 @@ python scripts/e2e_assert_idempotency.py
 - Delivery receipts must include `provider`, `remote_path` or object id, `bytes`, and `verification_status`.
 
 
-Reference: `.github/workflows/e2e-verify.yml` runs the offline parity sequence and includes the publisher guardrail in `--no-publish` mode.
+Reference: `.github/workflows/maintenance.yml` (Publish script guardrail step) runs the offline parity sequence and includes the publisher guardrail in `--no-publish` mode.
+
+## Verification workflows (recommended)
+
+In addition to `ci_verify.py`, the repository provides explicit verification workflows:
+
+- **Verify Platform**: `python scripts/verify_platform.py`
+- **Verify Modules**: `python scripts/verify_module.py --module-id <module_id>`
+- **Verify Workorders**: `python scripts/verify_workorder.py --work-order-id <work_order_id>`
+
+See `docs/verification.md` for responsibilities, dropdown generation, and manual override behavior.

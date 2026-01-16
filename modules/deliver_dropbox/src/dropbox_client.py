@@ -201,7 +201,7 @@ class DropboxDevStubClient:
 def _dev_stub_root(outputs_dir: Path) -> Path:
     """Return a stable dev stub root for Dropbox across reruns.
 
-    In E2E reruns, outputs_dir changes per module_run_id. We want a stable stub store
+    In repeated offline runs, outputs_dir changes per module_run_id. We want a stable stub store
     to allow existence checks and skip re-upload. The heuristic anchors the stub root
     at the runtime directory (the parent of the "runs" folder) when possible.
     """

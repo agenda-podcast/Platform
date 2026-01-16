@@ -2,57 +2,80 @@ module_id: deliver_onedrive
 name: deliver_onedrive
 version: 0.1.0
 kind: delivery
-description: "System delivery module: upload package.zip to Microsoft OneDrive (Microsoft Graph)."
-
+description: 'System delivery module: upload package.zip to Microsoft OneDrive (Microsoft
+  Graph).'
 requirements:
   secrets:
-    - name: ONEDRIVE_ACCESS_TOKEN
-      note: "Microsoft Graph OAuth access token with Files.ReadWrite; if unset, uses dev stub."
+  - name: ONEDRIVE_ACCESS_TOKEN
+    note: Microsoft Graph OAuth access token with Files.ReadWrite; if unset, uses
+      dev stub.
   vars:
-    - name: ONEDRIVE_CHUNK_BYTES
-      value: "4194304"
-      note: "Upload chunk size in bytes for resumable uploads (Graph upload session)."
-    - name: ONEDRIVE_CREATE_SHARE_LINK
-      value: "false"
-      note: "If true, attempt to create or reuse a share link after upload."
-
+  - name: ONEDRIVE_CHUNK_BYTES
+    value: '4194304'
+    note: Upload chunk size in bytes for resumable uploads (Graph upload session).
+  - name: ONEDRIVE_CREATE_SHARE_LINK
+    value: 'false'
+    note: If true, attempt to create or reuse a share link after upload.
 ports:
   inputs:
     port:
-      - id: manifest_json
-        type: file
-        format: application/json
-        required: false
-        description: "Optional manifest.json, used for future validation or telemetry."
-      - id: package_zip
-        type: file
-        format: application/zip
-        required: true
-        description: "The package.zip produced by the packaging step."
-      - id: remote_base_path
-        type: string
-        required: false
-        default: "/Apps/Platform"
-        description: "Base folder path in OneDrive under which the deterministic path will be created."
+    - id: manifest_json
+      type: file
+      format: application/json
+      required: false
+      description: Optional manifest.json, used for future validation or telemetry.
+    - id: package_zip
+      type: file
+      format: application/zip
+      required: true
+      description: The package.zip produced by the packaging step.
+    - id: remote_base_path
+      type: string
+      required: false
+      default: /Apps/Platform
+      description: Base folder path in OneDrive under which the deterministic path
+        will be created.
     limited_port: []
   outputs:
     port:
-      - id: report_json
-        type: file
-        path: report.json
-        format: application/json
-        description: "Error report when delivery fails."
-      - id: delivery_receipt_json
-        type: file
-        path: delivery_receipt.json
-        format: application/json
-        description: "Delivery receipt with remote path, share link, and verification status."
+    - id: report_json
+      type: file
+      path: report.json
+      format: application/json
+      description: Error report when delivery fails.
+    - id: delivery_receipt_json
+      type: file
+      path: delivery_receipt.json
+      format: application/json
+      description: Delivery receipt with remote path, share link, and verification
+        status.
     limited_port: []
-
 deliverables:
   port:
-    - deliverable_id: delivery_receipt
-      description: "Delivery receipt (tenant-visible)."
-      outputs:
-        - delivery_receipt_json
+  - deliverable_id: delivery_receipt
+    description: Delivery receipt (tenant-visible).
+    outputs:
+    - delivery_receipt_json
   limited_port: []
+testing:
+  self_test:
+    description: Deterministic offline self-test using dev stub mode (no secrets required).
+    params:
+      tenant_id: selftestTENANT
+      work_order_id: selftestWO
+      step_id: ''
+      module_run_id: selftest
+      inputs:
+        package_zip:
+          fixture: testing/fixtures/package.zip
+          bytes: 0
+        manifest_json:
+          fixture: testing/fixtures/manifest.json
+          bytes: 0
+      _platform:
+        step_id: s_deliver
+        run_id: r_selftest
+    expect:
+      status: COMPLETED
+      files:
+      - delivery_receipt.json

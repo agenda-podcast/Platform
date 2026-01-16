@@ -1,3 +1,0 @@
-dest_path,bytes,sha256,content_type,source_step_id,source_module_id,source_output_id,source_path,source_uri
-derive_queries_report.json,324,a81d44602907d1b51938d0c846df2b7c3a5c4dbb72de7f725fea72d01e97d16c,application/json,a1,9SD,report,report.json,file:///mnt/data/platform_repo/runtime-e2e/runs/nxlkGI/UbjkpxZO/a1/x6AqFjKBDJ/report.json
-derived_queries.txt,139,fb1bcc3ac3e987e3b9213536c390e77d9e29abac2522c8c34f118fd41d81e76b,text/plain,a1,9SD,derived_queries,derived_queries.txt,file:///mnt/data/platform_repo/runtime-e2e/runs/nxlkGI/UbjkpxZO/a1/x6AqFjKBDJ/derived_queries.txt

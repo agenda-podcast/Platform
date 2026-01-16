@@ -20,6 +20,7 @@ JAljEU2W,MODULE,wxz,E2Y,output_write_failed,01,Acquisition,Failed to write modul
 JiSwSse5,GLOBAL,,N8k,package_too_large_for_email,14,Validation,Package size exceeds email attachment limits; email delivery not possible.
 K9WdX1De,MODULE,9SD,FLe,artifacts_download_not_allowed_by_module,14,Validation,"Artifacts were purchased, but this module does not support downloadable release artifacts."
 MmdlT5sO,MODULE,U2T,5eS,external_api_error,01,Acquisition,Upstream API call failed or returned an error.
+OnYfoA2p,MODULE,deliver_email,7cD,recipient_domain_stoplisted,15,Access Control,Recipient email domain is blocked by platform email_stoplist policy.
 PQNWIRb5,MODULE,wxz,wrP,missing_secret,01,Acquisition,Required env secrets were not provided for Google Custom Search API.
 T664R1O3,MODULE,wxi,mri,missing_required_input,01,Acquisition,A required module input was not provided or could not be resolved.
 TlfOYxvR,MODULE,U2T,lNB,missing_required_input,01,Acquisition,A required module input was not provided or could not be resolved.

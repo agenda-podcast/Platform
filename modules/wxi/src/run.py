@@ -51,7 +51,7 @@ def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
     download_thumbnails = bool(params.get("download_thumbnails", False))
     download_images = bool(params.get("download_images", False))
 
-    # Offline/mock mode for deterministic CI/E2E.
+    # Offline/mock mode for deterministic CI/offline.
     mock_mode = bool(params.get("mock_mode")) or (os.getenv("PLATFORM_OFFLINE") or "").strip() == "1"
 
     api_key = (os.getenv("GOOGLE_SEARCH_API_KEY") or "").strip()

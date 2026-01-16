@@ -3,8 +3,8 @@ module_id,deliverable_id,price_credits,effective_from,effective_to,active,notes
 9SD,tenant_outputs,2,1970-01-01,,true,Auto-added by Maintenance. Migrated: price_save_to_release_credits.
 U2T,__run__,5,1970-01-01,,true,Auto-added by Maintenance. Migrated: price_run_credits.
 U2T,tenant_outputs,2,1970-01-01,,true,Auto-added by Maintenance. Migrated: price_save_to_release_credits.
-bigfile_gen,__run__,5,1970-01-01,,true,E2E helper module: run.
-bigfile_gen,tenant_outputs,2,1970-01-01,,true,E2E helper module: tenant outputs.
+bigfile_gen,__run__,5,1970-01-01,,true,Helper module: run.
+bigfile_gen,tenant_outputs,2,1970-01-01,,true,Helper module: tenant outputs.
 deliver_dropbox,__run__,1,1970-01-01,,true,System module: delivery step run (dropbox).
 deliver_email,__run__,1,1970-01-01,,true,System module: delivery step run (email).
 deliver_onedrive,__run__,1,1970-01-01,,true,System module: delivery step run (onedrive).

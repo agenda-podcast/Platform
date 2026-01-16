@@ -409,7 +409,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Update run status: PARTIAL if any refunds exist for delivery_missing, else COMPLETED.
     #
-    # IMPORTANT: The E2E workflow calls publish without --tenant-id/--work-order-id,
+    # IMPORTANT: Offline guardrail calls publish without --tenant-id/--work-order-id,
     # so we reconcile statuses for every workorder touched by this publish scan.
     try:
         pairs: set[tuple[str, str]] = set()

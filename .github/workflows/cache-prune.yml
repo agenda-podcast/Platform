@@ -1,25 +1,16 @@
 name: Cache Prune
 
 on:
-  workflow_dispatch:
-    inputs:
-      dry_run:
-        description: "If true, do not delete caches; only update cache_index.csv and state_manifest.json"
-        required: false
-        default: "true"
-  workflow_call:
-    inputs:
-      dry_run:
-        type: boolean
-        required: false
-        default: true
+  workflow_dispatch: {}
+  schedule:
+    - cron: '17 3 * * *'
 
 permissions:
   actions: write
   contents: write
 
 env:
-  BILLING_RELEASE_TAG: "billing-state-v1"
+  BILLING_RELEASE_TAG: 'billing-state-v1'
 
 jobs:
   prune:
@@ -31,8 +22,8 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-          cache: "pip"
+          python-version: '3.11'
+          cache: 'pip'
           cache-dependency-path: |
             requirements.txt
             pyproject.toml
@@ -42,35 +33,26 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      # GitHub-hosted runners already include the GitHub CLI (`gh`).
       - name: Verify GitHub CLI
         run: gh --version
 
-      - name: Download billing-state
+      - name: Download billing-state cache_index
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p .billing-state
-          gh release download "${BILLING_RELEASE_TAG}" -D .billing-state -p "cache_index.csv" -p "state_manifest.json"
+          gh release download "${BILLING_RELEASE_TAG}" -D .billing-state -p 'cache_index.csv'
 
       - name: Cache prune
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          DRY_RUN_INPUT="${{ inputs.dry_run }}"
-          # workflow_dispatch inputs arrive as strings; workflow_call inputs arrive as boolean.
-          if [ "$DRY_RUN_INPUT" = "false" ] || [ "$DRY_RUN_INPUT" = "False" ] || [ "$DRY_RUN_INPUT" = "0" ]; then
-            echo "[cache-prune] dry_run=false (will delete expired caches)"
-            python -m platform.cli cache-prune --billing-state-dir .billing-state
-          else
-            echo "[cache-prune] dry_run=true (no deletions)"
-            python -m platform.cli cache-prune --billing-state-dir .billing-state --dry-run
-          fi
+          python -m platform.cli cache-prune --billing-state-dir .billing-state
 
       - name: Upload updated cache index
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python -c "from pathlib import Path; from platform.billing.state import BillingState; BillingState(Path('.billing-state')).write_state_manifest(['cache_index.csv'])"
-          gh release upload "${BILLING_RELEASE_TAG}" .billing-state/cache_index.csv .billing-state/state_manifest.json --clobber
+          set -euo pipefail
+          gh release upload "${BILLING_RELEASE_TAG}" .billing-state/cache_index.csv --clobber
