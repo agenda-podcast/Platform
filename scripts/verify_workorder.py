@@ -8,9 +8,12 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 from platform.workorders.resolver import resolve_workorder_by_id, write_single_workorder_index
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _fail(msg: str) -> None:
