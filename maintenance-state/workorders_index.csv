@@ -2,5 +2,5 @@ tenant_id,work_order_id,enabled,schedule_cron,title,notes,path
 000000,PlatDb01,true,,"Platform verification (package -> Dropbox delivery, dev stub).","Deterministic baseline. Generates a small fixed binary, packages it, and delivers via Dropbox module in dev stub mode (no secrets required).",tenants/000000/workorders/PlatDb01.yml
 000000,PlatEm01,true,,"Platform verification (package -> email delivery, dev stub).","Deterministic baseline. Generates a small fixed binary, packages it, and delivers via email module in dev stub mode (no secrets required).",tenants/000000/workorders/PlatEm01.yml
 nxlkGI,Q1DrivE2,false,,OneDrive delivery verification.,Steps chaining demo: 9SD -> wxi -> U2T -> package_std -> deliver_onedrive (dev stub by default).,tenants/nxlkGI/workorders/Q1DrivE2.yml
-nxlkGI,SeCrEt01,false,,Secret preflight negative scenario.,Intentionally fails when required module secrets are missing and PLATFORM_OFFLINE is not set.,tenants/nxlkGI/workorders/SeCrEt01.yml
+nxlkGI,SeCrEt01,false,,Secret preflight negative scenario.,Intentionally fails when required module secrets are missing.,tenants/nxlkGI/workorders/SeCrEt01.yml
 nxlkGI,UbjkpxZO,false,,New module verification.,Steps chaining demo: 9SD -> wxi -> U2T.,tenants/nxlkGI/workorders/UbjkpxZO.yml

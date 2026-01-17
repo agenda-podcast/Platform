@@ -86,7 +86,7 @@ Run the publisher in *no-op* mode to validate it imports and executes end-to-end
 set -euo pipefail
 rm -rf dist_artifacts_guardrail runtime-guardrail
 mkdir -p runtime-guardrail
-PLATFORM_OFFLINE=1 python scripts/publish_artifacts_release.py \
+python scripts/publish_artifacts_release.py \
   --runtime-profile config/runtime_profile.dev_github.yml \
   --billing-state-dir billing-state-seed \
   --runtime-dir runtime-guardrail \

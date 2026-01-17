@@ -39,8 +39,6 @@ jobs:
           fi
 
       - name: Publish script guardrail (no-publish)
-        env:
-          PLATFORM_OFFLINE: "1"
         run: |
           set -euo pipefail
 

@@ -103,16 +103,13 @@ def _load_module_secret_requirements(repo_root: Path) -> dict[str, list[dict[str
     return out
 
 
-def _is_secret_enforced(*, note: str, platform_offline: bool) -> bool:
+def _is_secret_enforced(*, note: str) -> bool:
     """Determine if a secret requirement should be enforced.
 
     Rules:
-      - If PLATFORM_OFFLINE=1, do not enforce secrets (modules may use deterministic mocks).
       - If the requirement note contains "if unset" (case-insensitive), do not enforce (dev stub allowed).
       - Otherwise, enforce.
     """
-    if platform_offline:
-        return False
     n = (note or "").lower()
     if "if unset" in n:
         return False
@@ -166,7 +163,6 @@ def _preflight_assert_required_secrets(
 
     Raises PreflightSecretError on missing enforced secrets.
     """
-    platform_offline = (os.getenv("PLATFORM_OFFLINE") or "").strip() == "1"
     reqs = _load_module_secret_requirements(repo_root)
 
     missing: list[dict[str, str]] = []
@@ -184,7 +180,7 @@ def _preflight_assert_required_secrets(
         for rr in reqs.get(mid, []):
             key = rr["key"]
             note = rr.get("note", "")
-            if not _is_secret_enforced(note=note, platform_offline=platform_offline):
+            if not _is_secret_enforced(note=note):
                 continue
 
             enforced.append(key)

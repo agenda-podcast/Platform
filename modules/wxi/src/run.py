@@ -50,9 +50,8 @@ def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
     # Platform-only controls (limited_port)
     download_thumbnails = bool(params.get("download_thumbnails", False))
     download_images = bool(params.get("download_images", False))
-
-    # Offline/mock mode for deterministic CI/offline.
-    mock_mode = bool(params.get("mock_mode")) or (os.getenv("PLATFORM_OFFLINE") or "").strip() == "1"
+    # Optional mock mode (must be explicitly requested by the workorder).
+    mock_mode = bool(params.get("mock_mode"))
 
     api_key = (os.getenv("GOOGLE_SEARCH_API_KEY") or "").strip()
     engine_id = (os.getenv("GOOGLE_SEARCH_ENGINE_ID") or "").strip()

@@ -33,9 +33,7 @@ def test_publish_artifacts_release_no_publish_mode_smoke(tmp_path: Path) -> None
 
     shutil.copytree(src_billing, billing_state_dir)
     runtime_dir.mkdir(parents=True, exist_ok=True)
-
     env = dict(os.environ)
-    env["PLATFORM_OFFLINE"] = "1"
 
     cmd = [
         sys.executable,
