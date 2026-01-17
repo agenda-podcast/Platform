@@ -586,6 +586,74 @@ def _scan_tenants(ctx: MaintenanceContext) -> List[Dict[str, Any]]:
     return out
 
 
+
+
+def _normalize_workorder_filenames(ctx: MaintenanceContext, tenants: List[Dict[str, Any]]) -> None:
+    """Rename tenant workorder files to match their declared work_order_id.
+
+    Policy:
+      - Workorder filename MUST be "{work_order_id}.yml".
+      - Maintenance performs deterministic renames so tenants do not have to.
+      - If a rename would overwrite an existing file, fail fast.
+
+    This function is intentionally side-effecting (filesystem rename) and should be
+    called before building workorders_index.csv.
+    """
+    import hashlib
+
+    planned: list[tuple[Path, Path, Path]] = []  # (src, tmp, dst)
+    dsts: set[Path] = set()
+
+    for t in tenants:
+        tid = str(t.get("tenant_id", "") or "").strip()
+        if not tid:
+            continue
+        wdir = ctx.tenants_dir / tid / "workorders"
+        if not wdir.exists():
+            continue
+
+        for wp in sorted(wdir.glob("*.yml"), key=lambda p: p.name):
+            wo = _read_yaml(wp)
+            wid = str(wo.get("work_order_id") or wp.stem).strip()
+            if not wid:
+                continue
+            validate_id("work_order_id", wid, "work_order_id")
+
+            expected = wdir / f"{wid}.yml"
+            if wp.resolve() == expected.resolve():
+                continue
+
+            # Do not allow overwrite.
+            if expected.exists() and expected.resolve() != wp.resolve():
+                raise ValueError(
+                    f"Workorder filename normalization would overwrite existing file: "
+                    f"src={wp} wid={wid} dst={expected}"
+                )
+
+            # Plan a 2-phase rename to avoid swaps.
+            h = hashlib.sha1(wp.name.encode("utf-8")).hexdigest()[:8]
+            tmp = wdir / f".rename_tmp_{wid}_{h}.yml"
+            planned.append((wp, tmp, expected))
+            if expected in dsts:
+                raise ValueError(f"Multiple workorders resolve to the same filename: {expected}")
+            dsts.add(expected)
+
+    if not planned:
+        return
+
+    # Phase 1: src -> tmp
+    for src_p, tmp_p, _ in sorted(planned, key=lambda x: (str(x[0]), str(x[2]))):
+        if tmp_p.exists():
+            tmp_p.unlink()
+        src_p.rename(tmp_p)
+
+    # Phase 2: tmp -> dst
+    for _, tmp_p, dst_p in sorted(planned, key=lambda x: (str(x[2]), str(x[1]))):
+        if dst_p.exists() and dst_p.resolve() != tmp_p.resolve():
+            raise ValueError(f"Unexpected existing destination during rename: {dst_p}")
+        tmp_p.rename(dst_p)
+
+
 def _write_workorders_index(ctx: MaintenanceContext, tenants: List[Dict[str, Any]]) -> None:
     """Write maintenance-state/workorders_index.csv.
 
@@ -1075,6 +1143,7 @@ def run_maintenance(repo_root: Path) -> None:
 
     _write_tenant_relationships(ctx, tenants)
     _write_modules_index(ctx)
+    _normalize_workorder_filenames(ctx, tenants)
     _write_workorders_index(ctx, tenants)
     req_rows = _write_module_requirements_index(ctx, modules)
     _write_secretstore_template(ctx, modules, req_rows)
