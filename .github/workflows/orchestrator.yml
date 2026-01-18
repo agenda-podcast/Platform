@@ -159,47 +159,6 @@ jobs:
             echo "scripts/billing_state_tail.py not found; skipping tail."
           fi
 
-      # Purchased + successfully generated outputs must be uploaded to GitHub Releases (not workflow artifacts).
-      - name: Package + publish purchased artifacts to Releases
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          python scripts/publish_artifacts_release.py \
-            --runtime-profile config/runtime_profile.dev_github.yml \
-            --billing-state-dir "${BILLING_STATE_DIR}" \
-            --runtime-dir "${RUNTIME_DIR}" \
-            --since "${{ steps.start.outputs.since }}" \
-            --repo "${{ github.repository }}" \
-            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-      - name: Detect SECRETSTORE_PASSPHRASE presence
-        id: secretstore
-        shell: bash
-        env:
-          SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}
-        run: |
-          if [ -n "${SECRETSTORE_PASSPHRASE}" ]; then
-            echo "has_passphrase=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_passphrase=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Upload deliverable artifacts to S3 (optional)
-        if: success() && steps.secretstore.outputs.has_passphrase == 'true'
-        env:
-          SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}
-          PLATFORM_ARTIFACTS_S3_PREFIX: platform/dev/deliverables
-        shell: bash
-        run: |
-          python scripts/upload_dist_artifacts_s3.py \
-            --dist-dir dist_artifacts \
-            --prefix "${PLATFORM_ARTIFACTS_S3_PREFIX}" \
-            --skip-if-missing-bucket \
-            --verify
-
-      # Publish billing-state Source of Truth after deliverables publish so the Release reflects the final reconciled ledger (incl. refunds).
       - name: Publish billing-state Source of Truth to GitHub Release
         if: always()
         env:
