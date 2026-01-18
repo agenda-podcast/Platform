@@ -1241,18 +1241,39 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             except Exception:
                 missing_compact = []
             print(f"[preflight][FAILED] work_order_id={work_order_id} reason_code={rc} missing={missing_compact}")
+
+            # Billing is the system of record for run outcomes. For preflight failures,
+            # emit a zero-amount SPEND transaction with a deterministic reason_code.
             meta = {
                 "workorder_path": str(item.get("path") or ""),
                 "reason_code": rc,
                 "missing_secrets": e.missing,
             }
-            workorders_log.append({
-                "work_order_id": work_order_id,
+            tx_id = _new_id("transaction_id", used_tx)
+            ti_id = _new_id("transaction_item_id", used_ti)
+            transactions.append({
+                "transaction_id": tx_id,
                 "tenant_id": tenant_id,
-                "status": "FAILED",
-                "created_at": created_at,
-                "started_at": started_at,
-                "ended_at": ended,
+                "work_order_id": work_order_id,
+                "type": "SPEND",
+                "amount_credits": "0",
+                "created_at": ended,
+                "reason_code": rc,
+                "note": human_note,
+                "metadata_json": json.dumps(meta, separators=(",", ":")),
+            })
+            transaction_items.append({
+                "transaction_item_id": ti_id,
+                "transaction_id": tx_id,
+                "tenant_id": tenant_id,
+                "module_id": "",
+                "work_order_id": work_order_id,
+                "step_id": "",
+                "deliverable_id": "",
+                "feature": "__preflight__",
+                "type": "SPEND",
+                "amount_credits": "0",
+                "created_at": ended,
                 "note": human_note,
                 "metadata_json": json.dumps(meta, separators=(",", ":")),
             })
@@ -1287,17 +1308,44 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
         if available < est_total:
             rc = _reason_code(reason_idx, "GLOBAL", "", "not_enough_credits")
             human_note = f"Insufficient credits: available={available}, required={est_total}"
+            ended = utcnow_iso()
 
-            workorders_log.append({
-                    "work_order_id": work_order_id,
-                    "tenant_id": tenant_id,
-                    "status": "FAILED",
-                    "created_at": created_at,
-                    "started_at": started_at,
-                    "ended_at": utcnow_iso(),
-                    "note": human_note,
-                    "metadata_json": json.dumps({"workorder_path": item["path"], "reason_code": rc, "available": available, "required": est_total}, separators=(",", ":")),
-                })
+            # Billing is the system of record. When the credits gate blocks execution, emit a
+            # zero-amount SPEND transaction so the attempted run is visible in billing-state.
+            meta = {
+                "workorder_path": str(item["path"]),
+                "reason_code": rc,
+                "available": available,
+                "required": est_total,
+            }
+            tx_id = _new_id("transaction_id", used_tx)
+            ti_id = _new_id("transaction_item_id", used_ti)
+            transactions.append({
+                "transaction_id": tx_id,
+                "tenant_id": tenant_id,
+                "work_order_id": work_order_id,
+                "type": "SPEND",
+                "amount_credits": "0",
+                "created_at": ended,
+                "reason_code": rc,
+                "note": human_note,
+                "metadata_json": json.dumps(meta, separators=(",", ":")),
+            })
+            transaction_items.append({
+                "transaction_item_id": ti_id,
+                "transaction_id": tx_id,
+                "tenant_id": tenant_id,
+                "module_id": "",
+                "work_order_id": work_order_id,
+                "step_id": "",
+                "deliverable_id": "",
+                "feature": "__credits_gate__",
+                "type": "SPEND",
+                "amount_credits": "0",
+                "created_at": ended,
+                "note": human_note,
+                "metadata_json": json.dumps(meta, separators=(",", ":")),
+            })
             continue
 
         # spend transaction (debit) with idempotency
@@ -1480,6 +1528,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
         any_failed = False
         completed_steps: List[str] = []
         completed_modules: List[str] = []
+        step_statuses: Dict[str, str] = {}
         step_outputs: Dict[str, Path] = {}
 
         # Ports (tenant-visible vs platform-only) and output exposure rules.
@@ -1768,20 +1817,11 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
 
             cache_hit = bool(result.get("_cache_hit", False))
 
-            module_runs_log.append({
-                "module_run_id": mr_id,
-                "tenant_id": tenant_id,
-                "work_order_id": work_order_id,
-                "module_id": mid,
-                "status": status,
-                "created_at": created_at,
-                "started_at": m_started,
-                "ended_at": utcnow_iso(),
-                "reason_code": reason_code,
-                "report_path": report_path,
-                "output_ref": output_ref,
-                "metadata_json": json.dumps({"plan_type": plan_type, "step_id": sid, "step_name": sname, "outputs_dir": str(out_dir), "cache_key": cache_key, "cache_hit": cache_hit, "requested_deliverables": requested_deliverables, "deliverables_source": deliverables_source, "applied_limited_inputs": applied_limited_inputs, "effective_inputs_hash": effective_inputs_hash}, separators=(",", ":")),
-            })
+            # Keep per-step statuses in memory for the final workorder status reduction.
+            # Billing-state is the system of record for charges/refunds; this avoids duplicating
+            # run logs into additional CSV tables.
+            if sid:
+                step_statuses[sid] = status
 
             # Make outputs discoverable for downstream bindings (even if the step failed).
             if sid:
@@ -2065,18 +2105,10 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
 
         ended_at = utcnow_iso()
 
-        # Canonical status semantics
-        step_statuses = {}
-        for row in module_runs_log:
-            if str(row.get("tenant_id")) != tenant_id or str(row.get("work_order_id")) != work_order_id:
-                continue
-            try:
-                meta = json.loads(str(row.get("metadata_json") or "{}")) if str(row.get("metadata_json") or "").strip() else {}
-            except Exception:
-                meta = {}
-            sid_from_meta = str(meta.get("step_id") or "").strip()
-            if sid_from_meta:
-                step_statuses[sid_from_meta] = str(row.get("status") or "").strip().upper()
+        # Canonical status semantics.
+        # Step statuses are tracked in memory during execution. Billing-state is the system of
+        # record for charges/refunds, so we do not duplicate execution logs into additional CSVs.
+        step_statuses = {k: str(v).strip().upper() for k, v in step_statuses.items()}
 
         purchased_deliverables_by_step = {
             sid: (per_step_requested_deliverables.get(sid) or [])
@@ -2125,28 +2157,9 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
         except Exception:
             pass
 
-        workorders_log.append({
-            "work_order_id": work_order_id,
-            "tenant_id": tenant_id,
-            "status": final_status,
-            "created_at": created_at,
-            "started_at": started_at,
-            "ended_at": ended_at,
-            "note": note,
-            "metadata_json": json.dumps(
-                {
-                    "plan_type": plan_type,
-                    "requested_steps": [p.get("step_id") for p in plan],
-                    "requested_modules": [p.get("module_id") for p in plan],
-                    "completed_steps": completed_steps,
-                    "completed_modules": completed_modules,
-                    "any_failed": any_failed,
-                    "awaiting_publish": awaiting_publish,
-                    "purchased_deliverables_by_step": purchased_deliverables_by_step,
-                },
-                separators=(",", ":"),
-            ),
-        })
+	        # No parallel workorder ledger: billing-state transactions + transaction_items are the
+	        # durable source of truth for actions and outcomes. Operational status is kept in
+	        # runtime run-state only.
 
     # Persist cache_index.csv updates (required for durable cache behavior across runs).
     # This is intentionally scoped to cache_index only: other billing-state tables are
