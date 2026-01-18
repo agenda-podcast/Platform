@@ -154,7 +154,7 @@ jobs:
           if [ -z "$pr_number" ]; then
             echo "[MAINTENANCE][FAIL] Working tree was dirty but create-pull-request did not return a PR number." >&2
             echo "[MAINTENANCE][FAIL] operation=$op branch=$pr_branch head_sha=$pr_head_sha" >&2
-            echo "[MAINTENANCE][FAIL] This usually means either add-paths excluded all changes, or the token was not allowed to open PRs." >&2
+            echo "[MAINTENANCE][FAIL] This usually means the PR API call failed, the token was not allowed to open PRs, or an organization policy blocked PR creation." >&2
             echo "[MAINTENANCE][FAIL] Next step will attempt to resolve PR via gh; if still missing, the job will fail." >&2
           fi
 
@@ -201,6 +201,42 @@ jobs:
             pr_url="$(gh pr list --head "$branch" --state open --json url --jq '.[0].url' || true)"
           fi
 
+          if [ -z "$pr_number" ]; then
+            echo "[MAINTENANCE][WARN] create-pull-request did not return a PR. Attempting to create or reopen PR via gh." >&2
+
+            any_number="$(gh pr list --head "$branch" --state all --json number --jq '.[0].number' || true)"
+            any_state="$(gh pr list --head "$branch" --state all --json state --jq '.[0].state' || true)"
+            any_url="$(gh pr list --head "$branch" --state all --json url --jq '.[0].url' || true)"
+
+            if [ -n "$any_number" ] && [ "${any_state:-}" != "OPEN" ]; then
+              echo "[MAINTENANCE] Found existing PR #$any_number in state=$any_state. Reopening." >&2
+              gh pr reopen "$any_number" || true
+            fi
+
+            pr_number="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number' || true)"
+            pr_url="$(gh pr list --head "$branch" --state open --json url --jq '.[0].url' || true)"
+
+            if [ -z "$pr_number" ]; then
+              echo "[MAINTENANCE] No existing open PR. Creating a new PR via gh." >&2
+              run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+              body_file="$(mktemp)"
+              cat > "$body_file" <<EOF
+Automated maintenance regeneration produced changes.
+
+Source run: ${run_url}
+EOF
+              gh pr create \
+                --base main \
+                --head "$branch" \
+                --title "Maintenance: refresh generated files" \
+                --body-file "$body_file" \
+                --label maintenance-auto
+
+              pr_number="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number' || true)"
+              pr_url="$(gh pr list --head "$branch" --state open --json url --jq '.[0].url' || true)"
+            fi
+          fi
+
           {
             echo "pr_number=$pr_number"
             echo "pr_url=$pr_url"
@@ -210,7 +246,7 @@ jobs:
 
           if [ -z "$pr_number" ]; then
             echo "[MAINTENANCE][FAIL] Working tree was dirty but no PR was created or resolved for branch=$branch operation=$op" >&2
-            echo "[MAINTENANCE][FAIL] Most common cause: add-paths excluded all changed files. Second most common: PR creation blocked by org policy." >&2
+            echo "[MAINTENANCE][FAIL] Most common cause: PR creation blocked by an organization policy or token permissions." >&2
             exit 1
           fi
 
