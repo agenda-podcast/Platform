@@ -91,6 +91,15 @@ jobs:
           python scripts/ci_verify.py --phase pre
 
 
+      - name: Cleanup non-repo runtime logs (do not PR)
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f billing-state-seed/deliverable_artifacts_log.csv
+          rm -f billing-state-seed/outputs_log.csv
+          rm -f billing-state-seed/published_artifacts_log.csv
+
+
       - name: Detect changes (dirty working tree)
         id: changes
         shell: bash
@@ -145,13 +154,17 @@ jobs:
           pr_head_sha="${{ steps.cpr.outputs.pull-request-head-sha }}"
 
           if [ -z "$pr_number" ]; then
-            echo "[MAINTENANCE] No PR created. operation=$op branch=$pr_branch head_sha=$pr_head_sha"
-            exit 0
+            echo "[MAINTENANCE][FAIL] Working tree was dirty but create-pull-request did not return a PR number." >&2
+            echo "[MAINTENANCE][FAIL] operation=$op branch=$pr_branch head_sha=$pr_head_sha" >&2
+            echo "[MAINTENANCE][FAIL] This usually means either add-paths excluded all changes, or the token was not allowed to open PRs." >&2
+            echo "[MAINTENANCE][FAIL] Next step will attempt to resolve PR via gh; if still missing, the job will fail." >&2
           fi
 
-          echo "[MAINTENANCE] PR operation=$op"
-          echo "[MAINTENANCE] Opened/Updated PR #$pr_number: $pr_url"
-          echo "[MAINTENANCE] PR branch=$pr_branch head_sha=$pr_head_sha"
+          if [ -n "$pr_number" ]; then
+            echo "[MAINTENANCE] PR operation=$op"
+            echo "[MAINTENANCE] Opened/Updated PR #$pr_number: $pr_url"
+            echo "[MAINTENANCE] PR branch=$pr_branch head_sha=$pr_head_sha"
+          fi
 
       - name: Resolve PR number (authoritative)
         id: prresolve
@@ -195,10 +208,9 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
           if [ -z "$pr_number" ]; then
-            echo "[MAINTENANCE][WARN] No PR detected for branch=$branch operation=$op"
-            echo "[MAINTENANCE][HINT] Check repo Settings -> Actions -> General -> Workflow permissions -> Read and write permissions"
-            echo "[MAINTENANCE][HINT] Also ensure Actions are allowed to create and approve pull requests (same page)"
-            exit 0
+            echo "[MAINTENANCE][FAIL] Working tree was dirty but no PR was created or resolved for branch=$branch operation=$op" >&2
+            echo "[MAINTENANCE][FAIL] Most common cause: add-paths excluded all changed files. Second most common: PR creation blocked by org policy." >&2
+            exit 1
           fi
 
           echo "[MAINTENANCE] Resolved PR #$pr_number: $pr_url"
