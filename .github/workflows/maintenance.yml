@@ -8,6 +8,7 @@ permissions:
   contents: write
   pull-requests: write
 
+  issues: write
 jobs:
   maintenance:
     runs-on: ubuntu-latest
@@ -58,7 +59,7 @@ jobs:
       - name: "Ensure label exists: maintenance-auto"
         if: steps.detect.outputs.dirty == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.WORKFLOW_PUSH_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -88,7 +89,7 @@ jobs:
       - name: Report PR outcome
         if: steps.detect.outputs.dirty == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.WORKFLOW_PUSH_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
