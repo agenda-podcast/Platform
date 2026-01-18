@@ -2,7 +2,8 @@ from __future__ import annotations
 
 """Maintenance builder entrypoint.
 
-Implementation is loaded from chunk files to keep logic files <= 500 lines.
+Implementation is loaded from role-based parts to keep each logic file at or
+under 500 lines without mechanical chunk naming.
 """
 
 from typing import Any, Dict

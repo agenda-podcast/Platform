@@ -213,5 +213,5 @@ def validate_all_workorders(repo_root: Path) -> None:
         return
 '''
 
-def get_part() -> str:
+def get_chunk() -> str:
     return CHUNK

@@ -1,27 +1,27 @@
 from __future__ import annotations
 
-"""Generated loader. Do not edit by hand.
+"""Maintenance builder loader.
 
-Loads `platform.maintenance.builder` implementation from chunks to keep all
-Python logic files <= 500 lines.
+Loads `platform.maintenance.builder` implementation from role-based parts so
+each logic file stays at or under 500 lines without mechanical chunk naming.
 """
 
 from types import ModuleType
 from typing import Any, Dict
 import sys
 
-from .._builder_chunks.chunk_01 import get_chunk as _chunk_01
-from .._builder_chunks.chunk_02 import get_chunk as _chunk_02
-from .._builder_chunks.chunk_03 import get_chunk as _chunk_03
-from .._builder_chunks.chunk_04 import get_chunk as _chunk_04
+from .._builder_parts.index_generation import get_chunk as _index_generation
+from .._builder_parts.id_and_registry_policy import get_chunk as _id_and_registry_policy
+from .._builder_parts.module_requirements_and_prices import get_chunk as _module_requirements_and_prices
+from .._builder_parts.billing_release_assets import get_chunk as _billing_release_assets
 
 
 def load_namespace() -> Dict[str, Any]:
     code = "".join([
-        _chunk_01(),
-        _chunk_02(),
-        _chunk_03(),
-        _chunk_04(),
+        _index_generation(),
+        _id_and_registry_policy(),
+        _module_requirements_and_prices(),
+        _billing_release_assets(),
     ])
 
     mod_name = "platform.maintenance._builder._impl"

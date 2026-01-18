@@ -383,5 +383,5 @@ def _validate_constraints(rule: RuleRow, value: Any, ctx: str) -> None:
 
 '''
 
-def get_part() -> str:
+def get_chunk() -> str:
     return CHUNK

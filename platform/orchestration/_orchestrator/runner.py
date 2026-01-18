@@ -2,10 +2,10 @@ from __future__ import annotations
 
 """Orchestrator runner.
 
-The orchestrator implementation is stored in generated chunk files so that all
-Python logic files stay at or under 500 lines.
+Implementation is assembled from role-based parts to keep each logic file at or
+under 500 lines while avoiding mechanical "chunk" naming.
 
-This module does not embed secrets. Secret ingestion remains centralized in the
+Secrets are never embedded here. Secret ingestion remains centralized in the
 secretstore loader and workflow environments.
 """
 
@@ -13,23 +13,23 @@ from types import ModuleType
 from typing import Any, Dict
 import sys
 
-from .._orch_chunks.chunk_01 import get_chunk as _chunk_01
-from .._orch_chunks.chunk_02 import get_chunk as _chunk_02
-from .._orch_chunks.chunk_03 import get_chunk as _chunk_03
-from .._orch_chunks.chunk_04 import get_chunk as _chunk_04
-from .._orch_chunks.chunk_05 import get_chunk as _chunk_05
-from .._orch_chunks.chunk_06 import get_chunk as _chunk_06
+from .._orchestrator_parts.foundations import get_chunk as _foundations
+from .._orchestrator_parts.registries_and_pricing import get_chunk as _registries_and_pricing
+from .._orchestrator_parts.run_setup import get_chunk as _run_setup
+from .._orchestrator_parts.billing_gate_and_spend import get_chunk as _billing_gate_and_spend
+from .._orchestrator_parts.step_execution_and_artifacts import get_chunk as _step_execution_and_artifacts
+from .._orchestrator_parts.refunds_and_finalize import get_chunk as _refunds_and_finalize
 
 
 def _load_orchestrator_namespace() -> Dict[str, Any]:
     code = "".join(
         [
-            _chunk_01(),
-            _chunk_02(),
-            _chunk_03(),
-            _chunk_04(),
-            _chunk_05(),
-            _chunk_06(),
+            _foundations(),
+            _registries_and_pricing(),
+            _run_setup(),
+            _billing_gate_and_spend(),
+            _step_execution_and_artifacts(),
+            _refunds_and_finalize(),
         ]
     )
 

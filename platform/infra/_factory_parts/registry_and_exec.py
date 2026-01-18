@@ -349,5 +349,5 @@ def build_infra(
 
 '''
 
-def get_part() -> str:
+def get_chunk() -> str:
     return CHUNK

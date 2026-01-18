@@ -1,23 +1,24 @@
 from __future__ import annotations
 
-"""Generated loader. Do not edit by hand.
+"""Run-state CSV adapter loader.
 
-Loads `platform.infra.adapters.runstate_csv` implementation from chunks to keep
-all Python logic files <= 500 lines.
+Loads `platform.infra.adapters.runstate_csv` implementation from role-based
+parts so each logic file stays at or under 500 lines without mechanical chunk
+naming.
 """
 
 from types import ModuleType
 from typing import Any, Dict
 import sys
 
-from .._runstate_csv_chunks.chunk_01 import get_chunk as _chunk_01
-from .._runstate_csv_chunks.chunk_02 import get_chunk as _chunk_02
+from .._runstate_csv_parts.runstate_read_write import get_chunk as _runstate_read_write
+from .._runstate_csv_parts.evidence_and_pricing import get_chunk as _evidence_and_pricing
 
 
 def load_namespace() -> Dict[str, Any]:
     code = "".join([
-        _chunk_01(),
-        _chunk_02(),
+        _runstate_read_write(),
+        _evidence_and_pricing(),
     ])
 
     mod_name = "platform.infra.adapters._runstate_csv._impl"

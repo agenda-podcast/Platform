@@ -383,5 +383,5 @@ class BillingStateCsvRunStateStore:
 
 '''
 
-def get_part() -> str:
+def get_chunk() -> str:
     return CHUNK

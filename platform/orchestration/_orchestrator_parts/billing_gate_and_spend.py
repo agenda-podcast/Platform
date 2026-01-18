@@ -108,46 +108,146 @@ CHUNK = r'''\
         available = int(str(trow.get("credits_available","0")).strip() or "0")
 
         if available < est_total:
+            # Policy: every attempted action is visible in Billing (Source of Truth).
+            # Even when credits are insufficient, record an attempted SPEND and a compensating REFUND.
+            # Net effect on credits is zero, but the ledger shows the attempted charge and why it failed.
             rc = _reason_code(reason_idx, "GLOBAL", "", "not_enough_credits")
             human_note = f"Insufficient credits: available={available}, required={est_total}"
             ended = utcnow_iso()
 
-            # Billing is the system of record. When the credits gate blocks execution, emit a
-            # zero-amount SPEND transaction so the attempted run is visible in billing-state.
+            # Stable idempotency keys
+            spend_idem = key_workorder_spend(
+                tenant_id=tenant_id,
+                work_order_id=work_order_id,
+                workorder_path=str(item["path"]),
+                plan_type=plan_type,
+            )
+            refund_idem = key_refund(
+                tenant_id=tenant_id,
+                work_order_id=work_order_id,
+                feature="__credits_gate__",
+                deliverable_id="",
+                module_id="",
+                step_id="",
+                reason_code=rc,
+            )
+
             meta = {
                 "workorder_path": str(item["path"]),
                 "reason_code": rc,
                 "available": available,
                 "required": est_total,
+                "estimated_total": est_total,
+                "idempotency_key_spend": spend_idem,
+                "idempotency_key_refund": refund_idem,
             }
-            tx_id = _new_id("transaction_id", used_tx)
-            ti_id = _new_id("transaction_item_id", used_ti)
-            transactions.append({
-                "transaction_id": tx_id,
-                "tenant_id": tenant_id,
-                "work_order_id": work_order_id,
-                "type": "SPEND",
-                "amount_credits": "0",
-                "created_at": ended,
-                "reason_code": rc,
-                "note": human_note,
-                "metadata_json": json.dumps(meta, separators=(",", ":")),
-            })
-            transaction_items.append({
-                "transaction_item_id": ti_id,
-                "transaction_id": tx_id,
-                "tenant_id": tenant_id,
-                "module_id": "",
-                "work_order_id": work_order_id,
-                "step_id": "",
-                "deliverable_id": "",
-                "feature": "__credits_gate__",
-                "type": "SPEND",
-                "amount_credits": "0",
-                "created_at": ended,
-                "note": human_note,
-                "metadata_json": json.dumps(meta, separators=(",", ":")),
-            })
+
+            # Attempted spend (debit) transaction
+            spend_tx_id = ""
+            for tx in transactions:
+                if str(tx.get("tenant_id")) != tenant_id or str(tx.get("work_order_id")) != work_order_id:
+                    continue
+                if str(tx.get("type")) != "SPEND":
+                    continue
+                try:
+                    m = json.loads(str(tx.get("metadata_json") or "{}")) if str(tx.get("metadata_json") or "").strip() else {}
+                except Exception:
+                    m = {}
+                if str(m.get("idempotency_key")) == spend_idem:
+                    spend_tx_id = str(tx.get("transaction_id"))
+                    break
+            if not spend_tx_id:
+                spend_tx_id = _new_id("transaction_id", used_tx)
+                spend_meta = dict(meta)
+                spend_meta["idempotency_key"] = spend_idem
+                transactions.append({
+                    "transaction_id": spend_tx_id,
+                    "tenant_id": tenant_id,
+                    "work_order_id": work_order_id,
+                    "type": "SPEND",
+                    "amount_credits": str(-int(est_total)),
+                    "created_at": ended,
+                    "reason_code": rc,
+                    "note": human_note,
+                    "metadata_json": json.dumps(spend_meta, separators=(",", ":")),
+                })
+                transaction_items.append({
+                    "transaction_item_id": _new_id("transaction_item_id", used_ti),
+                    "transaction_id": spend_tx_id,
+                    "tenant_id": tenant_id,
+                    "module_id": "",
+                    "work_order_id": work_order_id,
+                    "step_id": "",
+                    "deliverable_id": "",
+                    "feature": "__credits_gate__",
+                    "type": "SPEND",
+                    "amount_credits": str(-int(est_total)),
+                    "created_at": ended,
+                    "note": human_note,
+                    "metadata_json": json.dumps(spend_meta, separators=(",", ":")),
+                })
+
+            # Compensating refund (credit) transaction
+            refund_tx_id = ""
+            for tx in transactions:
+                if str(tx.get("tenant_id")) != tenant_id or str(tx.get("work_order_id")) != work_order_id:
+                    continue
+                if str(tx.get("type")) != "REFUND":
+                    continue
+                try:
+                    m = json.loads(str(tx.get("metadata_json") or "{}")) if str(tx.get("metadata_json") or "").strip() else {}
+                except Exception:
+                    m = {}
+                if str(m.get("idempotency_key")) == refund_idem:
+                    refund_tx_id = str(tx.get("transaction_id"))
+                    break
+            if not refund_tx_id:
+                refund_tx_id = _new_id("transaction_id", used_tx)
+                refund_meta = dict(meta)
+                refund_meta["idempotency_key"] = refund_idem
+                transactions.append({
+                    "transaction_id": refund_tx_id,
+                    "tenant_id": tenant_id,
+                    "work_order_id": work_order_id,
+                    "type": "REFUND",
+                    "amount_credits": str(int(est_total)),
+                    "created_at": ended,
+                    "reason_code": rc,
+                    "note": "Refund: credits gate blocked execution",
+                    "metadata_json": json.dumps(refund_meta, separators=(",", ":")),
+                })
+                transaction_items.append({
+                    "transaction_item_id": _new_id("transaction_item_id", used_ti),
+                    "transaction_id": refund_tx_id,
+                    "tenant_id": tenant_id,
+                    "module_id": "",
+                    "work_order_id": work_order_id,
+                    "step_id": "",
+                    "deliverable_id": "",
+                    "feature": "__credits_gate__",
+                    "type": "REFUND",
+                    "amount_credits": str(int(est_total)),
+                    "created_at": ended,
+                    "note": "Refund: credits gate blocked execution",
+                    "metadata_json": json.dumps(refund_meta, separators=(",", ":")),
+                })
+
+            # Update run-state for visibility
+            try:
+                run_state.set_run_status(
+                    tenant_id=ctx.tenant_id,
+                    work_order_id=ctx.work_order_id,
+                    status="FAILED",
+                    metadata={
+                        "reason_code": rc,
+                        "note": human_note,
+                        "available": available,
+                        "required": est_total,
+                        "ended_at": ended,
+                    },
+                )
+            except Exception:
+                pass
             continue
 
         # spend transaction (debit) with idempotency
@@ -402,5 +502,5 @@ CHUNK = r'''\
                                 'limited_inputs': dict(_dd.get('limited_inputs') or {}),
 '''
 
-def get_part() -> str:
+def get_chunk() -> str:
     return CHUNK
