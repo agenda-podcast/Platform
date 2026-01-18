@@ -1,37 +1,26 @@
 from __future__ import annotations
 
-"""Orchestrator runner.
-
-The orchestrator implementation is stored in generated chunk files so that all
-Python logic files stay at or under 500 lines.
-
-This module does not embed secrets. Secret ingestion remains centralized in the
-secretstore loader and workflow environments.
-"""
-
 from types import ModuleType
 from typing import Any, Dict
 import sys
 
-from .._orch_chunks.chunk_01 import get_chunk as _chunk_01
-from .._orch_chunks.chunk_02 import get_chunk as _chunk_02
-from .._orch_chunks.chunk_03 import get_chunk as _chunk_03
-from .._orch_chunks.chunk_04 import get_chunk as _chunk_04
-from .._orch_chunks.chunk_05 import get_chunk as _chunk_05
-from .._orch_chunks.chunk_06 import get_chunk as _chunk_06
+from .._engine_parts.policy_and_secrets import get_part as _part_policy_and_secrets
+from .._engine_parts.workorder_discovery import get_part as _part_workorder_discovery
+from .._engine_parts.bindings_and_runner import get_part as _part_bindings_and_runner
+from .._engine_parts.billing_and_refunds import get_part as _part_billing_and_refunds
+from .._engine_parts.cache_and_release import get_part as _part_cache_and_release
+from .._engine_parts.maintenance_helpers import get_part as _part_maintenance_helpers
 
 
 def _load_orchestrator_namespace() -> Dict[str, Any]:
-    code = "".join(
-        [
-            _chunk_01(),
-            _chunk_02(),
-            _chunk_03(),
-            _chunk_04(),
-            _chunk_05(),
-            _chunk_06(),
-        ]
-    )
+    code = "".join([
+        _part_policy_and_secrets(),
+        _part_workorder_discovery(),
+        _part_bindings_and_runner(),
+        _part_billing_and_refunds(),
+        _part_cache_and_release(),
+        _part_maintenance_helpers(),
+    ])
 
     mod_name = "platform.orchestration._orchestrator._impl"
     mod = ModuleType(mod_name)

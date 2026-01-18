@@ -10,14 +10,14 @@ from types import ModuleType
 from typing import Any, Dict
 import sys
 
-from .._runstate_csv_chunks.chunk_01 import get_chunk as _chunk_01
-from .._runstate_csv_chunks.chunk_02 import get_chunk as _chunk_02
+from .._runstate_csv_parts.runstate_reader import get_part as _part_runstate_reader
+from .._runstate_csv_parts.runstate_writer import get_part as _part_runstate_writer
 
 
 def load_namespace() -> Dict[str, Any]:
     code = "".join([
-        _chunk_01(),
-        _chunk_02(),
+        _part_runstate_reader(),
+        _part_runstate_writer(),
     ])
 
     mod_name = "platform.infra.adapters._runstate_csv._impl"
