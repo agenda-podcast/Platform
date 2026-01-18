@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+try:
+    from repo_bootstrap import ensure_repo_root_on_sys_path
+except ModuleNotFoundError:  # pragma: no cover
+    from scripts.repo_bootstrap import ensure_repo_root_on_sys_path
+
+ensure_repo_root_on_sys_path()
+
 import sys
 from pathlib import Path as _Path
 
