@@ -402,5 +402,5 @@ def test_delivery_transient_error_verified_succeeds_no_refund(tmp_path: Path, mo
     idx.write_text(
 '''
 
-def get_chunk() -> str:
+def get_part() -> str:
     return CHUNK

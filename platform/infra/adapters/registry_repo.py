@@ -9,7 +9,6 @@ import yaml
 from ..contracts import ModuleRegistry
 from ..errors import NotFoundError, ValidationError
 from ..models import MODULE_KIND_VALUES, is_valid_module_kind
-from ...consistency.validator import load_rules_table, validate_workorder
 
 
 class RepoModuleRegistry(ModuleRegistry):
@@ -173,6 +172,4 @@ class RepoModuleRegistry(ModuleRegistry):
             raise NotFoundError(f"Deliverable not found: {module_id}:{deliverable_id}")
         return json.loads(json.dumps(d))
 
-    def validate_workorder(self, repo_root: Path, workorder_path: Path) -> None:
-        rules = load_rules_table(repo_root)
-        validate_workorder(repo_root=repo_root, workorder_path=workorder_path, module_rules_by_id=rules)
+        

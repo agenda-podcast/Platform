@@ -124,5 +124,5 @@ def test_delivery_exception_cannot_verify_no_refund(tmp_path: Path, monkeypatch)
     assert refunds == []
 '''
 
-def get_chunk() -> str:
+def get_part() -> str:
     return CHUNK

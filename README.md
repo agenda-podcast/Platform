@@ -2,6 +2,11 @@
 
 PLATFORM is a modular runner that executes tenant work orders, records outputs, and maintains a release-backed billing state suitable for development and verification workflows.
 
+## Key documentation
+
+- `docs/verification.md` — verify responsibilities, dropdown generation, manual overrides, and cache cleanup model.
+- `docs/engineering_rules.md` — mandatory repository invariants (billing as source of truth, secretstore, role separation, idempotency, refunds, and file size rules).
+
 ## What this repository contains
 
 - **Modules** in `modules/<module_id>/` with explicit contracts in `module.yml` (inputs, outputs, deliverables, and `kind`).

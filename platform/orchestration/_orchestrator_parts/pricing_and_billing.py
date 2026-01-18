@@ -1,5 +1,6 @@
-# Generated. Do not edit by hand.
-CHUNK = r'''\
+"""Orchestrator implementation part (role-based split; kept <= 500 lines)."""
+
+PART = r'''\
     temp: Set[str] = set()
     perm: Set[str] = set()
 
@@ -242,7 +243,6 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
     github_token_present = bool(os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN'))
 
     # Preflight validator (no execution). Enabled workorders must pass before any billing or execution.
-    from platform.consistency.validator import ConsistencyValidationError, load_rules_table, validate_workorder_preflight
 
     module_rules_by_id = load_rules_table(repo_root)
     run_since = utcnow_iso()
@@ -402,5 +402,5 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             tenant_id=tenant_id,
 '''
 
-def get_chunk() -> str:
-    return CHUNK
+def get_part() -> str:
+    return PART

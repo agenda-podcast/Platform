@@ -383,5 +383,5 @@ def _write_module_contract_rules(ctx: MaintenanceContext, modules: List[Dict[str
 
 '''
 
-def get_chunk() -> str:
+def get_part() -> str:
     return CHUNK

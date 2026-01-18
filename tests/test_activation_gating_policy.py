@@ -17,7 +17,6 @@ def _write_workorder(tmp_path: Path, obj: dict) -> Path:
 def test_activation_gating_enabled_artifacts_requires_packaging_and_delivery() -> None:
     ensure_repo_on_path()
 
-    from platform.consistency.validator import ConsistencyValidationError, load_rules_table, validate_workorder
 
     repo_root = Path(__file__).resolve().parents[1]
     rules = load_rules_table(repo_root)
@@ -61,7 +60,6 @@ def test_activation_gating_enabled_artifacts_requires_packaging_and_delivery() -
 def test_activation_gating_wrong_order_delivery_before_packaging() -> None:
     ensure_repo_on_path()
 
-    from platform.consistency.validator import ConsistencyValidationError, load_rules_table, validate_workorder
 
     repo_root = Path(__file__).resolve().parents[1]
     rules = load_rules_table(repo_root)
@@ -89,7 +87,6 @@ def test_activation_gating_wrong_order_delivery_before_packaging() -> None:
 def test_activation_gating_disabled_is_warning_only() -> None:
     ensure_repo_on_path()
 
-    from platform.consistency.validator import load_rules_table, validate_workorder_preflight
 
     repo_root = Path(__file__).resolve().parents[1]
     rules = load_rules_table(repo_root)
@@ -114,7 +111,6 @@ def test_activation_gating_disabled_is_warning_only() -> None:
 def test_activation_gating_packaging_requires_delivery_even_without_artifacts_requested() -> None:
     ensure_repo_on_path()
 
-    from platform.consistency.validator import ConsistencyValidationError, load_rules_table, validate_workorder
 
     repo_root = Path(__file__).resolve().parents[1]
     rules = load_rules_table(repo_root)
@@ -141,7 +137,6 @@ def test_activation_gating_packaging_requires_delivery_even_without_artifacts_re
 def test_activation_gating_packaging_requires_delivery_disabled_is_warning_only() -> None:
     ensure_repo_on_path()
 
-    from platform.consistency.validator import load_rules_table, validate_workorder_preflight
 
     repo_root = Path(__file__).resolve().parents[1]
     rules = load_rules_table(repo_root)

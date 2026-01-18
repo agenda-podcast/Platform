@@ -383,5 +383,5 @@ def _collect_reasons(ctx: MaintenanceContext, modules: List[Dict[str, Any]]) -> 
 
 '''
 
-def get_chunk() -> str:
+def get_part() -> str:
     return CHUNK

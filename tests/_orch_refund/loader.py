@@ -7,14 +7,14 @@ from typing import Any, Dict
 from pathlib import Path
 import sys
 
-from .._orch_refund_chunks.chunk_01 import get_chunk as _chunk_01
-from .._orch_refund_chunks.chunk_02 import get_chunk as _chunk_02
+from .._orch_refund_parts.refund_safety_scenarios import get_part as _refund_safety_scenarios
+from .._orch_refund_parts.refund_safety_assertions import get_part as _refund_safety_assertions
 
 
 def load_namespace() -> Dict[str, Any]:
     code = "".join([
-        _chunk_01(),
-        _chunk_02(),
+        _refund_safety_scenarios(),
+        _refund_safety_assertions(),
     ])
 
     mod_name = "tests._orch_refund._impl"

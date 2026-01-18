@@ -2,10 +2,10 @@ from __future__ import annotations
 
 """Orchestrator runner.
 
-Implementation is assembled from role-based parts to keep each logic file at or
-under 500 lines while avoiding mechanical "chunk" naming.
+The orchestrator implementation is stored in named implementation parts so that all
+Python logic files stay at or under 500 lines.
 
-Secrets are never embedded here. Secret ingestion remains centralized in the
+This module does not embed secrets. Secret ingestion remains centralized in the
 secretstore loader and workflow environments.
 """
 
@@ -13,23 +13,23 @@ from types import ModuleType
 from typing import Any, Dict
 import sys
 
-from .._orchestrator_parts.foundations import get_chunk as _foundations
-from .._orchestrator_parts.registries_and_pricing import get_chunk as _registries_and_pricing
-from .._orchestrator_parts.run_setup import get_chunk as _run_setup
-from .._orchestrator_parts.billing_gate_and_spend import get_chunk as _billing_gate_and_spend
-from .._orchestrator_parts.step_execution_and_artifacts import get_chunk as _step_execution_and_artifacts
-from .._orchestrator_parts.refunds_and_finalize import get_chunk as _refunds_and_finalize
+from .._orchestrator_parts.foundations import get_part as _part_foundations
+from .._orchestrator_parts.queue_resolution import get_part as _part_queue
+from .._orchestrator_parts.pricing_and_billing import get_part as _part_pricing
+from .._orchestrator_parts.step_execution import get_part as _part_steps
+from .._orchestrator_parts.cache_and_completion import get_part as _part_cache
+from .._orchestrator_parts.refunds_and_ledger import get_part as _part_refunds
 
 
 def _load_orchestrator_namespace() -> Dict[str, Any]:
     code = "".join(
         [
-            _foundations(),
-            _registries_and_pricing(),
-            _run_setup(),
-            _billing_gate_and_spend(),
-            _step_execution_and_artifacts(),
-            _refunds_and_finalize(),
+            _part_foundations(),
+            _part_queue(),
+            _part_pricing(),
+            _part_steps(),
+            _part_cache(),
+            _part_refunds(),
         ]
     )
 

@@ -12,8 +12,6 @@ class TestWorkorderKindValidation(unittest.TestCase):
     def test_enabled_workorder_missing_step_kind_blocks(self) -> None:
         ensure_repo_on_path()
 
-        from platform.consistency.validator import load_rules_table, validate_workorder_preflight
-        from platform.consistency.validator import ConsistencyValidationError
 
         repo_root = Path(__file__).resolve().parents[1]
         rules = load_rules_table(repo_root)
@@ -44,7 +42,6 @@ steps:
     def test_disabled_workorder_missing_kind_is_warning(self) -> None:
         ensure_repo_on_path()
 
-        from platform.consistency.validator import load_rules_table, validate_workorder_preflight
 
         repo_root = Path(__file__).resolve().parents[1]
         rules = load_rules_table(repo_root)

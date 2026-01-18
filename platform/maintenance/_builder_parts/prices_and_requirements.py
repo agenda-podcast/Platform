@@ -383,5 +383,5 @@ def run_maintenance(repo_root: Path) -> None:
 
 '''
 
-def get_chunk() -> str:
+def get_part() -> str:
     return CHUNK

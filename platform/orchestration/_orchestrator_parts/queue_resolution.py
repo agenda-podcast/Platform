@@ -1,5 +1,6 @@
-# Generated. Do not edit by hand.
-CHUNK = r'''\
+"""Orchestrator implementation part (role-based split; kept <= 500 lines)."""
+
+PART = r'''\
             out.append({"tenant_id": tenant_id, "work_order_id": wid, "workorder": w, "path": str(wpath)})
     return out
 
@@ -402,5 +403,5 @@ def _toposort_nodes(nodes: List[str], edges: Dict[str, Set[str]]) -> List[str]:
     ordered: List[str] = []
 '''
 
-def get_chunk() -> str:
-    return CHUNK
+def get_part() -> str:
+    return PART

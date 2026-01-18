@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """CSV-backed run-state store.
 
-Implementation is loaded from chunk files to keep logic files <= 500 lines.
+Implementation is loaded from role-based part files to keep logic files <= 500 lines.
 """
 
 from typing import Any, Dict

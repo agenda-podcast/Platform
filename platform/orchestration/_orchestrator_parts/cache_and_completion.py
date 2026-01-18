@@ -1,5 +1,6 @@
-# Generated. Do not edit by hand.
-CHUNK = r'''\
+"""Orchestrator implementation part (role-based split; kept <= 500 lines)."""
+
+PART = r'''\
                                 'output_paths': list(_dd.get('output_paths') or []),
                             }
                         deliverables_cache[mid] = contract
@@ -402,5 +403,5 @@ CHUNK = r'''\
                             "tenant_id": tenant_id,
 '''
 
-def get_chunk() -> str:
-    return CHUNK
+def get_part() -> str:
+    return PART

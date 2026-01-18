@@ -24,9 +24,26 @@ def key_deliverable_charge(*, tenant_id: str, work_order_id: str, step_id: str, 
     return "ti_spend_deliv_" + _hash([tenant_id, work_order_id, step_id, module_id, deliverable_id])
 
 
-def key_refund(*, tenant_id: str, work_order_id: str, step_id: str, module_id: str, deliverable_id: str, reason_key: str) -> str:
-    return "ti_refund_" + _hash([tenant_id, work_order_id, step_id, module_id, deliverable_id, reason_key])
+def key_refund(
+    *,
+    tenant_id: str,
+    work_order_id: str,
+    step_id: str,
+    module_id: str,
+    reason_key: str,
+    deliverable_id: str | None = None,
+    feature: str | None = None,
+) -> str:
+    """Idempotency key for refund transaction items.
 
+    Backward compatibility: some call sites use `feature=` instead of `deliverable_id=`.
+    The platform schema uses `deliverable_id` as the canonical dimension; `feature` is treated
+    as an alias when provided.
+    """
+    did = (deliverable_id or feature or '').strip()
+    if not did:
+        did = '__run__'
+    return 'ti_refund_' + _hash([tenant_id, work_order_id, step_id, module_id, did, reason_key])
 
 def key_delivery_evidence(*, tenant_id: str, work_order_id: str, step_id: str, module_id: str) -> str:
     """Idempotency key for a delivery evidence transaction item.

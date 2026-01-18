@@ -1,5 +1,6 @@
-# Generated. Do not edit by hand.
-CHUNK = r'''\
+"""Orchestrator implementation part (role-based split; kept <= 500 lines)."""
+
+PART = r'''\
                             "work_order_id": work_order_id,
                             "type": "REFUND",
                             "amount_credits": str(refund_amt),
@@ -175,5 +176,5 @@ CHUNK = r'''\
     # LedgerWriter and RunStateStore are the only write paths.
 '''
 
-def get_chunk() -> str:
-    return CHUNK
+def get_part() -> str:
+    return PART

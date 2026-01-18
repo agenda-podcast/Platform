@@ -1,5 +1,6 @@
-# Generated. Do not edit by hand.
-CHUNK = r'''\
+"""Orchestrator implementation part (role-based split; kept <= 500 lines)."""
+
+PART = r'''\
 from __future__ import annotations
 
 import json
@@ -402,5 +403,5 @@ def _discover_workorders(repo_root: Path) -> List[Dict[str, Any]]:
             validate_id("work_order_id", wid, "work_order_id")
 '''
 
-def get_chunk() -> str:
-    return CHUNK
+def get_part() -> str:
+    return PART

@@ -52,8 +52,6 @@ class TestPackagingBindingSchema(unittest.TestCase):
     def test_package_std_bound_outputs_requires_output_id(self) -> None:
         ensure_repo_on_path()
 
-        from platform.consistency.validator import ConsistencyValidationError
-        from platform.consistency.validator import load_rules_table, validate_workorder_preflight
 
         repo_root = Path(__file__).resolve().parents[1]
         rules = load_rules_table(repo_root)
@@ -79,8 +77,6 @@ class TestPackagingBindingSchema(unittest.TestCase):
     def test_package_std_bound_outputs_missing_output_id_fails(self) -> None:
         ensure_repo_on_path()
 
-        from platform.consistency.validator import ConsistencyValidationError
-        from platform.consistency.validator import load_rules_table, validate_workorder_preflight
 
         repo_root = Path(__file__).resolve().parents[1]
         rules = load_rules_table(repo_root)
@@ -105,7 +101,6 @@ class TestPackagingBindingSchema(unittest.TestCase):
     def test_package_std_bound_outputs_output_id_ok(self) -> None:
         ensure_repo_on_path()
 
-        from platform.consistency.validator import load_rules_table, validate_workorder_preflight
 
         repo_root = Path(__file__).resolve().parents[1]
         rules = load_rules_table(repo_root)

@@ -1,25 +1,24 @@
 from __future__ import annotations
 
-"""Validator loader.
+"""Role loader for Consistency.
 
-Loads `platform.consistency.validator` implementation from role-based parts so
-each logic file stays at or under 500 lines without mechanical chunk naming.
+Consistency is responsible for static contract rule parsing only.
+Workorder validation lives under platform.orchestration.
+
+This loader composes a small implementation namespace from part files to
+keep all Python logic files <= 500 lines.
 """
 
 from types import ModuleType
 from typing import Any, Dict
 import sys
 
-from .._validator_parts.rules_table import get_chunk as _rules_table
-from .._validator_parts.workorder_preflight import get_chunk as _workorder_preflight
-from .._validator_parts.integrity_checks import get_chunk as _integrity_checks
+from .._validator_parts.rules_table import get_part as _rules_table
 
 
 def load_namespace() -> Dict[str, Any]:
     code = "".join([
         _rules_table(),
-        _workorder_preflight(),
-        _integrity_checks(),
     ])
 
     mod_name = "platform.consistency._validator._impl"

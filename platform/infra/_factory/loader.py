@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-"""Infra factory loader.
+"""Generated loader. Do not edit by hand.
 
-Loads `platform.infra.factory` implementation from role-based parts so each
-logic file stays at or under 500 lines without mechanical chunk naming.
+Loads `platform.infra.factory` implementation from parts to keep all
+Python logic files <= 500 lines.
 """
 
 from types import ModuleType
 from typing import Any, Dict
 import sys
 
-from .._factory_parts.bundle_and_models import get_chunk as _bundle_and_models
-from .._factory_parts.registry_and_exec import get_chunk as _registry_and_exec
+from .._factory_parts.bundle_and_models import get_part as _bundle_and_models
+from .._factory_parts.registry_and_exec import get_part as _registry_and_exec
 
 
 def load_namespace() -> Dict[str, Any]:
