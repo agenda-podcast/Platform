@@ -111,29 +111,29 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-from pathlib import Path
-import os
-import sys
-
-repo_root = Path('.').resolve()
-if str(repo_root) not in sys.path:
-    sys.path.insert(0, str(repo_root))
-
-from platform.workorders.resolver import resolve_workorder_by_id, write_single_workorder_index
-
-work_order_id = os.environ.get('WORK_ORDER_ID', '').strip()
-if not work_order_id:
-    raise SystemExit('WORK_ORDER_ID is required')
-
-resolved = resolve_workorder_by_id(repo_root, work_order_id)
-runtime_dir = (repo_root / os.environ.get('RUNTIME_DIR', 'runtime') / 'orchestrator' / 'single' / resolved.work_order_id).resolve()
-runtime_dir.mkdir(parents=True, exist_ok=True)
-
-single_index = runtime_dir / 'workorders_index.single.csv'
-write_single_workorder_index(repo_root, resolved, single_index)
-
-print(f"[orchestrator] wrote single workorders index: {single_index}")
-PY
+          from pathlib import Path
+          import os
+          import sys
+          
+          repo_root = Path('.').resolve()
+          if str(repo_root) not in sys.path:
+              sys.path.insert(0, str(repo_root))
+          
+          from platform.workorders.resolver import resolve_workorder_by_id, write_single_workorder_index
+          
+          work_order_id = os.environ.get('WORK_ORDER_ID', '').strip()
+          if not work_order_id:
+              raise SystemExit('WORK_ORDER_ID is required')
+          
+          resolved = resolve_workorder_by_id(repo_root, work_order_id)
+          runtime_dir = (repo_root / os.environ.get('RUNTIME_DIR', 'runtime') / 'orchestrator' / 'single' / resolved.work_order_id).resolve()
+          runtime_dir.mkdir(parents=True, exist_ok=True)
+          
+          single_index = runtime_dir / 'workorders_index.single.csv'
+          write_single_workorder_index(repo_root, resolved, single_index)
+          
+          print(f"[orchestrator] wrote single workorders index: {single_index}")
+          PY
           echo "PLATFORM_WORKORDERS_INDEX_PATH=${RUNTIME_DIR}/orchestrator/single/${{ steps.wo.outputs.work_order_id }}/workorders_index.single.csv" >> "$GITHUB_ENV"
         env:
           WORK_ORDER_ID: ${{ steps.wo.outputs.work_order_id }}
