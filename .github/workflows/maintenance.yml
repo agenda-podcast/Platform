@@ -73,6 +73,7 @@ jobs:
 
       - name: Create PR (never push to main)
         if: steps.detect.outputs.dirty == 'true'
+        continue-on-error: true
         id: cpr
         uses: peter-evans/create-pull-request@v6
         with:
