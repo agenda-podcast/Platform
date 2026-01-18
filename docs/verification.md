@@ -128,20 +128,28 @@ python scripts/verify_module.py --module-id deliver_email
 
 ---
 
-## Verify Workorders
+## Run a single workorder via Orchestrator
 
 ### Responsibility
-Executes a real, end-to-end run of a **platform tenant** workorder (`tenant_id=000000`).
+Runs the canonical **Orchestrator** workflow against either:
+- the normal full queue, or
+- one selected platform-tenant workorder (`tenant_id=000000`).
 
-It validates:
-- deterministic workorder path resolution (global `work_order_id`),
-- orchestrator execution (not dry-run),
-- billing + publishing + delivery execute "as is" (per current platform behavior),
-- failures return non-zero.
+This is the platform's **workorder verification** path: it uses the same orchestrator entrypoint and the same billing, publishing, and delivery behavior as the full run.
+
+### Logging and evidence
+Billing is the source of truth. The system does not maintain parallel execution logs for verification.
+
+Operationally, all billable actions are reflected in billing-state assets, including:
+- `transactions.csv`
+- `transaction_items.csv`
+- other existing billing-state assets used by the platform
 
 ### Workflow
-- Workflow file: `.github/workflows/verify_workorders.yml`
-- Runner entrypoint: `python scripts/verify_workorder.py --work-order-id <work_order_id>`
+- Workflow file: `.github/workflows/orchestrator.yml`
+- Inputs:
+  - `work_order_choice` (dropdown)
+  - `work_order_override` (manual override when choice is `__MANUAL__`)
 
 ### Dropdown selection
 The dropdown is restricted to enabled platform-tenant workorders.
@@ -161,24 +169,14 @@ The workflow contains a single delimited block:
 
 ### Manual override behavior
 Rules:
-- If `work_order_override` (workflow_dispatch) or `work_order_id_override` (workflow_call) is provided, it takes precedence.
+- If `work_order_override` is provided, it takes precedence.
 - If the dropdown choice is `__MANUAL__`, an override value is required.
 
-Examples:
-
-1) Use dropdown (no override)
-- choose `PlatEm01` in the UI
-
-2) Manual override
-- set `work_order_choice=__MANUAL__`
-- set `work_order_override=PlatEm01`
-
 ### Local equivalent
-
-```bash
-set -euo pipefail
-python scripts/verify_workorder.py --work-order-id PlatEm01
-```
+If you need to reproduce single-workorder mode locally, use the same mechanism the orchestrator supports in CI:
+- create a single-row `workorders_index.csv` for the selected workorder
+- set `PLATFORM_WORKORDERS_INDEX_PATH` to that file
+- run `python -m platform.cli orchestrator` normally
 
 ---
 
@@ -196,7 +194,7 @@ Generator:
 Outputs (only):
 - Rewrites the delimited blocks in:
   - `.github/workflows/verify_modules.yml`
-  - `.github/workflows/verify_workorders.yml`
+  - `.github/workflows/orchestrator.yml`
 
 Operational rule:
 - Run **Maintenance** first (to regenerate the indexes).

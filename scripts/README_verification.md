@@ -17,7 +17,7 @@ Authoritative documentation:
 
 - `verify_workorder.py`
   - Scope: execute one platform-tenant workorder end-to-end (`tenant_id=000000`).
-  - Used by: `.github/workflows/verify_workorders.yml`.
+  - Optional helper for local single-workorder runs; the canonical CI path is `.github/workflows/orchestrator.yml`.
 
 - `maintenance_regen_verify_dropdowns.py`
   - Scope: regenerate workflow dropdown lists from Maintenance-generated indexes.
@@ -25,7 +25,7 @@ Authoritative documentation:
     - `maintenance-state/modules_index.csv`
     - `maintenance-state/workorders_index.csv`
   - Outputs (only):
-    - rewrites delimited blocks in `.github/workflows/verify_modules.yml` and `.github/workflows/verify_workorders.yml`.
+    - rewrites delimited blocks in `.github/workflows/verify_modules.yml` and `.github/workflows/orchestrator.yml`.
 
 ## Local usage
 
