@@ -12,6 +12,9 @@ jobs:
   maintenance:
     if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
+    outputs:
+      pr_number: ${{ steps.cpr.outputs.pull-request-number }}
+      pr_url: ${{ steps.cpr.outputs.pull-request-url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -129,6 +132,15 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/ci_verify.py --phase post --billing-state-dir .billing-state
+
+  maintenance_commit:
+    name: Maintenance Commit (called)
+    needs: maintenance
+    if: ${{ needs.maintenance.outputs.pr_number != '' }}
+    uses: ./.github/workflows/maintenance_commit.yml
+    secrets: inherit
+    with:
+      pr_number: ${{ needs.maintenance.outputs.pr_number }}
 
   verify_platform:
     name: Verify Platform (called)
