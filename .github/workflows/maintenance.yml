@@ -111,14 +111,33 @@ jobs:
 
           pr_url="$(gh pr view "${pr_number}" --json url -q .url)"
           echo "[MAINTENANCE][OK] PR #${pr_number}: ${pr_url}"
-      - name: Enable auto-merge for maintenance PR
-        if: ${{ steps.cpr.outputs.pull-request-number != '' }}
+      - name: Merge maintenance PR to main (auto)
+        if: steps.detect.outputs.dirty == 'true'
         env:
           GH_TOKEN: ${{ secrets.WORKFLOW_PUSH_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          PR_NUMBER="${{ steps.cpr.outputs.pull-request-number }}"
           REPO="${{ github.repository }}"
-          echo "[MAINTENANCE] Enabling auto-merge for PR #${PR_NUMBER}"
+          HEAD_BRANCH="maintenance/regen-${{ github.run_id }}"
+          PR_NUMBER="${{ steps.cpr.outputs.pull-request-number }}"
+          if [ -z "${PR_NUMBER}" ]; then
+            echo "[MAINTENANCE][WARN] create-pull-request did not return a PR number. Resolving via gh."
+            PR_NUMBER="$(gh pr list --repo "${REPO}" --state open --base main --head "${HEAD_BRANCH}" --json number -q '.[0].number' || true)"
+          fi
+          if [ -z "${PR_NUMBER}" ]; then
+            echo "[MAINTENANCE][FAIL] Could not resolve PR number for head=${HEAD_BRANCH}."
+            exit 1
+          fi
+          echo "[MAINTENANCE] Attempting to enable auto-merge for PR #${PR_NUMBER}"
+          set +e
           gh pr merge "${PR_NUMBER}" --repo "${REPO}" --auto --merge --delete-branch
+          rc=$?
+          set -e
+          if [ $rc -eq 0 ]; then
+            echo "[MAINTENANCE][OK] Auto-merge enabled for PR #${PR_NUMBER}"
+            exit 0
+          fi
+          echo "[MAINTENANCE][WARN] Auto-merge enable failed (rc=${rc}). Trying immediate merge."
+          echo "[MAINTENANCE][WARN] If this fails, enable Auto-merge in repo settings or adjust branch protection to allow merges by PAT."
+          gh pr merge "${PR_NUMBER}" --repo "${REPO}" --merge --delete-branch
