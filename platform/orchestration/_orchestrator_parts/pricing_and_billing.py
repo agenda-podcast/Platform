@@ -242,9 +242,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
     secretstore_passphrase_present = bool(str(os.environ.get('SECRETSTORE_PASSPHRASE', '') or '').strip())
     github_token_present = bool(os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN'))
 
-    # Preflight validator (no execution). Enabled workorders must pass before any billing or execution.
-
-    module_rules_by_id = load_rules_table(repo_root)
+    # No standalone workorder validation. Orchestrator executes workorders "as is".
     run_since = utcnow_iso()
     from platform.config.load_platform_config import load_platform_config
     platform_cfg = load_platform_config(repo_root)
@@ -360,12 +358,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
 
         tenant_id = canon_tenant_id(item["tenant_id"])
         work_order_id = canon_work_order_id(item["work_order_id"])
-        # Preflight validation hook: enabled workorders must be valid; drafts (disabled) are allowed to exist.
-        workorder_path = repo_root / str(item.get("path") or "")
-        try:
-            validate_workorder_preflight(repo_root, workorder_path, module_rules_by_id)
-        except ConsistencyValidationError as e:
-            raise RuntimeError(f"Workorder preflight failed for {workorder_path}: {e}") from e
+        # No standalone workorder validation. Any errors surface during execution and are billed/refunded.
 
         created_at = str((w.get("metadata") or {}).get("created_at") or utcnow_iso())
         started_at = utcnow_iso()
