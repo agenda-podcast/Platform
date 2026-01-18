@@ -107,22 +107,14 @@ jobs:
             exit 0
           fi
 
-          need_workflow_token=0
-          if git diff --cached --name-only | grep -q '^\.github/workflows/'; then
-            need_workflow_token=1
-          fi
-
           git commit -m "chore(maintenance): refresh maintenance-state and secretstore template [skip ci]"
 
-          token="${GITHUB_TOKEN}"
-          if [ "${need_workflow_token}" -eq 1 ]; then
-            token="${WORKFLOW_PUSH_TOKEN}"
-          fi
-
+          # Always push using WORKFLOW_PUSH_TOKEN (PAT) so workflow file updates are allowed.
+          # This will hard-fail if the secret is missing or lacks permissions.
           git config --global --unset-all http.https://github.com/.extraheader || true
           git config --local --unset-all http.https://github.com/.extraheader || true
 
-          git remote set-url origin "https://x-access-token:${token}@github.com/${GITHUB_REPOSITORY}.git"
+          git remote set-url origin "https://x-access-token:${WORKFLOW_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Ensure maintenance-state is committed
