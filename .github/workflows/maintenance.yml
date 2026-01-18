@@ -75,8 +75,7 @@ jobs:
           set -euo pipefail
           python scripts/ci_verify.py --phase pre
 
-      - name: Auto-commit maintenance-state updates (push-triggered)
-        if: ${{ github.event_name == 'push' }}
+      - name: Auto-commit maintenance-state updates
         env:
           # Optional PAT / fine-grained token that is allowed to update workflow files.
           # Required only when this commit touches .github/workflows/*.
@@ -115,7 +114,9 @@ jobs:
             esac
           done < <(git diff --cached --name-only)
 
-          git commit -m "chore(maintenance): refresh maintenance-state and secretstore template"
+          # Use a skip marker to avoid unnecessary downstream workflow churn.
+          # Maintenance itself is protected by `github.actor != github-actions[bot]`.
+          git commit -m "chore(maintenance): refresh maintenance-state and secretstore template [skip ci]"
 
           if [ "$NEED_WORKFLOW_TOKEN" -eq 1 ]; then
             if [ -z "${WORKFLOW_PUSH_TOKEN:-}" ]; then
