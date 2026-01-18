@@ -70,7 +70,7 @@ jobs:
       - name: Run Maintenance
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           BILLING_TAG: billing-state-v1
           BILLING_TEMPLATE_DIR: releases/billing-state-v1
           BILLING_STATE_DIR: .billing-state
@@ -94,7 +94,7 @@ jobs:
         id: cpr
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ github.token }}
           commit-message: "chore(maintenance): refresh generated files [skip ci]"
           committer: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
           author: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
@@ -117,15 +117,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          op="${{ steps.cpr.outputs.pull-request-operation }}"
           pr_number="${{ steps.cpr.outputs.pull-request-number }}"
           pr_url="${{ steps.cpr.outputs.pull-request-url }}"
+          pr_branch="${{ steps.cpr.outputs.pull-request-branch }}"
+          pr_head_sha="${{ steps.cpr.outputs.pull-request-head-sha }}"
 
           if [ -z "$pr_number" ]; then
-            echo "[MAINTENANCE] No changes detected. No PR created."
+            echo "[MAINTENANCE] No PR created. operation=$op branch=$pr_branch head_sha=$pr_head_sha"
             exit 0
           fi
 
-          echo "[MAINTENANCE] Opened PR #$pr_number: $pr_url"
+          echo "[MAINTENANCE] PR operation=$op"
+          echo "[MAINTENANCE] Opened/Updated PR #$pr_number: $pr_url"
+          echo "[MAINTENANCE] PR branch=$pr_branch head_sha=$pr_head_sha"
 
       - name: Verify local billing-state bootstrap (headers + ID format)
         shell: bash
