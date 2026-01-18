@@ -86,6 +86,20 @@ jobs:
             maintenance-auto
           delete-branch: false
 
+      - name: Debug PR resolution
+        if: steps.detect.outputs.dirty == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.WORKFLOW_PUSH_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "[MAINTENANCE][DEBUG] cpr.operation=${{ steps.cpr.outputs.pull-request-operation }}"
+          echo "[MAINTENANCE][DEBUG] cpr.number=${{ steps.cpr.outputs.pull-request-number }}"
+          echo "[MAINTENANCE][DEBUG] cpr.url=${{ steps.cpr.outputs.pull-request-url }}"
+          REPO="${{ github.repository }}"
+          HEAD_BRANCH="maintenance/regen-${{ github.run_id }}"
+          echo "[MAINTENANCE][DEBUG] gh pr list for head=${HEAD_BRANCH}"
+          gh pr list --repo "${REPO}" --state open --base main --head "${HEAD_BRANCH}" --json number,url,headRefName,baseRefName -q '.[] | "#\(.number) \(.url) head=\(.headRefName) base=\(.baseRefName)"'
       - name: Report PR outcome
         if: steps.detect.outputs.dirty == 'true'
         env:
@@ -102,7 +116,7 @@ jobs:
 
           if [ -z "${pr_number}" ]; then
             echo "[MAINTENANCE][WARN] create-pull-request did not return a PR number. Resolving via gh." 
-            pr_number="$(gh pr list --state open --base main --head "${head_branch}" --json number -q '.[0].number' || true)"
+            pr_number="$(gh pr list --repo "${{ github.repository }}" --state open --base main --head "${head_branch}" --json number -q '.[0].number' || true)"
           fi
 
           if [ -z "${pr_number}" ]; then
@@ -110,7 +124,7 @@ jobs:
             exit 1
           fi
 
-          pr_url="$(gh pr view "${pr_number}" --json url -q .url)"
+          pr_url="$(gh pr view "${pr_number}" --repo "${{ github.repository }}" --json url -q .url)"
           echo "[MAINTENANCE][OK] PR #${pr_number}: ${pr_url}"
       - name: Merge maintenance PR to main (auto)
         if: steps.detect.outputs.dirty == 'true'
