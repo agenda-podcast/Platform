@@ -21,7 +21,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash scripts/maintenance_billing_bootstrap.sh
+          python -m platform.maintenance.main
 
       - name: Regenerate maintenance-state derived indexes
         shell: bash
