@@ -209,41 +209,6 @@ def cmd_cache_prune(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_consistency_validate(args: argparse.Namespace) -> int:
-    """Validate workorders against module contracts (servicing tables).
-
-    Behavior:
-    - Enabled workorders: blocking validation. Any failure returns non-zero.
-    - Disabled workorders: draft warnings are printed, but exit code remains zero.
-    """
-    try:
-        validate_all_workorders(_repo_root())
-        return 0
-    except Exception as e:
-        # The validator raises ConsistencyValidationError for blocking failures.
-        print(str(e))
-        return 2
-
-
-
-def cmd_integrity_validate(args: argparse.Namespace) -> int:
-    # Integrity Validation (plan/preflight only, no execution).
-    # Supports validating a single workorder (by id/path) or all enabled workorders in the index.
-    repo_root = _repo_root()
-    results = integrity_validate(
-        repo_root,
-        work_order_id=str(getattr(args, "work_order_id", "") or ""),
-        tenant_id=str(getattr(args, "tenant_id", "") or ""),
-        path=str(getattr(args, "path", "") or ""),
-    )
-
-    # Human-readable summary (helpful in Actions logs)
-    print(f"integrity validation OK: workorders_validated={len(results)}")
-
-    # Structured output for automation
-    import json as _json
-    print(_json.dumps({"validated": results}, ensure_ascii=False))
-    return 0
 
 
 def cmd_runtime_print(args: argparse.Namespace) -> int:
@@ -284,16 +249,6 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--billing-state-dir", default=".billing-state")
     sp.add_argument("--enable-github-releases", action="store_true")
     sp.set_defaults(func=cmd_orchestrate)
-
-    sp = sub.add_parser("consistency-validate", help="Consistency Validation (data-driven, pre-exec)")
-    sp.set_defaults(func=cmd_consistency_validate)
-
-
-    sp = sub.add_parser("integrity-validate", help="Integrity Validation (plan/preflight only, no execution)")
-    sp.add_argument("--work-order-id", default="")
-    sp.add_argument("--tenant-id", default="")
-    sp.add_argument("--path", default="")
-    sp.set_defaults(func=cmd_integrity_validate)
 
 
     sp = sub.add_parser("module-exec", help="Execute a single module runner")

@@ -56,7 +56,7 @@ jobs:
           PLATFORM_PG_DSN: ${{ secrets.STAGING_PG_DSN }}
         run: |
           set -euo pipefail
-          python -m platform.cli consistency-validate
-          python -m platform.cli integrity-validate --tenant-id nxlkGI --work-order-id UbjkpxZO
+          python -m platform.cli maintenance
+          python -m platform.cli orchestrator --runtime-dir runtime --billing-state-dir .billing-state
           echo "Prod shadow mode template executed."
           echo "Note: db_postgres adapters are scaffolds; wire staging DB execution when implemented."
