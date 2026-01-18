@@ -1,12 +1,9 @@
 name: Maintenance Commit
 
 on:
-  workflow_call:
-    inputs:
-      pr_number:
-        description: 'Pull request number to merge (must be labeled maintenance-auto)'
-        required: true
-        type: string
+  workflow_run:
+    workflows: ["Maintenance"]
+    types: [completed]
 
 permissions:
   contents: write
@@ -14,33 +11,48 @@ permissions:
 
 jobs:
   merge:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Merge maintenance PR (privileged)
+      - name: Select maintenance-auto PR
+        id: select
         env:
           GH_TOKEN: ${{ secrets.WORKFLOW_PUSH_TOKEN }}
-          PR_NUMBER: ${{ inputs.pr_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "[MAINTENANCE_COMMIT] Searching for open PRs labeled maintenance-auto targeting main"
+          pr_number="$(gh pr list --state open --base main --label maintenance-auto --json number,updatedAt,headRefName --jq 'sort_by(.updatedAt) | reverse | map(select(.headRefName | startswith("maintenance/regen-"))) | .[0].number' || true)"
+          if [ -z "${pr_number}" ] || [ "${pr_number}" = "null" ]; then
+            echo "[MAINTENANCE_COMMIT] No matching PR found. Exiting cleanly."
+            echo "pr_number=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "[MAINTENANCE_COMMIT] Selected PR #${pr_number}"
+          echo "pr_number=${pr_number}" >> "$GITHUB_OUTPUT"
+
+      - name: Merge maintenance PR (privileged)
+        if: steps.select.outputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ secrets.WORKFLOW_PUSH_TOKEN }}
+          PR_NUMBER: ${{ steps.select.outputs.pr_number }}
         shell: bash
         run: |
           set -euo pipefail
 
-          # Ensure the PR is still open and correctly labeled.
-          labels=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name')
-          echo "$labels" | grep -qx 'maintenance-auto'
-
-          state=$(gh pr view "$PR_NUMBER" --json state --jq .state)
+          state="$(gh pr view "$PR_NUMBER" --json state --jq .state)"
           if [ "$state" != "OPEN" ]; then
             echo "[MAINTENANCE_COMMIT] PR #$PR_NUMBER is not open (state=$state)."
             exit 0
           fi
 
-          base=$(gh pr view "$PR_NUMBER" --json baseRefName --jq .baseRefName)
+          base="$(gh pr view "$PR_NUMBER" --json baseRefName --jq .baseRefName)"
           if [ "$base" != "main" ]; then
             echo "[MAINTENANCE_COMMIT] PR #$PR_NUMBER base is $base, expected main."
             exit 0
           fi
 
-          merge_state=$(gh pr view "$PR_NUMBER" --json mergeStateStatus --jq .mergeStateStatus)
+          merge_state="$(gh pr view "$PR_NUMBER" --json mergeStateStatus --jq .mergeStateStatus)"
           if [ "$merge_state" != "CLEAN" ]; then
             echo "[MAINTENANCE_COMMIT] PR #$PR_NUMBER mergeStateStatus=$merge_state. Not merging."
             exit 0
