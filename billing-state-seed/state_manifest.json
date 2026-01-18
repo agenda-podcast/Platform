@@ -1,6 +1,4 @@
 {
-  "billing_state_version": "v1",
-  "updated_at": "2026-01-01T02:38:49Z",
   "assets": [
     {
       "name": "tenants_credits.csv",
@@ -30,5 +28,8 @@
       "name": "module_runs_log.csv",
       "sha256": "7f3d4c24d10da12011dfe35054a03b8a3e35d143bbae75d9c9b404fe8afd48dc"
     }
-  ]
+  ],
+  "billing_state_version": "v1",
+  "files": [],
+  "updated_at": "2026-01-01T02:38:49Z"
 }

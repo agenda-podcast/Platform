@@ -1,6 +1,4 @@
 {
-  "billing_state_version": "v1",
-  "updated_at": "2026-01-07T23:13:42Z",
   "assets": [
     {
       "name": "tenants_credits.csv",
@@ -38,5 +36,8 @@
       "name": "github_assets_map.csv",
       "sha256": "fe6fa58f17e4775424b338418e60734681dd1ea626a97d1cd7630dfea97147cd"
     }
-  ]
+  ],
+  "billing_state_version": "v1",
+  "files": [],
+  "updated_at": "2026-01-07T23:13:42Z"
 }

@@ -1068,9 +1068,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
             "transaction_items.csv",
             "promotion_redemptions.csv",
             "cache_index.csv",
-            "workorders_log.csv",
-            "module_runs_log.csv",
-            "github_releases_map.csv",
+                                    "github_releases_map.csv",
             "github_assets_map.csv",
         ]
     )
@@ -1078,8 +1076,6 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
     tenants_credits = dedupe_tenants_credits(billing.load_table("tenants_credits.csv"))
     transactions = billing.load_table("transactions.csv")
     transaction_items = billing.load_table("transaction_items.csv")
-    workorders_log = billing.load_table("workorders_log.csv")
-    module_runs_log = billing.load_table("module_runs_log.csv")
     cache_index = billing.load_table("cache_index.csv")
     promo_redemptions = billing.load_table("promotion_redemptions.csv")
     rel_map = billing.load_table("github_releases_map.csv")
@@ -1087,7 +1083,7 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
 
     used_tx: Set[str] = {id_key(r.get("transaction_id")) for r in transactions if id_key(r.get("transaction_id"))}
     used_ti: Set[str] = {id_key(r.get("transaction_item_id")) for r in transaction_items if id_key(r.get("transaction_item_id"))}
-    used_mr: Set[str] = {id_key(r.get("module_run_id")) for r in module_runs_log if id_key(r.get("module_run_id"))}
+    used_mr: Set[str] = set()
     used_rel: Set[str] = {id_key(r.get("release_id")) for r in rel_map if id_key(r.get("release_id"))}
     used_asset: Set[str] = {id_key(r.get("asset_id")) for r in asset_map if id_key(r.get("asset_id"))}
 

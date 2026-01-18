@@ -485,9 +485,7 @@ def _validate_billing_state(billing_state_dir: Path) -> None:
         "transaction_items.csv",
         "promotion_redemptions.csv",
         "cache_index.csv",
-        "workorders_log.csv",
-        "module_runs_log.csv",
-        "github_releases_map.csv",
+                        "github_releases_map.csv",
         "github_assets_map.csv",
         "state_manifest.json",
     ]
@@ -502,8 +500,6 @@ def _validate_billing_state(billing_state_dir: Path) -> None:
     _assert_exact_header(billing_state_dir / "transaction_items.csv", ["transaction_item_id","transaction_id","tenant_id","module_id","work_order_id","step_id","deliverable_id","feature","type","amount_credits","created_at","note","metadata_json"])
     _assert_exact_header(billing_state_dir / "promotion_redemptions.csv", ["redemption_id","tenant_id","promo_code","credits_granted","created_at","note","metadata_json"])
     _assert_exact_header(billing_state_dir / "cache_index.csv", ["place","type","ref","created_at","expires_at"])
-    _assert_exact_header(billing_state_dir / "workorders_log.csv", ["work_order_id","tenant_id","status","created_at","started_at","ended_at","note","metadata_json"])
-    _assert_exact_header(billing_state_dir / "module_runs_log.csv", ["module_run_id","tenant_id","work_order_id","module_id","status","created_at","started_at","ended_at","reason_code","report_path","output_ref","metadata_json"])
     _assert_exact_header(billing_state_dir / "github_releases_map.csv", ["release_id","github_release_id","tag","tenant_id","work_order_id","created_at"])
     _assert_exact_header(billing_state_dir / "github_assets_map.csv", ["asset_id","github_asset_id","release_id","asset_name","created_at"])
 

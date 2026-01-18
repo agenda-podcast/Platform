@@ -102,6 +102,10 @@ def main(argv: list[str] | None = None) -> int:
     if not region:
         region = str(integ.get("AWS_REGION", "") or integ.get("AWS_DEFAULT_REGION", "") or "").strip()
 
+    # Treat placeholder values as unset
+    if region.upper() == 'REPLACE_ME':
+        region = ''
+
     ak = str(os.environ.get("AWS_ACCESS_KEY_ID", "") or "").strip() or str(integ.get("AWS_ACCESS_KEY_ID", "") or "").strip()
     sk = str(os.environ.get("AWS_SECRET_ACCESS_KEY", "") or "").strip() or str(integ.get("AWS_SECRET_ACCESS_KEY", "") or "").strip()
     st = str(os.environ.get("AWS_SESSION_TOKEN", "") or "").strip() or str(integ.get("AWS_SESSION_TOKEN", "") or "").strip()

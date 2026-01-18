@@ -155,18 +155,20 @@ def _normalize_step_run_row(row: Dict[str, str]) -> StepRunRecord:
 class CsvRunStateStore(RunStateStore):
     """RunStateStore backed by append-only CSVs.
 
-    This adapter preserves existing repository formats:
+    This adapter stores operational run-state in the runtime directory:
       - workorders_log.csv
       - module_runs_log.csv (step_id carried in metadata_json)
-      - outputs_log.csv (adapter-owned; safe to add in dev mode)
+      - outputs_log.csv (runtime-scoped, not published)
 
     Status transitions are append-only. The latest row wins per module_run_id.
     """
 
     def __init__(self, state_dir: Path):
         self.state_dir = state_dir
-        self.workorders_log = state_dir / "workorders_log.csv"
-        self.module_runs_log = state_dir / "module_runs_log.csv"
+        self.state_dir = state_dir
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.workorders_log = self.state_dir / "workorders_log.csv"
+        self.module_runs_log = self.state_dir / "module_runs_log.csv"
         self.outputs_log = state_dir / "outputs_log.csv"
         self.deliverable_artifacts_log = state_dir / "deliverable_artifacts_log.csv"
         self.published_artifacts_log = state_dir / "published_artifacts_log.csv"

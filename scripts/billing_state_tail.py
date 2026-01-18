@@ -126,9 +126,6 @@ def _format_compact_row(path: Path, row: dict[str, str], lookups: Lookups) -> st
     elif fname == "transaction_items.csv":
         # include module_id (schema) and infer work_order_id via transactions.csv join
         keys_preferred = ["transaction_item_id", "transaction_id", "tenant_id", "work_order_id", "step_id", "module_id", "module", "deliverable_id", "feature", "type", "amount_credits", "created_at", "note"]
-    elif fname == "workorders_log.csv":
-        keys_preferred = ["work_order_id", "tenant_id", "status", "started_at", "ended_at", "note"]
-    elif fname == "module_runs_log.csv":
         keys_preferred = ["module_run_id", "tenant_id", "work_order_id", "module", "status", "started_at", "ended_at", "reason"]
     else:
         # generic
@@ -217,9 +214,7 @@ def main() -> int:
         print("[BILLING_STATE_TAIL] since=", since_dt.isoformat().replace("+00:00", "Z"))
 
     for fname in [
-        "workorders_log.csv",
-        "module_runs_log.csv",
-        "transactions.csv",
+                        "transactions.csv",
         "transaction_items.csv",
         "tenants_credits.csv",
         "cache_index.csv",

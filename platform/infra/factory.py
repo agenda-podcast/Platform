@@ -308,7 +308,7 @@ class BillingStateCsvRunStateStore:
         self.billing = BillingState(billing_state_dir)
 
     def append_step_run(self, record: StepRunRecord) -> None:
-        p = self.billing.path("module_runs_log.csv")
+        p = self.runtime_dir / "runstate" / "module_runs_log.csv"
         rows = read_csv(p)
         rows.append(
             {
@@ -329,7 +329,7 @@ class BillingStateCsvRunStateStore:
         write_csv(p, rows, self.MODULE_RUNS_HEADERS)
 
     def list_step_runs(self, tenant_id: str, work_order_id: str) -> List[StepRunRecord]:
-        p = self.billing.path("module_runs_log.csv")
+        p = self.runtime_dir / "runstate" / "module_runs_log.csv"
         rows = read_csv(p)
         out: List[StepRunRecord] = []
         for r in rows:
@@ -376,7 +376,7 @@ class BillingStateCsvRunStateStore:
         return {
             "class": self.__class__.__name__,
             "billing_state_dir": str(self.billing.root),
-            "module_runs_log": str(self.billing.path("module_runs_log.csv")),
+            "module_runs_log": str(self.runtime_dir / "runstate" / "module_runs_log.csv"),
         }
 
 
@@ -604,7 +604,7 @@ def build_infra(
     if rs_kind == "billing_state_csv":
         from .adapters.runstate_csv import CsvRunStateStore
 
-        run_state_store = CsvRunStateStore(billing_state_dir)
+        run_state_store = CsvRunStateStore(runtime_dir / 'runstate')
     elif rs_kind == "db_postgres":
         dsn = str(profile.adapters["run_state_store"].settings.get("dsn", "") or "").strip()
         run_state_store = PostgresRunStateStore(dsn)
