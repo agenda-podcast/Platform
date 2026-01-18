@@ -15,6 +15,7 @@ on:
           - "bigfile_gen"
           - "deliver_dropbox"
           - "deliver_email"
+          - "deliver_github_release"
           - "deliver_onedrive"
           - "package_std"
           - "wxi"
