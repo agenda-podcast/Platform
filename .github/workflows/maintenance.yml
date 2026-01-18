@@ -74,10 +74,12 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/ci_verify.py --phase pre
+
       - name: Auto-commit maintenance outputs (maintenance-state, secretstore, verify dropdown workflows)
+        shell: bash
         env:
-          # PAT or fine-grained token with workflow write capability.
-          # Required only when the commit touches .github/workflows/*.
+          # Optional PAT / fine-grained token that is allowed to update workflow files.
+          # Required only when this commit touches .github/workflows/*.
           WORKFLOW_PUSH_TOKEN: ${{ secrets.WORKFLOW_PUSH_TOKEN }}
         run: |
           set -euo pipefail
@@ -89,17 +91,17 @@ jobs:
             .github/workflows/verify_workorders.yml
           )
 
-          if git diff --quiet -- \"${TRACKED_PATHS[@]}\"; then
-            echo \"[MAINTENANCE] No changes to commit (tracked maintenance outputs).\"
+          if git diff --quiet -- "${TRACKED_PATHS[@]}"; then
+            echo "[MAINTENANCE] No changes to commit (maintenance-state/, secretstore template, verify workflows)."
             exit 0
           fi
 
-          git config user.email \"github-actions[bot]@users.noreply.github.com\"
-          git config user.name \"github-actions[bot]\"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
 
-          git add \"${TRACKED_PATHS[@]}\"
+          git add "${TRACKED_PATHS[@]}"
           if git diff --cached --quiet; then
-            echo \"[MAINTENANCE] Nothing staged after git add.\"
+            echo "[MAINTENANCE] Nothing staged after git add."
             exit 0
           fi
 
@@ -108,13 +110,13 @@ jobs:
             NEED_WORKFLOW_TOKEN=1
           fi
 
-          git commit -m \"chore(maintenance): refresh maintenance-state and secretstore template [skip ci]\"
+          git commit -m "chore(maintenance): refresh maintenance-state and secretstore template [skip ci]"
 
-          if [ \"$NEED_WORKFLOW_TOKEN\" -eq 1 ]; then
-            git remote set-url origin \"https://x-access-token:${WORKFLOW_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git\"
+          if [ "$NEED_WORKFLOW_TOKEN" -eq 1 ]; then
+            git remote set-url origin "https://x-access-token:${WORKFLOW_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           fi
 
-          git push origin \"HEAD:${GITHUB_REF_NAME}\"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Ensure maintenance-state is committed
         run: |
