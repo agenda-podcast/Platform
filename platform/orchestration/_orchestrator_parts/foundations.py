@@ -24,6 +24,7 @@ from ..utils.csvio import read_csv
 from ..utils.fs import ensure_dir
 from ..utils.hashing import sha256_file
 from ..utils.time import utcnow_iso
+from ..consistency.validator import load_rules_table
 from ..infra.factory import InfraBundle
 from ..infra.models import TransactionRecord, TransactionItemRecord, OutputRecord
 from .idempotency import (
