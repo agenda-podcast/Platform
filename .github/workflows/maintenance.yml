@@ -172,6 +172,9 @@ jobs:
           DIRTY: ${{ steps.changes.outputs.dirty }}
         run: |
           set -euo pipefail
+          echo "[MAINTENANCE] gh version: $(gh --version | head -n 1)"
+          echo "[MAINTENANCE] gh auth status (sanitized)"
+          gh auth status -h github.com || true
           echo "[MAINTENANCE] Resolve PR step starting"
           echo "[MAINTENANCE] Resolve PR step running DIRTY=${DIRTY:-}"
           echo '[MAINTENANCE] Resolve PR step starting'
@@ -223,13 +226,26 @@ jobs:
               printf '%s\n\n%s\n' \
                 'Automated maintenance regeneration produced changes.' \
                 'Source run: ${run_url}' > "$body_file"
-
+              set +e
+              gh_out="$(mktemp)"
+              gh_err="$(mktemp)"
               gh pr create \
                 --base main \
                 --head "$branch" \
                 --title "Maintenance: refresh generated files" \
                 --body-file "$body_file" \
-                --label maintenance-auto
+                --label maintenance-auto \
+                >"$gh_out" 2>"$gh_err"
+              gh_rc=$?
+              set -e
+              echo "[MAINTENANCE] gh pr create exit_code=$gh_rc"
+              echo "[MAINTENANCE] gh pr create stdout:"
+              cat "$gh_out" || true
+              echo "[MAINTENANCE] gh pr create stderr:"
+              cat "$gh_err" || true
+              if [ $gh_rc -ne 0 ]; then
+                echo "[MAINTENANCE][FAIL] gh pr create failed" >&2
+              fi
 
               pr_number="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number' || true)"
               pr_url="$(gh pr list --head "$branch" --state open --json url --jq '.[0].url' || true)"
