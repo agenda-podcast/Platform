@@ -1,0 +1,43 @@
+name: Maintenance Commit
+
+on:
+  workflow_run:
+    workflows: ["Maintenance"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge labeled maintenance PR
+        env:
+          GH_TOKEN: ${{ secrets.WORKFLOW_PUSH_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          prs_json=$(gh pr list --state open --label maintenance-auto --base main --json number,headRefName,url,mergeStateStatus --limit 20)
+          export PRS_JSON="$prs_json"
+
+          count=$(python -c 'import json,os; prs=json.loads(os.environ["PRS_JSON"]); print(len(prs))')
+          if [ "$count" -eq 0 ]; then
+            echo "[MAINTENANCE_COMMIT] No open PRs labeled maintenance-auto."
+            exit 0
+          fi
+
+          pr_number=$(python -c 'import json,os; prs=json.loads(os.environ["PRS_JSON"]); prs.sort(key=lambda p: p["number"], reverse=True); print(prs[0]["number"])')
+
+          merge_state=$(gh pr view "$pr_number" --json mergeStateStatus --jq .mergeStateStatus)
+          if [ "$merge_state" != "CLEAN" ]; then
+            echo "[MAINTENANCE_COMMIT] PR #$pr_number mergeStateStatus=$merge_state. Not merging."
+            exit 0
+          fi
+
+          echo "[MAINTENANCE_COMMIT] Merging PR #$pr_number"
+          gh pr merge "$pr_number" --merge --delete-branch
