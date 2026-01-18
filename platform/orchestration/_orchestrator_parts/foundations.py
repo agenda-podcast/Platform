@@ -24,12 +24,7 @@ from ..utils.csvio import read_csv
 from ..utils.fs import ensure_dir
 from ..utils.hashing import sha256_file
 from ..utils.time import utcnow_iso
-from ..consistency.validator import (
-    load_rules_table,
-    ConsistencyValidationError,
-    _validate_binding,
-    _validate_constraints,
-)
+from ..consistency.validator import load_rules_table, ConsistencyValidationError
 from ..infra.factory import InfraBundle
 from ..infra.models import TransactionRecord, TransactionItemRecord, OutputRecord
 from .idempotency import (
@@ -43,6 +38,8 @@ from .idempotency import (
 from .status_reducer import StatusInputs, reduce_workorder_status
 
 from ..secretstore.loader import load_secretstore, env_for_module
+
+from ..workorders.preflight import validate_workorder_preflight
 
 
 def _parse_iso_z(s: str) -> datetime:
@@ -215,142 +212,6 @@ def _preflight_assert_required_secrets(
 
     if missing:
         raise PreflightSecretError(missing=missing)
-
-
-def validate_workorder_preflight(
-    repo_root: Path,
-    workorder_path: Path,
-    module_rules_by_id: Dict[str, List[Any]],
-) -> None:
-    """Validate a single workorder YAML against static module contract rules.
-
-    Scope:
-      - Structural validation (work_order_id, steps list, step_id uniqueness).
-      - Module input validation (required inputs, basic constraints, binding references).
-
-    Notes:
-      - This function is a deterministic safety gate for enabled workorders.
-      - It does not execute modules.
-      - It does not infer deliverable-specific output exposure. For binding validation,
-        it treats all declared outputs of a step's module as exposed.
-
-    Raises:
-      ConsistencyValidationError on any preflight violation.
-    """
-
-    if not workorder_path.exists():
-        raise ConsistencyValidationError(f"Workorder not found: {workorder_path}")
-    try:
-        data = yaml.safe_load(workorder_path.read_text(encoding="utf-8")) or {}
-    except Exception as e:
-        raise ConsistencyValidationError(f"Invalid YAML: {workorder_path}: {e}") from e
-
-    if not isinstance(data, dict):
-        raise ConsistencyValidationError(f"Workorder must be a mapping: {workorder_path}")
-
-    work_order_id = str(data.get("work_order_id") or "").strip()
-    if not work_order_id:
-        raise ConsistencyValidationError("work_order_id is required")
-
-    steps = data.get("steps")
-    if not isinstance(steps, list) or not steps:
-        raise ConsistencyValidationError("steps must be a non-empty list")
-
-    step_ids: List[str] = []
-    step_outputs: Dict[str, Set[str]] = {}
-    seen_step_ids: Set[str] = set()
-
-    # Precompute step ids and declared outputs for binding validation.
-    for i, step in enumerate(steps):
-        if not isinstance(step, dict):
-            raise ConsistencyValidationError(f"steps[{i}] must be an object")
-        sid = str(step.get("step_id") or "").strip()
-        if not sid:
-            raise ConsistencyValidationError(f"steps[{i}].step_id is required")
-        if sid in seen_step_ids:
-            raise ConsistencyValidationError(f"Duplicate step_id {sid!r}")
-        seen_step_ids.add(sid)
-        step_ids.append(sid)
-
-        mid = canon_module_id(str(step.get("module_id") or ""))
-        if not mid:
-            raise ConsistencyValidationError(f"steps[{i}].module_id is required")
-        yml = repo_root / "modules" / mid / "module.yml"
-        if not yml.exists():
-            raise ConsistencyValidationError(f"Unknown module_id {mid!r} (missing {yml})")
-
-        try:
-            mdata = yaml.safe_load(yml.read_text(encoding="utf-8")) or {}
-        except Exception as e:
-            raise ConsistencyValidationError(f"Invalid module.yml for {mid!r}: {e}") from e
-        ports = (mdata.get("ports") or {}) if isinstance(mdata, dict) else {}
-        outputs = (ports.get("outputs") or {}) if isinstance(ports, dict) else {}
-        out_ids: Set[str] = set()
-        for scope in ("port", "limited_port"):
-            lst = outputs.get(scope)
-            if not isinstance(lst, list):
-                continue
-            for o in lst:
-                if not isinstance(o, dict):
-                    continue
-                oid = str(o.get("id") or "").strip()
-                if oid:
-                    out_ids.add(oid)
-        step_outputs[sid] = out_ids
-
-    # Validate each step inputs against rules.
-    for i, step in enumerate(steps):
-        sid = str(step.get("step_id") or "").strip()
-        mid = canon_module_id(str(step.get("module_id") or ""))
-        inputs = step.get("inputs")
-        if inputs is None:
-            inputs = {}
-        if not isinstance(inputs, dict):
-            raise ConsistencyValidationError(f"step_id={sid}: inputs must be an object")
-
-        rules = list(module_rules_by_id.get(mid) or [])
-        input_rules = [rr for rr in rules if str(getattr(rr, "io", "")).upper() == "INPUT"]
-        tenant_port_rules = [rr for rr in input_rules if str(getattr(rr, "port_scope", "")).lower() == "port"]
-
-        # Required tenant-visible inputs
-        for rr in tenant_port_rules:
-            if not bool(getattr(rr, "required", False)):
-                continue
-            fid = str(getattr(rr, "field_id", "") or "").strip()
-            if not fid:
-                continue
-            if fid not in inputs:
-                raise ConsistencyValidationError(
-                    f"step_id={sid} module_id={mid}: missing required input {fid!r}"
-                )
-
-        # Validate provided inputs (constraints + binding references).
-        for k, v in inputs.items():
-            fid = str(k or "").strip()
-            if not fid:
-                continue
-            rr_match = None
-            for rr in tenant_port_rules:
-                if str(getattr(rr, "field_id", "") or "").strip() == fid:
-                    rr_match = rr
-                    break
-            if rr_match is None:
-                # Unknown inputs are rejected deterministically.
-                raise ConsistencyValidationError(
-                    f"step_id={sid} module_id={mid}: unknown input {fid!r}"
-                )
-
-            ctx = f"work_order_id={work_order_id} step_id={sid} module_id={mid} input={fid}"
-            try:
-                # Binding values are validated against step ids and exposed outputs.
-                if isinstance(v, dict) and ("from_step" in v or "from" in v):
-                    _validate_binding(rr_match, v, ctx, step_ids, step_outputs)
-                else:
-                    _validate_constraints(rr_match, v, ctx)
-            except ConsistencyValidationError:
-                raise
-            except Exception as e:
-                raise ConsistencyValidationError(f"{ctx}: {e}") from e
 
 def _cache_dirname(cache_key: str) -> str:
     """Stable, filesystem-safe directory name for a cache key."""

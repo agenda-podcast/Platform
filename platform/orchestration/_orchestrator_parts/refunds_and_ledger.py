@@ -172,6 +172,21 @@ PART = r'''\
     except Exception as e:
         print(f"[cache_index][WARN] failed to persist cache_index.csv: {e}")
 
+    # Persist billing-state tables. Billing is the Source of Truth for actions and runs,
+    # so we always flush the in-memory tables to disk at end-of-run.
+    #
+    # NOTE: This does not introduce new data sources; it simply makes the already-computed
+    # rows durable so workflows like billing_state_tail and billing_state_publish reflect reality.
+    try:
+        billing.save_table("tenants_credits.csv", tenants_credits, headers=TENANTS_CREDITS_HEADERS)
+        billing.save_table("transactions.csv", transactions, headers=TRANSACTIONS_HEADERS)
+        billing.save_table("transaction_items.csv", transaction_items, headers=TRANSACTION_ITEMS_HEADERS)
+        billing.save_table("promotion_redemptions.csv", promo_redemptions, headers=PROMOTION_REDEMPTIONS_HEADERS)
+        billing.save_table("github_releases_map.csv", rel_map, headers=GITHUB_RELEASES_MAP_HEADERS)
+        billing.save_table("github_assets_map.csv", asset_map, headers=GITHUB_ASSETS_MAP_HEADERS)
+    except Exception as e:
+        print(f"[billing-state][WARN] failed to persist billing-state tables: {e}")
+
     # Adapter mode: orchestrator no longer persists billing-state tables directly.
     # LedgerWriter and RunStateStore are the only write paths.
 '''
