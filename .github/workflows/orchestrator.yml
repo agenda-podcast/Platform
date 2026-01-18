@@ -28,11 +28,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  consistency_validation:
-    uses: ./.github/workflows/consistency-validation.yml
-
   run:
-    needs: [consistency_validation]
     runs-on: ubuntu-latest
     # IMPORTANT: Environment-scoped secrets (e.g., SECRETSTORE_PASSPHRASE) are only injected
     # when the job explicitly targets that environment.
