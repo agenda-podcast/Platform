@@ -111,14 +111,14 @@ jobs:
 
           pr_url="$(gh pr view "${pr_number}" --json url -q .url)"
           echo "[MAINTENANCE][OK] PR #${pr_number}: ${pr_url}"
-        - name: Enable auto-merge for maintenance PR
-          if: ${{ steps.cpr.outputs.pull-request-number != '' }}
-          env:
-            GH_TOKEN: ${{ secrets.WORKFLOW_PUSH_TOKEN }}
-          shell: bash
-          run: |
-            set -euo pipefail
-            PR_NUMBER="${{ steps.cpr.outputs.pull-request-number }}"
-            REPO="${{ github.repository }}"
-            echo "[MAINTENANCE] Enabling auto-merge for PR #${PR_NUMBER}"
-            gh pr merge "${PR_NUMBER}" --repo "${REPO}" --auto --merge --delete-branch
+      - name: Enable auto-merge for maintenance PR
+        if: ${{ steps.cpr.outputs.pull-request-number != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.WORKFLOW_PUSH_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          PR_NUMBER="${{ steps.cpr.outputs.pull-request-number }}"
+          REPO="${{ github.repository }}"
+          echo "[MAINTENANCE] Enabling auto-merge for PR #${PR_NUMBER}"
+          gh pr merge "${PR_NUMBER}" --repo "${REPO}" --auto --merge --delete-branch
