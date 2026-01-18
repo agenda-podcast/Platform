@@ -220,11 +220,10 @@ jobs:
               echo "[MAINTENANCE] No existing open PR. Creating a new PR via gh." >&2
               run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
               body_file="$(mktemp)"
-              cat > "$body_file" <<EOF
-Automated maintenance regeneration produced changes.
+              printf '%s\n\n%s\n' \
+                'Automated maintenance regeneration produced changes.' \
+                'Source run: ${run_url}' > "$body_file"
 
-Source run: ${run_url}
-EOF
               gh pr create \
                 --base main \
                 --head "$branch" \
