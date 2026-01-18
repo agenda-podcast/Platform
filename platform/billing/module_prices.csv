@@ -16,3 +16,4 @@ wxi,metadata,2,1970-01-01,,true,Auto-added by Maintenance. Migrated: price_save_
 wxi,thumbnails,2,1970-01-01,,true,Auto-added by Maintenance. Migrated: price_save_to_release_credits.
 wxz,__run__,5,1970-01-01,,true,Auto-added by Maintenance. Migrated: price_run_credits.
 wxz,tenant_outputs,2,1970-01-01,,true,Auto-added by Maintenance. Migrated: price_save_to_release_credits.
+deliver_github_release,__run__,5,1970-01-01,,true,Auto-added to satisfy CI invariant: every module must price __run__.

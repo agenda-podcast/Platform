@@ -14,14 +14,14 @@ Implementation split into small modules to keep files <=500 lines.
 
 import argparse
 
-from scripts.ci_verify_lib.core import _fail, _ok, _warn
+from ci_verify_lib.core import _fail, _ok, _warn
 from pathlib import Path
 from typing import Optional, Sequence
 
-from scripts.ci_verify_lib.core import _validate_repo_billing_config
-from scripts.ci_verify_lib.modules import _validate_modules
-from scripts.ci_verify_lib.tenants import _validate_tenants_and_workorders
-from scripts.ci_verify_lib.state import _validate_maintenance_state, _validate_billing_state
+from ci_verify_lib.core import _validate_repo_billing_config
+from ci_verify_lib.modules import _validate_modules
+from ci_verify_lib.tenants import _validate_tenants
+from ci_verify_lib.state import _validate_maintenance_state, _validate_billing_state
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser()
@@ -36,7 +36,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.phase == "pre":
         _validate_repo_billing_config(repo_root)
         _validate_modules(repo_root)
-        _validate_tenants_and_workorders(repo_root)
+        _validate_tenants(repo_root)
         _validate_maintenance_state(repo_root)
     else:
         _validate_billing_state(billing_state_dir)
