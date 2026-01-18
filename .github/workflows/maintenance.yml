@@ -74,11 +74,10 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/ci_verify.py --phase pre
-
-      - name: Auto-commit maintenance-state updates
+      - name: Auto-commit maintenance outputs (maintenance-state, secretstore, verify dropdown workflows)
         env:
-          # Optional PAT / fine-grained token that is allowed to update workflow files.
-          # Required only when this commit touches .github/workflows/*.
+          # PAT or fine-grained token with workflow write capability.
+          # Required only when the commit touches .github/workflows/*.
           WORKFLOW_PUSH_TOKEN: ${{ secrets.WORKFLOW_PUSH_TOKEN }}
         run: |
           set -euo pipefail
@@ -90,44 +89,32 @@ jobs:
             .github/workflows/verify_workorders.yml
           )
 
-          if git diff --quiet -- "${TRACKED_PATHS[@]}"; then
-            echo "[MAINTENANCE] No changes to commit (maintenance-state/, secretstore template, verify workflows)."
+          if git diff --quiet -- \"${TRACKED_PATHS[@]}\"; then
+            echo \"[MAINTENANCE] No changes to commit (tracked maintenance outputs).\"
             exit 0
           fi
 
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git config user.name "github-actions[bot]"
+          git config user.email \"github-actions[bot]@users.noreply.github.com\"
+          git config user.name \"github-actions[bot]\"
 
-          git add "${TRACKED_PATHS[@]}"
+          git add \"${TRACKED_PATHS[@]}\"
           if git diff --cached --quiet; then
-            echo "[MAINTENANCE] Nothing staged after git add."
+            echo \"[MAINTENANCE] Nothing staged after git add.\"
             exit 0
           fi
 
-          # Determine whether the staged changes include workflow files.
           NEED_WORKFLOW_TOKEN=0
-          while IFS= read -r path; do
-            case "$path" in
-              .github/workflows/*)
-                NEED_WORKFLOW_TOKEN=1
-                ;;
-            esac
-          done < <(git diff --cached --name-only)
-
-          # Use a skip marker to avoid unnecessary downstream workflow churn.
-          # Maintenance itself is protected by `github.actor != github-actions[bot]`.
-          git commit -m "chore(maintenance): refresh maintenance-state and secretstore template [skip ci]"
-
-          if [ "$NEED_WORKFLOW_TOKEN" -eq 1 ]; then
-            if [ -z "${WORKFLOW_PUSH_TOKEN:-}" ]; then
-              echo "[MAINTENANCE][FAIL] This commit updates .github/workflows/* but secrets.WORKFLOW_PUSH_TOKEN is not set." >&2
-              echo "[MAINTENANCE][HINT] Create a PAT (or fine-grained token) with workflow write capability and store it as WORKFLOW_PUSH_TOKEN." >&2
-              exit 2
-            fi
-            git remote set-url origin "https://x-access-token:${WORKFLOW_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git diff --cached --name-only | grep -q '^\.github/workflows/'; then
+            NEED_WORKFLOW_TOKEN=1
           fi
 
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git commit -m \"chore(maintenance): refresh maintenance-state and secretstore template [skip ci]\"
+
+          if [ \"$NEED_WORKFLOW_TOKEN\" -eq 1 ]; then
+            git remote set-url origin \"https://x-access-token:${WORKFLOW_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git\"
+          fi
+
+          git push origin \"HEAD:${GITHUB_REF_NAME}\"
 
       - name: Ensure maintenance-state is committed
         run: |
