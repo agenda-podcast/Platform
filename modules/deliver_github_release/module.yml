@@ -1,0 +1,97 @@
+module_id: deliver_github_release
+name: deliver_github_release
+version: 0.1.0
+kind: delivery
+description: "System delivery module: publish package.zip (and optional manifest.json) to GitHub Releases in the current repository."
+metadata:
+  max_package_bytes: 262144000
+requirements:
+  secrets:
+    - name: GITHUB_TOKEN
+      required: false
+      note: "If set, module creates a GitHub Release and uploads assets. If unset, module writes a deterministic dev stub to outputs/outbox."
+  vars: []
+ports:
+  inputs:
+    port:
+      - id: package_zip
+        type: file
+        required: true
+        format: application/zip
+        description: "package.zip produced by packaging step."
+      - id: manifest_json
+        type: file
+        required: false
+        format: application/json
+        description: "Optional manifest.json for the package."
+      - id: release_tag
+        type: string
+        required: false
+        default_json: '"auto"'
+        description: "Release tag name. If 'auto', a deterministic tag is derived from tenant/workorder/run." 
+      - id: release_name
+        type: string
+        required: false
+        default_json: '""'
+        description: "Release display name. If empty, defaults to tag."
+      - id: release_notes
+        type: string
+        required: false
+        default_json: '""'
+        description: "Release body/notes."
+    limited_port: []
+  outputs:
+    port:
+      - id: delivery_receipt_json
+        type: file
+        path: delivery_receipt.json
+        format: application/json
+        description: "Delivery receipt (release URL, asset URLs, status)."
+      - id: delivery_log_json
+        type: file
+        path: delivery_log.json
+        format: application/json
+        description: "Detailed, auditable delivery log."
+      - id: report_json
+        type: file
+        path: report.json
+        format: application/json
+        description: "Machine-readable failure report (root cause and diagnostics)."
+    limited_port: []
+deliverables:
+  port:
+    - deliverable_id: __run__
+      description: Run delivery step.
+      outputs: [delivery_receipt_json, delivery_log_json, report_json]
+    - deliverable_id: delivery_receipt
+      description: Delivery receipt (tenant-visible).
+      outputs: [delivery_receipt_json]
+    - deliverable_id: delivery_log
+      description: Delivery detailed log (tenant-visible).
+      outputs: [delivery_log_json]
+  limited_port: []
+testing:
+  self_test:
+    description: "Deterministic offline self-test using dev stub mode (no secrets required)."
+    params:
+      tenant_id: selftestTENANT
+      work_order_id: selftestWO
+      step_id: s_deliver
+      module_run_id: selftest
+      inputs:
+        package_zip:
+          fixture: testing/fixtures/package.zip
+          bytes: 0
+        manifest_json:
+          fixture: testing/fixtures/manifest.json
+          bytes: 0
+        release_tag: auto
+        release_name: ""
+        release_notes: "self-test"
+    expect:
+      status: COMPLETED
+      files:
+        - delivery_receipt.json
+        - delivery_log.json
+        - report.json
+        - outbox/release_stub.json

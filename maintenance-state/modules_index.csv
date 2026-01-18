@@ -4,6 +4,7 @@ U2T,demo_seed_outputs,transform,0.2.0,true,modules/U2T
 bigfile_gen,Big File Generator,transform,1,true,modules/bigfile_gen
 deliver_dropbox,deliver_dropbox,delivery,0.1.0,true,modules/deliver_dropbox
 deliver_email,deliver_email,delivery,0.2.2,true,modules/deliver_email
+deliver_github_release,deliver_github_release,delivery,0.1.0,true,modules/deliver_github_release
 deliver_onedrive,deliver_onedrive,delivery,0.1.0,true,modules/deliver_onedrive
 package_std,package_std,packaging,0.1.0,true,modules/package_std
 wxi,google_search_images,transform,0.2.0,true,modules/wxi

@@ -8,6 +8,7 @@ deliver_email,secret,EMAIL_FROM_EMAIL,,"Sender email address used in the From he
 deliver_email,secret,EMAIL_SMTP_USERNAME,,"SMTP username. If unset, module writes to dev outbox stub. If set, EMAIL_SMTP_PASSWORD must also be set."
 deliver_email,secret,EMAIL_SMTP_PASSWORD,,"SMTP password. If unset, module writes to dev outbox stub. Required if EMAIL_SMTP_USERNAME is set."
 deliver_email,var,EMAIL_SMTP_USE_TLS,,Whether to use STARTTLS. Defaults to true.
+deliver_github_release,secret,GITHUB_TOKEN,,"If set, module creates a GitHub Release and uploads assets. If unset, module writes a deterministic dev stub to outputs/outbox."
 deliver_onedrive,secret,ONEDRIVE_ACCESS_TOKEN,,"Microsoft Graph OAuth access token with Files.ReadWrite; if unset, uses dev stub."
 deliver_onedrive,var,ONEDRIVE_CHUNK_BYTES,,Upload chunk size in bytes for resumable uploads (Graph upload session).
 deliver_onedrive,var,ONEDRIVE_CREATE_SHARE_LINK,,"If true, attempt to create or reuse a share link after upload."
