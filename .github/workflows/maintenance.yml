@@ -13,8 +13,8 @@ jobs:
     if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
     outputs:
-      pr_number: ${{ steps.cpr.outputs.pull-request-number }}
-      pr_url: ${{ steps.cpr.outputs.pull-request-url }}
+      pr_number: ${{ steps.prresolve.outputs.pr_number }}
+      pr_url: ${{ steps.prresolve.outputs.pr_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -131,6 +131,44 @@ jobs:
           echo "[MAINTENANCE] PR operation=$op"
           echo "[MAINTENANCE] Opened/Updated PR #$pr_number: $pr_url"
           echo "[MAINTENANCE] PR branch=$pr_branch head_sha=$pr_head_sha"
+
+      - name: Resolve PR number (authoritative)
+        id: prresolve
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          branch="${{ steps.cpr.outputs.pull-request-branch }}"
+          if [ -z "$branch" ]; then
+            branch="maintenance/regen-${{ github.run_id }}"
+          fi
+
+          pr_number="${{ steps.cpr.outputs.pull-request-number }}"
+          pr_url="${{ steps.cpr.outputs.pull-request-url }}"
+          op="${{ steps.cpr.outputs.pull-request-operation }}"
+
+          if [ -z "$pr_number" ]; then
+            pr_number="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number' || true)"
+            pr_url="$(gh pr list --head "$branch" --state open --json url --jq '.[0].url' || true)"
+          fi
+
+          {
+            echo "pr_number=$pr_number"
+            echo "pr_url=$pr_url"
+            echo "pr_branch=$branch"
+            echo "pr_operation=$op"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ -z "$pr_number" ]; then
+            echo "[MAINTENANCE][WARN] No PR detected for branch=$branch operation=$op"
+            echo "[MAINTENANCE][HINT] Check repo Settings -> Actions -> General -> Workflow permissions -> Read and write permissions"
+            echo "[MAINTENANCE][HINT] Also ensure Actions are allowed to create and approve pull requests (same page)"
+            exit 0
+          fi
+
+          echo "[MAINTENANCE] Resolved PR #$pr_number: $pr_url"
 
       - name: Verify local billing-state bootstrap (headers + ID format)
         shell: bash
