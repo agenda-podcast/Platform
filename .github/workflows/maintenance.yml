@@ -13,8 +13,8 @@ jobs:
     if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
     outputs:
-      pr_number: ${{ steps.prresolve.outputs.pr_number }}
-      pr_url: ${{ steps.prresolve.outputs.pr_url }}
+      pr_number: ${{ steps.prresolve.outputs.pr_number || steps.prresolve_empty.outputs.pr_number }}
+      pr_url: ${{ steps.prresolve.outputs.pr_url || steps.prresolve_empty.outputs.pr_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -90,8 +90,27 @@ jobs:
           set -euo pipefail
           python scripts/ci_verify.py --phase pre
 
+
+      - name: Detect changes (dirty working tree)
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "[MAINTENANCE] git status --porcelain:"
+          git status --porcelain || true
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "dirty=true" >> "$GITHUB_OUTPUT"
+            echo "[MAINTENANCE] Working tree is DIRTY. PR will be created."
+            echo "[MAINTENANCE] diffstat:"
+            git diff --stat || true
+          else
+            echo "dirty=false" >> "$GITHUB_OUTPUT"
+            echo "[MAINTENANCE] Working tree is CLEAN. No PR will be created."
+          fi
+
       - name: Create PR for regenerated files (no direct push)
         id: cpr
+        if: ${{ steps.changes.outputs.dirty == 'true' }}
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ github.token }}
@@ -112,8 +131,10 @@ jobs:
             platform/secretstore/secretstore.template.json
             .github/workflows/verify_modules.yml
             .github/workflows/verify_workorders.yml
+            .github/workflows/verify_platform.yml
 
       - name: Report PR outcome
+        if: ${{ steps.changes.outputs.dirty == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -137,8 +158,20 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          DIRTY: ${{ steps.changes.outputs.dirty }}
         run: |
           set -euo pipefail
+
+          if [ "${DIRTY:-}" != "true" ]; then
+            {
+              echo "pr_number="
+              echo "pr_url="
+              echo "pr_branch="
+              echo "pr_operation="
+            } >> "$GITHUB_OUTPUT"
+            echo "[MAINTENANCE] Working tree was clean. No PR to resolve."
+            exit 0
+          fi
 
           branch="${{ steps.cpr.outputs.pull-request-branch }}"
           if [ -z "$branch" ]; then
