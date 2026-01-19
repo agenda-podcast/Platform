@@ -12,7 +12,7 @@ reasons:
   reason_slug: skipped_cache
   category_id: '12'
   description: Cache was used; module execution skipped and marked FAILED for refund logic.
-- reason_key: sd5
+- reason_key: sdd
   reason_slug: artifacts_not_eligible
   category_id: '14'
   description: Artifacts were purchased but not eligible per policy or module capability.

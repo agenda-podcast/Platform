@@ -162,7 +162,7 @@ def test_delivery_size_cap_refunds_when_deterministic_non_delivery(tmp_path: Pat
                 module_id: bigfile_gen
                 kind: transform
                 inputs:
-                  bytes: 2100000t
+                  bytes: 21000000
                   seed: test
                 requested_deliverables: []
               - step_id: p2

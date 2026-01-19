@@ -4,6 +4,11 @@ import re
 import secrets
 from typing import Dict, Optional, Set
 
+# Platform rule:
+# - All IDs are strings
+# - Every ID must end with an ASCII letter [A-Za-z]
+# - Some IDs are fixed-length Base62; others are human IDs used in YAML/registries
+
 BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 BASE62_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 

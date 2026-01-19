@@ -1,10 +1,10 @@
-work_order_id: UbjkpxZO
+work_order_id: Q1DrivEu
 enabled: false
 mode: PARTIAL_ALLOWED
 metadata:
-  title: New module verification.
-  created_at: '2025-12-31T12:00:00Z'
-  notes: 'Steps chaining demo: 9SD -> wxi -> U2T.'
+  title: OneDrive delivery verification.
+  created_at: '2026-01-13T22:55:00Z'
+  notes: 'Steps chaining demo: 9SD -> wxi -> U2T -> package_std -> deliver_onedrive (dev stub by default).'
 steps:
 - step_id: a1
   step_name: derive_queries
@@ -61,8 +61,8 @@ steps:
       output_id: report
       as_path: derive_queries_report.json
 - step_id: d5
-  step_name: deliver_to_dropbox_stub
-  module_id: deliver_dropbox
+  step_name: deliver_to_onedrive_stub
+  module_id: deliver_onedrive
   kind: delivery
   deliverables:
   - delivery_receipt

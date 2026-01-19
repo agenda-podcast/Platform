@@ -159,7 +159,7 @@ def test_package_std_missing_bound_outputs_fails_with_package_failed(tmp_path: P
     params = {
         "tenant_id": "AbC123",
         "work_order_id": "Wk123456",
-        "module_run_id": "MR00000t",
+        "module_run_id": "MR000000",
         "inputs": {
             "bound_outputs": [
                 {
@@ -172,7 +172,7 @@ def test_package_std_missing_bound_outputs_fails_with_package_failed(tmp_path: P
                 }
             ]
         },
-        "_platform": {"step_id": "s_pkg", "module_id": "package_std", "run_id": "MR00000t"},
+        "_platform": {"step_id": "s_pkg", "module_id": "package_std", "run_id": "MR000000"},
     }
 
     result = execute_module_runner(module_path=registry.module_path("package_std"), params=params, outputs_dir=out_dir, env=None)

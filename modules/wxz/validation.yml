@@ -14,7 +14,7 @@ reasons:
 - reason_key: E2Y
   reason_slug: output_write_failed
   description: Failed to write module outputs to the runtime directory.
-- reason_key: Yt1
+- reason_key: YtY
   reason_slug: skipped_cache
   category_id: '12'
   description: Cache was used; module execution skipped and marked FAILED for refund logic.

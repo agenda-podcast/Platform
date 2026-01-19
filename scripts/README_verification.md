@@ -33,5 +33,5 @@ Authoritative documentation:
 set -euo pipefail
 python scripts/verify_platform.py
 python scripts/verify_module.py --module-id deliver_email
-python scripts/verify_workorder.py --work-order-id PlatEm01
+python scripts/verify_workorder.py --work-order-id PlatEm0T
 ```
