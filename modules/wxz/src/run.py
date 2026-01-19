@@ -71,8 +71,8 @@ def run(params: Dict[str, Any], outputs_dir: str) -> Dict[str, Any]:
     filter_duplicates = bool(params.get("filter_duplicates", True))
 
     dedupe_cfg = params.get("dedupe") or {}
-    dedupe_enabled = bool(dedupe_cfg.get("enabled", True))
-    strip_tracking = bool(dedupe_cfg.get("strip_tracking_params", True))
+    dedupe_enabled = bool(dedupe_cfg.get("enabled", False))
+    strip_tracking = bool(dedupe_cfg.get("strip_tracking_params", False))
     # Optional mock mode (must be explicitly requested by the workorder).
     # If enabled, the module will not call Google and will instead emit a small
     # deterministic result set.
