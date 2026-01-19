@@ -250,6 +250,68 @@ PART = r'''\
                     verification_status_ev = str(receipt.get("verification_status") or "").strip()
                     bytes_ev = int(str(receipt.get("bytes") or "0").strip() or "0")
                     sha256_ev = str(receipt.get("sha256") or "").strip()
+
+                    # If the delivery provider is GitHub Releases, index the release and assets
+                    # into billing-state mapping tables so downstream automation and Cache Prune
+                    # have a complete inventory.
+                    try:
+                        if provider == "github_release":
+                            gh_rel_id = str(receipt.get("github_release_id") or remote_object_id_ev or "").strip()
+                            gh_tag = str(receipt.get("release_tag") or remote_path_ev or "").strip()
+                            if gh_rel_id or gh_tag:
+                                # Avoid duplicates across retries.
+                                exists = False
+                                for rr in rel_map:
+                                    if str(rr.get("github_release_id") or "").strip() == gh_rel_id and gh_rel_id:
+                                        exists = True
+                                        release_id_local = str(rr.get("release_id") or "").strip()
+                                        break
+                                    if str(rr.get("tag") or "").strip() == gh_tag and gh_tag:
+                                        exists = True
+                                        release_id_local = str(rr.get("release_id") or "").strip()
+                                        break
+                                if not exists:
+                                    used_rel = {id_key(r.get("release_id")) for r in rel_map if id_key(r.get("release_id"))}
+                                    release_id_local = _new_id("release_id", used_rel)
+                                    rel_map.append({
+                                        "release_id": release_id_local,
+                                        "github_release_id": gh_rel_id,
+                                        "tag": gh_tag,
+                                        "tenant_id": tenant_id,
+                                        "work_order_id": work_order_id,
+                                        "created_at": utcnow_iso(),
+                                    })
+
+                                assets_list = receipt.get("assets")
+                                if isinstance(assets_list, list) and release_id_local:
+                                    used_asset = {id_key(r.get("asset_id")) for r in asset_map if id_key(r.get("asset_id"))}
+                                    for aa in assets_list:
+                                        if not isinstance(aa, dict):
+                                            continue
+                                        gh_aid = str(aa.get("github_asset_id") or "").strip()
+                                        aname = str(aa.get("asset_name") or "").strip()
+                                        if not (gh_aid or aname):
+                                            continue
+                                        dup = False
+                                        for ex in asset_map:
+                                            if str(ex.get("github_asset_id") or "").strip() == gh_aid and gh_aid:
+                                                dup = True
+                                                break
+                                            if str(ex.get("asset_name") or "").strip() == aname and aname and str(ex.get("release_id") or "").strip() == release_id_local:
+                                                dup = True
+                                                break
+                                        if dup:
+                                            continue
+                                        asset_map.append({
+                                            "asset_id": _new_id("asset_id", used_asset),
+                                            "github_asset_id": gh_aid,
+                                            "release_id": release_id_local,
+                                            "asset_name": aname,
+                                            "created_at": utcnow_iso(),
+                                        })
+                    except Exception:
+                        pass
+
                     idem_ev = key_delivery_evidence(tenant_id=tenant_id, work_order_id=work_order_id, step_id=sid, module_id=mid)
                     try:
                         receipt_rel = str(receipt_path.relative_to(repo_root)).replace("\\", "/")

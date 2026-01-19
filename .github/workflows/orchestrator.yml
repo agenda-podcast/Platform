@@ -138,6 +138,8 @@ jobs:
       - name: Run orchestrator
         env:
           SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         shell: bash
         run: |
           python -m platform.cli orchestrator \

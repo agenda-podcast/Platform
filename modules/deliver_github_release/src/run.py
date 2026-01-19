@@ -1,371 +1,281 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
-import urllib.request
-import urllib.error
-from datetime import datetime, timezone
+import shutil
+import subprocess
+import zipfile
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+from platform.utils.hashing import sha256_file
+from platform.utils.time import utcnow_iso
+
 
 MODULE_ID = "deliver_github_release"
-MAX_PACKAGE_BYTES = 262144000
+
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
 
-def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+@dataclass
+class _Asset:
+    name: str
+    path: Path
 
 
-def _write_json(path: Path, obj: Dict[str, Any]) -> None:
+def _write_json(path: Path, payload: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _as_local_path(inp: Any) -> Tuple[Path, Dict[str, Any]]:
-    meta: Dict[str, Any] = {}
-    if inp is None:
-        return Path(""), meta
-    if isinstance(inp, str):
-        return Path(inp), meta
-    if isinstance(inp, dict):
-        meta = dict(inp)
-        uri = str(inp.get("uri") or "").strip()
-        if uri.startswith("file://"):
-            return Path(uri[len("file://"):]), meta
-        p = str(inp.get("path") or "").strip()
-        if p:
-            if not Path(p).is_absolute() and uri.startswith("file://"):
-                return Path(uri[len("file://"):]), meta
-            return Path(p), meta
-        if uri:
-            return Path(uri), meta
-    return Path(str(inp)), meta
-
-
-def _fail(outputs_dir: Path, *, reason_slug: str, message: str, delivery_log: Dict[str, Any]) -> Dict[str, Any]:
-    ended_at = _utcnow_iso()
-    delivery_log["ended_at"] = ended_at
-    delivery_log["status"] = "FAILED"
-    delivery_log["reason_slug"] = reason_slug
-    delivery_log["message"] = message
-    _write_json(outputs_dir / "delivery_log.json", delivery_log)
-
-    receipt = {
-        "schema_version": 1,
+def _fail(outputs_dir: Path, reason_slug: str, message: str, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    report = {
         "module_id": MODULE_ID,
-        "tenant_id": delivery_log.get("tenant_id", ""),
-        "work_order_id": delivery_log.get("work_order_id", ""),
-        "step_id": delivery_log.get("step_id", ""),
-        "module_run_id": delivery_log.get("module_run_id", ""),
         "status": "FAILED",
         "reason_slug": reason_slug,
         "message": message,
-        "started_at": delivery_log.get("started_at", ""),
-        "ended_at": ended_at,
-    }
-    _write_json(outputs_dir / "delivery_receipt.json", receipt)
-
-    report = {
-        "type": "DeliveryError",
-        "module_id": MODULE_ID,
-        "reason_slug": reason_slug,
-        "message": message,
-        "tenant_id": delivery_log.get("tenant_id", ""),
-        "work_order_id": delivery_log.get("work_order_id", ""),
-        "step_id": delivery_log.get("step_id", ""),
-        "module_run_id": delivery_log.get("module_run_id", ""),
+        "metadata": meta or {},
     }
     _write_json(outputs_dir / "report.json", report)
-
-    return {
-        "status": "FAILED",
-        "reason_slug": reason_slug,
-        "message": message,
-        "refund_eligible": True,
-    }
+    return {"status": "FAILED", "reason_slug": reason_slug, "files": ["report.json"], "metadata": report}
 
 
-def _request_json(method: str, url: str, token: str, payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    data = None
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Accept", "application/vnd.github+json")
-    req.add_header("Authorization", f"Bearer {token}")
-    req.add_header("X-GitHub-Api-Version", "2022-11-28")
-    if data is not None:
-        req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+def _env(name: str) -> str:
+    return str(os.environ.get(name, "") or "").strip()
 
 
-def _upload_asset(upload_url_template: str, token: str, *, name: str, content_type: str, file_path: Path) -> Dict[str, Any]:
-    # upload_url comes like: https://uploads.github.com/repos/{owner}/{repo}/releases/{id}/assets{?name,label}
-    base = re.sub(r"\{\?.*\}$", "", upload_url_template)
-    url = f"{base}?name={urllib.parse.quote(name)}"
-
-    req = urllib.request.Request(url, data=file_path.read_bytes(), method="POST")
-    req.add_header("Accept", "application/vnd.github+json")
-    req.add_header("Authorization", f"Bearer {token}")
-    req.add_header("X-GitHub-Api-Version", "2022-11-28")
-    req.add_header("Content-Type", content_type)
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+def _run(cmd: List[str], *, env: Optional[Dict[str, str]] = None) -> Tuple[int, str, str]:
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    return proc.returncode, (proc.stdout or ""), (proc.stderr or "")
 
 
-def _deterministic_tag(tenant_id: str, work_order_id: str, module_run_id: str) -> str:
-    # Keep short, deterministic, and safe for Git tags.
-    raw = f"verify-{tenant_id}-{work_order_id}-{module_run_id}".lower()
-    raw = re.sub(r"[^a-z0-9._-]+", "-", raw)
-    raw = re.sub(r"-+", "-", raw).strip("-")
-    return raw[:128] or "verify"
+def _sanitize_asset_name(name: str) -> str:
+    # GitHub asset names must not include path separators.
+    n = re.sub(r"[\/]+", "_", name)
+    n = re.sub(r"[^A-Za-z0-9._-]", "_", n)
+    return n[:200] if len(n) > 200 else n
 
 
-def run(*, params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
+def _compute_auto_tag(*, tenant_id: str, work_order_id: str, module_run_id: str) -> str:
+    # Deterministic per run; short, safe, and collision-resistant enough for CI.
+    mr = (module_run_id or "")[:12]
+    return f"tenant-{tenant_id}-workorder-{work_order_id}-run-{mr}"
+
+
+def _extract_image_assets_from_zip(package_zip: Path, tmp_dir: Path, *, max_assets: int = 100) -> List[_Asset]:
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    assets: List[_Asset] = []
+    with zipfile.ZipFile(package_zip, "r") as zf:
+        names = [n for n in zf.namelist() if n and not n.endswith("/")]
+        # Prefer images/ subtree but allow any image extension in the zip.
+        cand: List[str] = []
+        for n in names:
+            low = n.lower()
+            ext = Path(low).suffix
+            if ext in IMAGE_EXTS:
+                cand.append(n)
+        # Deterministic ordering.
+        for n in sorted(cand):
+            if len(assets) >= max_assets:
+                break
+            out_path = tmp_dir / _sanitize_asset_name(Path(n).name)
+            with zf.open(n) as src, out_path.open("wb") as dst:
+                shutil.copyfileobj(src, dst)
+            assets.append(_Asset(name=out_path.name, path=out_path))
+
+    return assets
+
+
+def _gh_env(token: str) -> Dict[str, str]:
+    # gh prefers GH_TOKEN.
+    env = dict(os.environ)
+    env["GH_TOKEN"] = token
+    return env
+
+
+def _gh_api_json(repo: str, token: str, endpoint: str) -> Dict[str, Any]:
+    rc, out, err = _run(["gh", "api", endpoint, "-H", "Accept: application/vnd.github+json"], env=_gh_env(token))
+    if rc != 0:
+        raise RuntimeError(f"gh api failed rc={rc}: {err.strip()}")
+    try:
+        data = json.loads(out)
+        return data if isinstance(data, dict) else {"_raw": data}
+    except Exception as e:
+        raise RuntimeError(f"gh api returned non-json: {e}")
+
+
+def _ensure_release(repo: str, token: str, tag: str, name: str, notes: str) -> Dict[str, Any]:
+    # If exists, return it.
+    try:
+        return _gh_api_json(repo, token, f"repos/{repo}/releases/tags/{tag}")
+    except Exception:
+        pass
+
+    cmd = ["gh", "release", "create", tag, "--repo", repo, "--title", name or tag]
+    if notes:
+        cmd += ["--notes", notes]
+    else:
+        cmd += ["--notes", ""]
+
+    rc, out, err = _run(cmd, env=_gh_env(token))
+    if rc != 0:
+        raise RuntimeError(f"gh release create failed rc={rc}: {err.strip()}")
+
+    return _gh_api_json(repo, token, f"repos/{repo}/releases/tags/{tag}")
+
+
+def _upload_asset(repo: str, token: str, tag: str, asset_path: Path, *, name_override: Optional[str] = None) -> None:
+    name = _sanitize_asset_name(name_override or asset_path.name)
+    rc, out, err = _run(
+        ["gh", "release", "upload", tag, str(asset_path), "--repo", repo, "--clobber", "--name", name],
+        env=_gh_env(token),
+    )
+    if rc != 0:
+        raise RuntimeError(f"gh release upload failed for {name} rc={rc}: {err.strip()}")
+
+
+def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
     outputs_dir.mkdir(parents=True, exist_ok=True)
 
-    tenant_id = str(params.get("tenant_id") or "")
-    work_order_id = str(params.get("work_order_id") or "")
-    step_id = str(params.get("step_id") or "")
-    module_run_id = str(params.get("module_run_id") or "")
+    inputs = params.get("inputs") if isinstance(params.get("inputs"), dict) else {}
 
-    inputs = params.get("inputs") or {}
-    pkg_path, pkg_meta = _as_local_path(inputs.get("package_zip"))
-    manifest_path, _ = _as_local_path(inputs.get("manifest_json"))
+    tenant_id = str(params.get("tenant_id") or "").strip()
+    work_order_id = str(params.get("work_order_id") or "").strip()
+    step_id = str(params.get("step_id") or "").strip()
+    module_run_id = str(params.get("module_run_id") or "").strip()
 
-    delivery_log: Dict[str, Any] = {
-        "schema_version": 1,
-        "module_id": MODULE_ID,
-        "tenant_id": tenant_id,
-        "work_order_id": work_order_id,
-        "step_id": step_id,
-        "module_run_id": module_run_id,
-        "started_at": _utcnow_iso(),
-        "ended_at": "",
-        "status": "RUNNING",
-        "reason_slug": "",
-        "message": "",
-        "stage": "init",
-        "inputs_present": {
-            "package_zip": bool(str(pkg_path).strip()),
-            "manifest_json": bool(str(manifest_path).strip()),
-        },
-        "package_meta": pkg_meta,
-    }
-
-    token = str(os.environ.get("GITHUB_TOKEN") or "").strip()
-    repo = str(os.environ.get("GITHUB_REPOSITORY") or "").strip()
-
-    delivery_log["env"] = {
-        "GITHUB_TOKEN_set": bool(token),
-        "GITHUB_REPOSITORY": repo,
-    }
-
-    if not pkg_path or str(pkg_path).strip() == "":
-        return _fail(outputs_dir, reason_slug="missing_input", message="package_zip input is required", delivery_log=delivery_log)
-    if not pkg_path.exists():
-        return _fail(outputs_dir, reason_slug="missing_input", message=f"package_zip not found: {pkg_path}", delivery_log=delivery_log)
-
-    try:
-        bytes_stat = int(pkg_path.stat().st_size)
-    except Exception:
-        bytes_stat = 0
-
-    bytes_hint = int(str(pkg_meta.get("bytes") or "0").strip() or 0)
-    bytes_for_gate = int(bytes_hint or bytes_stat)
-    delivery_log["package_bytes"] = bytes_stat
-    delivery_log["package_bytes_hint"] = bytes_hint
-
-    if bytes_for_gate >= MAX_PACKAGE_BYTES:
-        return _fail(outputs_dir, reason_slug="package_too_large", message=f"package bytes {bytes_for_gate} exceed threshold {MAX_PACKAGE_BYTES}", delivery_log=delivery_log)
-
-    pkg_sha256 = _sha256_file(pkg_path)
-    delivery_log["package_sha256"] = pkg_sha256
-
+    package_zip_uri = inputs.get("package_zip")
+    manifest_uri = inputs.get("manifest_json")
     release_tag = str(inputs.get("release_tag") or "auto").strip()
-    if release_tag == "" or release_tag.lower() == "auto":
-        release_tag = _deterministic_tag(tenant_id, work_order_id, module_run_id)
+    release_name = str(inputs.get("release_name") or "").strip()
+    release_notes = str(inputs.get("release_notes") or "").strip()
 
-    release_name = str(inputs.get("release_name") or "").strip() or release_tag
-    release_notes = str(inputs.get("release_notes") or "").rstrip()
+    if isinstance(package_zip_uri, dict) and "uri" in package_zip_uri:
+        package_zip_uri = package_zip_uri.get("uri")
+    if isinstance(manifest_uri, dict) and "uri" in manifest_uri:
+        manifest_uri = manifest_uri.get("uri")
 
-    delivery_log["release"] = {
-        "tag": release_tag,
-        "name": release_name,
-    }
+    if not package_zip_uri:
+        return _fail(outputs_dir, "missing_required_input", "Input package_zip is required")
 
-    # Dev stub mode: no token or no repo context.
+    package_zip = Path(str(package_zip_uri).replace("file://", "", 1))
+    if not package_zip.exists():
+        return _fail(outputs_dir, "missing_input_file", f"package_zip does not exist: {package_zip}")
+
+    manifest_path: Optional[Path] = None
+    if manifest_uri:
+        mp = Path(str(manifest_uri).replace("file://", "", 1))
+        if mp.exists():
+            manifest_path = mp
+
+    if release_tag == "auto":
+        release_tag = _compute_auto_tag(tenant_id=tenant_id, work_order_id=work_order_id, module_run_id=module_run_id)
+
+    # Prefer explicit env injection from workflow; fall back to GH_TOKEN if present.
+    token = _env("GITHUB_TOKEN") or _env("GH_TOKEN")
+    repo = _env("GITHUB_REPOSITORY")
+
+    started_at = utcnow_iso()
+
+    # Offline / dev stub mode.
     if not token or not repo:
-        delivery_log["stage"] = "dev_stub"
-        ended_at = _utcnow_iso()
-        delivery_log["status"] = "COMPLETED"
-        delivery_log["ended_at"] = ended_at
-        _write_json(outputs_dir / "delivery_log.json", delivery_log)
-
-        outbox = outputs_dir / "outbox"
-        outbox.mkdir(parents=True, exist_ok=True)
-        _write_json(outbox / "release_stub.json", {
-            "provider": "github_release_stub",
-            "tag": release_tag,
-            "name": release_name,
-            "notes": release_notes,
-            "package_sha256": pkg_sha256,
-        })
-
-        receipt = {
-            "schema_version": 1,
-            "provider": "github_release_stub",
+        stub = {
+            "module_id": MODULE_ID,
+            "status": "COMPLETED",
+            "mode": "dev_stub",
+            "created_at": started_at,
             "tenant_id": tenant_id,
             "work_order_id": work_order_id,
             "step_id": step_id,
-            "module_run_id": module_run_id,
-            "delivered_at": ended_at,
-            "verification_status": "stubbed",
-            "remote_path": str(outbox),
-            "remote_object_id": "",
-            "bytes": bytes_stat,
-            "sha256": pkg_sha256,
-            "module_id": MODULE_ID,
-            "status": "COMPLETED",
-            "reason_slug": "",
-            "message": "stubbed",
-            "started_at": delivery_log["started_at"],
-            "ended_at": ended_at,
+            "release_tag": release_tag,
+            "note": "GITHUB_TOKEN or GITHUB_REPOSITORY not set; wrote outbox stub instead of publishing release",
         }
-        _write_json(outputs_dir / "delivery_receipt.json", receipt)
-
-        report = {
-            "type": "DeliveryReport",
-            "module_id": MODULE_ID,
-            "status": "COMPLETED",
-            "message": "stubbed",
-            "tenant_id": tenant_id,
-            "work_order_id": work_order_id,
-            "step_id": step_id,
-            "module_run_id": module_run_id,
-            "package_bytes": bytes_stat,
-        }
-        _write_json(outputs_dir / "report.json", report)
-
-        return {
-            "status": "COMPLETED",
-            "report_path": "report.json",
-            "output_ref": str(outputs_dir),
-            "refund_eligible": False,
-        }
-
-    try:
-        api_base = f"https://api.github.com/repos/{repo}"
-
-        delivery_log["stage"] = "create_release"
-        rel = _request_json(
-            "POST",
-            f"{api_base}/releases",
-            token,
-            {
-                "tag_name": release_tag,
-                "name": release_name,
-                "body": release_notes,
-                "draft": False,
-                "prerelease": False,
-            },
-        )
-
-        upload_url = str(rel.get("upload_url") or "")
-        html_url = str(rel.get("html_url") or "")
-        release_id = str(rel.get("id") or "")
-
-        assets: Dict[str, Any] = {}
-
-        delivery_log["stage"] = "upload_assets"
-        assets["package_zip"] = _upload_asset(upload_url, token, name="package.zip", content_type="application/zip", file_path=pkg_path)
-
-        if manifest_path and str(manifest_path).strip() and manifest_path.exists():
-            assets["manifest_json"] = _upload_asset(upload_url, token, name="manifest.json", content_type="application/json", file_path=manifest_path)
-
-        ended_at = _utcnow_iso()
-        delivery_log["status"] = "COMPLETED"
-        delivery_log["ended_at"] = ended_at
-        delivery_log["release"]["html_url"] = html_url
-        delivery_log["release"]["id"] = release_id
-        delivery_log["assets"] = {
-            k: {
-                "id": str(v.get("id") or ""),
-                "name": str(v.get("name") or ""),
-                "browser_download_url": str(v.get("browser_download_url") or ""),
-                "size": int(v.get("size") or 0),
-            }
-            for k, v in assets.items()
-        }
-
-        _write_json(outputs_dir / "delivery_log.json", delivery_log)
+        _write_json(outputs_dir / "outbox" / "release_stub.json", stub)
 
         receipt = {
-            "schema_version": 1,
             "provider": "github_release",
-            "tenant_id": tenant_id,
-            "work_order_id": work_order_id,
-            "step_id": step_id,
-            "module_run_id": module_run_id,
-            "delivered_at": ended_at,
-            "verification_status": "published",
-            "remote_path": html_url,
-            "remote_object_id": release_id,
-            "bytes": bytes_stat,
-            "sha256": pkg_sha256,
-            "assets": {
-                k: {
-                    "name": str(v.get("name") or ""),
-                    "browser_download_url": str(v.get("browser_download_url") or ""),
-                    "size": int(v.get("size") or 0),
-                }
-                for k, v in assets.items()
-            },
-            "module_id": MODULE_ID,
-            "status": "COMPLETED",
-            "reason_slug": "",
-            "message": "published",
-            "started_at": delivery_log["started_at"],
-            "ended_at": ended_at,
+            "remote_path": release_tag,
+            "remote_object_id": "",
+            "verification_status": "unverified",
+            "bytes": int(package_zip.stat().st_size),
+            "sha256": sha256_file(package_zip),
+            "created_at": started_at,
+            "assets": [],
         }
         _write_json(outputs_dir / "delivery_receipt.json", receipt)
-
-        report = {
-            "type": "DeliveryReport",
-            "module_id": MODULE_ID,
-            "status": "COMPLETED",
-            "message": "published",
-            "tenant_id": tenant_id,
-            "work_order_id": work_order_id,
-            "step_id": step_id,
-            "module_run_id": module_run_id,
-            "release_url": html_url,
-            "package_bytes": bytes_stat,
-        }
-        _write_json(outputs_dir / "report.json", report)
-
+        _write_json(outputs_dir / "delivery_log.json", {"mode": "dev_stub", "stub": stub})
+        _write_json(outputs_dir / "report.json", {"status": "COMPLETED", "mode": "dev_stub"})
         return {
             "status": "COMPLETED",
-            "report_path": "report.json",
-            "output_ref": str(outputs_dir),
-            "refund_eligible": False,
+            "files": ["delivery_receipt.json", "delivery_log.json", "report.json", "outbox/release_stub.json"],
+            "metadata": {"mode": "dev_stub"},
         }
 
-    except urllib.error.HTTPError as e:
-        try:
-            body = e.read().decode("utf-8", "replace")
-        except Exception:
-            body = ""
-        return _fail(outputs_dir, reason_slug="delivery_failed", message=f"HTTPError {e.code}: {body}", delivery_log=delivery_log)
+    # Real publish mode.
+    try:
+        rel = _ensure_release(repo, token, release_tag, release_name or release_tag, release_notes)
+        release_id = str(rel.get("id") or "")
+        html_url = str(rel.get("html_url") or "")
+
+        # Upload core assets.
+        _upload_asset(repo, token, release_tag, package_zip, name_override="package.zip")
+        if manifest_path is not None:
+            _upload_asset(repo, token, release_tag, manifest_path, name_override="manifest.json")
+
+        # Upload images extracted from package.zip.
+        tmp_dir = outputs_dir / "_tmp_assets"
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir)
+        assets = _extract_image_assets_from_zip(package_zip, tmp_dir, max_assets=100)
+        for a in assets:
+            _upload_asset(repo, token, release_tag, a.path, name_override=a.name)
+
+        # Reload release to obtain final asset metadata.
+        rel2 = _gh_api_json(repo, token, f"repos/{repo}/releases/tags/{release_tag}")
+        rel_assets = rel2.get("assets")
+        assets_meta: List[Dict[str, Any]] = []
+        if isinstance(rel_assets, list):
+            for a in rel_assets:
+                if not isinstance(a, dict):
+                    continue
+                assets_meta.append(
+                    {
+                        "github_asset_id": str(a.get("id") or ""),
+                        "asset_name": str(a.get("name") or ""),
+                        "download_url": str(a.get("browser_download_url") or ""),
+                        "bytes": int(a.get("size") or 0),
+                    }
+                )
+
+        receipt = {
+            "provider": "github_release",
+            "remote_path": release_tag,
+            "remote_object_id": release_id,
+            "verification_status": "uploaded",
+            "bytes": int(package_zip.stat().st_size),
+            "sha256": sha256_file(package_zip),
+            "created_at": started_at,
+            "repo": repo,
+            "release_tag": release_tag,
+            "github_release_id": release_id,
+            "release_url": html_url,
+            "assets": assets_meta,
+        }
+
+        _write_json(outputs_dir / "delivery_receipt.json", receipt)
+        _write_json(outputs_dir / "delivery_log.json", {"mode": "publish", "release": {"id": release_id, "url": html_url}})
+        _write_json(outputs_dir / "report.json", {"status": "COMPLETED", "mode": "publish"})
+
+        files = ["delivery_receipt.json", "delivery_log.json", "report.json"]
+        return {"status": "COMPLETED", "files": files, "metadata": {"mode": "publish", "release_tag": release_tag}}
+
     except Exception as e:
-        return _fail(outputs_dir, reason_slug="delivery_failed", message=f"{type(e).__name__}: {e}", delivery_log=delivery_log)
+        meta = {
+            "error": str(e),
+            "repo": repo,
+            "release_tag": release_tag,
+        }
+        return _fail(outputs_dir, "delivery_failed", f"GitHub Release delivery failed: {e}", meta)
