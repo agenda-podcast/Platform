@@ -79,6 +79,102 @@ def _parse_ttl_days_by_place_type(cfg: dict) -> dict[tuple[str, str], int]:
         out[k] = days
     return out
 
+    
+
+def _cache_expires_at_iso_z(*, platform_cfg: dict, ttl_days_by_place_type: dict[tuple[str,str], int], place: str, typ: str, now_dt: datetime) -> str:
+    """Compute expires_at for a cache_index entry.
+
+    Policy:
+      - If cache_ttl_policy.enabled is false: return empty string (never prune).
+      - If no rule exists for (place,typ): return empty string (never prune).
+      - Otherwise: now + N days.
+
+    Empty expires_at is interpreted as NEVER PRUNE.
+    """
+    try:
+        enabled = bool((platform_cfg.get('cache_ttl_policy') or {}).get('enabled', False))
+    except Exception:
+        enabled = False
+    if not enabled:
+        return ""
+    days = ttl_days_by_place_type.get((str(place), str(typ)))
+    if not days:
+        return ""
+    exp_dt = now_dt + timedelta(days=int(days))
+    return exp_dt.isoformat().replace('+00:00', 'Z')
+
+
+def cache_index_upsert(
+    cache_index: list[dict[str, Any]],
+    *,
+    platform_cfg: dict,
+    ttl_days_by_place_type: dict[tuple[str,str], int],
+    place: str,
+    typ: str,
+    ref: str,
+    now_dt: datetime,
+) -> None:
+    """Ensure cache_index contains an entry for (place,typ,ref).
+
+    - created_at is set only on first insert.
+    - expires_at is (re)computed; if the new expiry is later than the existing, it is extended.
+    - If expires_at is empty string, it means NEVER PRUNE.
+
+    This function is deterministic and idempotent.
+    """
+    place = str(place or '').strip()
+    typ = str(typ or '').strip()
+    ref = str(ref or '').strip()
+    if not (place and typ and ref):
+        return
+
+    created_at = now_dt.isoformat().replace('+00:00', 'Z')
+    expires_at = _cache_expires_at_iso_z(
+        platform_cfg=platform_cfg,
+        ttl_days_by_place_type=ttl_days_by_place_type,
+        place=place,
+        typ=typ,
+        now_dt=now_dt,
+    )
+
+    existing = None
+    for r in cache_index:
+        if str(r.get('place','')).strip() == place and str(r.get('type','')).strip() == typ and str(r.get('ref','')).strip() == ref:
+            existing = r
+            break
+
+    if existing is None:
+        cache_index.append({
+            'place': place,
+            'type': typ,
+            'ref': ref,
+            'created_at': created_at,
+            'expires_at': expires_at,
+        })
+        return
+
+    # Extend expiry if both are set and the new expiry is later.
+    if not existing.get('created_at'):
+        existing['created_at'] = created_at
+
+    old_exp_s = str(existing.get('expires_at') or '').strip()
+    new_exp_s = str(expires_at or '').strip()
+
+    # Never-prune takes precedence.
+    if not old_exp_s or not new_exp_s:
+        existing['expires_at'] = old_exp_s or new_exp_s
+        return
+
+    try:
+        old_exp = _parse_iso_z(old_exp_s)
+        new_exp = _parse_iso_z(new_exp_s)
+    except Exception:
+        existing['expires_at'] = new_exp_s
+        return
+
+    if new_exp > old_exp:
+        existing['expires_at'] = new_exp_s
+
 
 class PreflightSecretError(RuntimeError):
     def __init__(self, *, missing: list[dict[str, str]]):

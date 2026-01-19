@@ -310,6 +310,31 @@ PART = r'''\
                         except Exception:
                             pass
 
+                        # Index delivery receipts and remote objects for Cache Prune.
+                        try:
+                            if receipt_rel:
+                                cache_index_upsert(
+                                    cache_index,
+                                    platform_cfg=platform_cfg,
+                                    ttl_days_by_place_type=cache_ttl_days_by_place_type,
+                                    place="fs",
+                                    typ="delivery_receipt",
+                                    ref=receipt_rel,
+                                    now_dt=datetime.now(timezone.utc).replace(microsecond=0),
+                                )
+                            if provider and (remote_object_id_ev or remote_path_ev):
+                                cache_index_upsert(
+                                    cache_index,
+                                    platform_cfg=platform_cfg,
+                                    ttl_days_by_place_type=cache_ttl_days_by_place_type,
+                                    place=provider,
+                                    typ="remote_object",
+                                    ref=(remote_object_id_ev or remote_path_ev),
+                                    now_dt=datetime.now(timezone.utc).replace(microsecond=0),
+                                )
+                        except Exception:
+                            pass
+
             # Persist successful outputs into the local module cache.
             # Cache is only reused when reuse_output_type == "cache".
             if status == "COMPLETED":
@@ -317,24 +342,45 @@ PART = r'''\
                     _copy_tree(out_dir, cache_dir)
 
                 now_dt = datetime.now(timezone.utc).replace(microsecond=0)
-                exp_dt = now_dt + timedelta(days=int(cache_ttl_days))
-                if cache_row is None:
-                    cache_index.append({
-                        'place': 'cache',
-                        'type': 'module_run',
-                        'ref': cache_key,
-                        'created_at': now_dt.isoformat().replace('+00:00', 'Z'),
-                        'expires_at': exp_dt.isoformat().replace('+00:00', 'Z'),
-                    })
-                else:
-                    # Extend expiry forward if needed; keep created_at stable.
-                    try:
-                        old_exp = _parse_iso_z(str(cache_row.get('expires_at', '')))
-                    except Exception:
-                        old_exp = datetime(1970, 1, 1, tzinfo=timezone.utc)
-                    if exp_dt > old_exp:
-                        cache_row['expires_at'] = exp_dt.isoformat().replace('+00:00', 'Z')
 
+                # Index module run cache key (GitHub Actions cache) and local filesystem outputs.
+                cache_index_upsert(
+                    cache_index,
+                    platform_cfg=platform_cfg,
+                    ttl_days_by_place_type=cache_ttl_days_by_place_type,
+                    place="cache",
+                    typ="module_run",
+                    ref=cache_key,
+                    now_dt=now_dt,
+                )
+
+                try:
+                    out_rel = str(out_dir.relative_to(repo_root)).replace("\\", "/")
+                    cache_index_upsert(
+                        cache_index,
+                        platform_cfg=platform_cfg,
+                        ttl_days_by_place_type=cache_ttl_days_by_place_type,
+                        place="fs",
+                        typ="module_out_dir",
+                        ref=out_rel,
+                        now_dt=now_dt,
+                    )
+                except Exception:
+                    pass
+
+                try:
+                    cache_rel = str(cache_dir.relative_to(repo_root)).replace("\\", "/")
+                    cache_index_upsert(
+                        cache_index,
+                        platform_cfg=platform_cfg,
+                        ttl_days_by_place_type=cache_ttl_days_by_place_type,
+                        place="fs",
+                        typ="cache_outputs_dir",
+                        ref=cache_rel,
+                        now_dt=now_dt,
+                    )
+                except Exception:
+                    pass
 
                 # Persist cache_index.csv after any mutation so cache entries are durable even if later steps fail.
                 try:

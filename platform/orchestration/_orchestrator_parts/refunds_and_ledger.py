@@ -164,6 +164,43 @@ PART = r'''\
 	        # durable source of truth for actions and outcomes. Operational status is kept in
 	        # runtime run-state only.
 
+
+
+    # Index published releases/assets into cache_index so Cache Prune has a complete inventory
+    # of platform-stored artifacts and external references.
+    try:
+        now_dt = datetime.now(timezone.utc).replace(microsecond=0)
+        for r in rel_map:
+            gid = str(r.get('github_release_id') or '').strip()
+            tag = str(r.get('tag') or '').strip()
+            ref = gid or tag
+            if ref:
+                cache_index_upsert(
+                    cache_index,
+                    platform_cfg=platform_cfg,
+                    ttl_days_by_place_type=cache_ttl_days_by_place_type,
+                    place='github_release',
+                    typ='release',
+                    ref=ref,
+                    now_dt=now_dt,
+                )
+        for a in asset_map:
+            gid = str(a.get('github_asset_id') or '').strip()
+            name = str(a.get('asset_name') or '').strip()
+            ref = gid or name
+            if ref:
+                cache_index_upsert(
+                    cache_index,
+                    platform_cfg=platform_cfg,
+                    ttl_days_by_place_type=cache_ttl_days_by_place_type,
+                    place='github_asset',
+                    typ='release_asset',
+                    ref=ref,
+                    now_dt=now_dt,
+                )
+    except Exception:
+        pass
+
     # Persist cache_index.csv updates (required for durable cache behavior across runs).
     # This is intentionally scoped to cache_index only: other billing-state tables are
     # written via the ledger/runstate adapters.

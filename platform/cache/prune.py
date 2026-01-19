@@ -17,9 +17,9 @@ class CachePruneResult:
     deleted_caches: int
 
 
-def _parse_iso_z(s: str) -> datetime:
+def _parse_iso_z(s: str) -> datetime | None:
     if not s:
-        return datetime(1970, 1, 1, tzinfo=timezone.utc)
+        return None
     if s.endswith("Z"):
         s = s.replace("Z", "+00:00")
     return datetime.fromisoformat(s)
@@ -62,13 +62,26 @@ def run_cache_prune(billing_state_dir: Path) -> CachePruneResult:
         ref = str(r.get("ref", "")).strip()
         exp_s = str(r.get("expires_at", "")).strip()
 
-        # Only manage explicit cache entries.
-        if place != "cache" or not ref:
+        # Empty expires_at means NEVER PRUNE.
+        if not exp_s:
+            kept.append(r)
+            continue
+
+
+        # Manage only explicit known entries.
+        if not ref:
+            kept.append(r)
+            continue
+
+        if place not in ("cache", "fs"):
             kept.append(r)
             continue
 
         try:
             exp = _parse_iso_z(exp_s)
+            if exp is None:
+                kept.append(r)
+                continue
         except Exception:
             # Invalid expiry is treated as non-expired to avoid destructive behavior.
             kept.append(r)
@@ -78,16 +91,50 @@ def run_cache_prune(billing_state_dir: Path) -> CachePruneResult:
             kept.append(r)
             continue
 
-        entry = by_key.get(ref)
-        if entry is not None:
-            try:
-                delete_cache(int(entry.id))
-                deleted += 1
-            except Exception:
-                # If deletion fails, keep the row so it can be retried.
-                kept.append(r)
-                continue
-        # If the cache does not exist, drop the row anyway.
+        if place == "cache":
+            entry = by_key.get(ref)
+            if entry is not None:
+                try:
+                    delete_cache(int(entry.id))
+                    deleted += 1
+                except Exception:
+                    # If deletion fails, keep the row so it can be retried.
+                    kept.append(r)
+                    continue
+            # If the cache does not exist, drop the row anyway.
+            continue
+
+        # place == "fs": local filesystem paths (relative to repo root).
+        try:
+            pth = Path(ref)
+        except Exception:
+            kept.append(r)
+            continue
+
+        # Safety: only relative paths, no parent traversal.
+        if pth.is_absolute() or ".." in pth.parts:
+            kept.append(r)
+            continue
+
+        # Limit pruning to known safe prefixes.
+        sp = str(pth).replace('\\', '/')
+        if not (sp.startswith('runtime/') or sp.startswith('dist/') or sp.startswith('.billing-state/') or sp.startswith('.cache/') or sp.startswith('cache_outputs') or sp.startswith('runtime\\')):
+            kept.append(r)
+            continue
+
+        try:
+            if pth.exists():
+                if pth.is_dir():
+                    import shutil
+                    shutil.rmtree(pth)
+                else:
+                    pth.unlink()
+        except Exception:
+            kept.append(r)
+            continue
+
+        # On success (or already missing), drop the row.
+        continue
 
     # Persist: write only cache_index.csv (no manifest, no evidence).
     headers = ["place", "type", "ref", "created_at", "expires_at"]
