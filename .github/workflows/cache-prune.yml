@@ -38,21 +38,21 @@ jobs:
 
       - name: Download billing-state cache_index
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p .billing-state
           gh release download "${BILLING_RELEASE_TAG}" -D .billing-state -p 'cache_index.csv'
 
       - name: Cache prune
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           python -m platform.cli cache-prune --billing-state-dir .billing-state
 
       - name: Upload updated cache index
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           gh release upload "${BILLING_RELEASE_TAG}" .billing-state/cache_index.csv --clobber

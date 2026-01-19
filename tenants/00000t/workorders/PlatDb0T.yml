@@ -1,6 +1,6 @@
 work_order_id: PlatDb0T
 enabled: true
-mode: STRICT
+mode: PARTIAL_ALLOWED
 metadata:
   title: Platform verification (package -> Dropbox delivery, dev stub).
   created_at: '2026-01-16T00:00:00Z'

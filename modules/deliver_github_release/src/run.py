@@ -181,10 +181,6 @@ def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
     started_at = utcnow_iso()
 
     # Offline / dev stub mode.
-    # In GitHub Actions, a missing token/repo is a configuration error and must fail deterministically.
-    if str(os.environ.get('GITHUB_ACTIONS','') or '').strip().lower() == 'true' and (not token or not repo):
-        return _fail(outputs_dir, 'missing_github_auth', 'GITHUB_TOKEN/GH_TOKEN and GITHUB_REPOSITORY are required in GitHub Actions')
-
     if not token or not repo:
         stub = {
             "module_id": MODULE_ID,

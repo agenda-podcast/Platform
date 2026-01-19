@@ -134,9 +134,11 @@ PART = r'''\
         awaiting_publish = (reduced == "AWAITING_PUBLISH")
         final_status = "PARTIAL" if awaiting_publish else reduced
 
+        failed_steps = [s for s, st in (step_statuses or {}).items() if str(st or '').upper() != 'COMPLETED']
+
         print(
             f"[orchestrator] work_order_id={work_order_id} status={final_status} plan_type={plan_type} "
-            f"completed_steps={completed_steps}"
+            f"completed_steps={completed_steps} failed_steps={failed_steps}"
         )
 
         note = f"{final_status}: {plan_human}"

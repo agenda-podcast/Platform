@@ -2,7 +2,7 @@ errors:
   - error_code: MISSING_SECRET
     severity: ERROR
     description: "Required env vars are not set for Google Custom Search."
-    remediation: "Define GitHub secrets <tenant_id>wxz_GOOGLE_SEARCH_API_KEY and <tenant_id>wxz_GOOGLE_SEARCH_ENGINE_ID, and map them to env in the workflow."
+    remediation: "Define GitHub secrets 000000wxz_GOOGLE_SEARCH_API_KEY and 000000wxz_GOOGLE_SEARCH_ENGINE_ID, and map them to env in the workflow."
   - error_code: BAD_INPUT
     severity: ERROR
     description: "Work Order inputs for module wxz do not conform to the tenant parameters schema."

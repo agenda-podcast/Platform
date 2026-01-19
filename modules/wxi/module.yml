@@ -25,9 +25,7 @@ cache:
     - img_type
     - img_color_type
     - img_dominant_color
-    - download_thumbnails
-    - download_images
-    - lang
+
 ports:
   inputs:
     port:

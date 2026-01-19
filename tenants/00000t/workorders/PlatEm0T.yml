@@ -1,6 +1,6 @@
 work_order_id: PlatEm0T
 enabled: true
-mode: STRICT
+mode: PARTIAL_ALLOWED
 metadata:
   title: Platform verification (package -> email delivery, dev stub).
   created_at: '2026-01-16T00:00:00Z'

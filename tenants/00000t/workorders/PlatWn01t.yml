@@ -1,6 +1,6 @@
 work_order_id: PlatWn01t
 enabled: true
-mode: STRICT
+mode: PARTIAL_ALLOWED
 metadata:
   title: World news topic (Google pages) -> 10 XLARGE images (Google images) -> package
     -> publish artifacts

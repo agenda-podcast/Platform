@@ -17,21 +17,10 @@ cache:
   enabled: true
   retention_default: 1w
   key_inputs:
-    - queries
-    - safe
-    - max_items_per_query
-    - lang
-    - date_restrict
-    - filter_duplicates
-    - cr
-    - gl
-    - hl
-    - site_search
-    - site_search_filter
-    - exact_terms
-    - exclude_terms
-    - file_type
-    - sort
+  - queries
+  - safe
+  - max_items_per_query
+  - lang
 ports:
   inputs:
     port:

@@ -1,4 +1,5 @@
 """Orchestrator implementation part (role-based split; kept <= 500 lines)."""
+
 PART = r'''\
                                 'output_paths': list(_dd.get('output_paths') or []),
                             }
@@ -9,12 +10,16 @@ PART = r'''\
                             raise PermissionError(f"Deliverable limited_input '{k}' must not be a tenant input for module {mid}")
                         if k not in platform_inputs:
                             raise KeyError(f"Deliverable limited_input '{k}' is not declared as limited_port for module {mid}")
+
                 if tenant_inputs or platform_inputs:
+                    # Reject any attempt to set platform-only inputs.
                     for k in inputs_spec.keys():
                         if k in platform_inputs:
                             raise PermissionError(f"Input '{k}' is platform-only for module {mid}")
                         if k not in tenant_inputs:
                             raise KeyError(f"Unknown input '{k}' for module {mid}")
+
+                    # Inject defaults (tenant + platform) before binding resolution.
                     merged_spec: Dict[str, Any] = dict(inputs_spec)
                     for pid, pspec in tenant_inputs.items():
                         if pid not in merged_spec and "default" in pspec:
@@ -22,9 +27,14 @@ PART = r'''\
                     for pid, pspec in platform_inputs.items():
                         if pid not in merged_spec and "default" in pspec:
                             merged_spec[pid] = pspec.get("default")
+
+                    # Deliverables may request platform-only flags; these override tenant inputs and defaults.
                     for k, v in (applied_limited_inputs or {}).items():
                         merged_spec[k] = v
+
                     resolved_inputs = _resolve_inputs(merged_spec, step_outputs, step_allowed_outputs, run_state, tenant_id, work_order_id)
+
+                    # Required tenant inputs must be present and non-empty after resolution.
                     for pid, pspec in tenant_inputs.items():
                         if not bool(pspec.get("required", False)):
                             continue
@@ -34,14 +44,19 @@ PART = r'''\
                         if v is None or (isinstance(v, str) and not v.strip()):
                             raise ValueError(f"Missing required input '{pid}' for module {mid}")
                 else:
+                    # Legacy permissive behavior: if module has no ports, accept any inputs.
                     resolved_inputs = _resolve_inputs(inputs_spec, step_outputs, step_allowed_outputs, run_state, tenant_id, work_order_id)
+
                 resolve_error = ""
             except Exception as e:
                 resolved_inputs = {}
                 resolve_error = str(e)
+
             if not resolve_error:
                 effective_inputs_hash = _effective_inputs_hash(resolved_inputs)
+
             sname = str(cfg.get("step_name") or cfg.get("name") or "").strip()
+
             params: Dict[str, Any] = {
                 "tenant_id": tenant_id,
                 "work_order_id": work_order_id,
@@ -50,18 +65,27 @@ PART = r'''\
                 "reuse_output_type": str(cfg.get("reuse_output_type","")).strip(),
                 "_platform": {"plan_type": plan_type, "step_id": sid, "step_name": sname, "module_id": mid, "run_id": spend_tx},
             }
+            # Backward compatibility: also expose resolved inputs at top-level (without overriding reserved keys).
             if isinstance(resolved_inputs, dict):
                 for k, v in resolved_inputs.items():
                     if k not in params and k not in ("inputs", "_platform"):
                         params[k] = v
+
             module_path = repo_root / "modules" / mid
             out_dir = runtime_dir / "runs" / tenant_id / work_order_id / sid / mr_id
             ensure_dir(out_dir)
+
             step_run = run_state.mark_step_run_running(mr_id, metadata={'outputs_dir': str(out_dir)})
+
+            # ------------------------------------------------------------------
+            # Performance cache: reuse module outputs from runtime/cache_outputs
+            # when reuse_output_type == "cache".
+            # ------------------------------------------------------------------
             reuse_type = str(cfg.get("reuse_output_type", "")).strip().lower()
             key_inputs = resolved_inputs if isinstance(resolved_inputs, dict) else {}
             cache_key = derive_cache_key(module_id=mid, tenant_id=tenant_id, key_inputs=key_inputs)
             cache_dir = cache_root / _cache_dirname(cache_key)
+
             cache_row = None
             for r in cache_index:
                 if (str(r.get('place','')).strip() == 'cache'
@@ -69,18 +93,17 @@ PART = r'''\
                     and str(r.get('ref','')).strip() == cache_key):
                     cache_row = r
                     break
+
             cache_valid = False
             if cache_row is not None:
                 try:
-                    exp_s = str(cache_row.get("expires_at", "") or "").strip()
-                    if not exp_s:
-                        cache_valid = True
-                    else:
-                        exp = _parse_iso_z(exp_s)
-                        cache_valid = exp > datetime.now(timezone.utc)
+                    exp = _parse_iso_z(str(cache_row.get("expires_at", "")))
+                    cache_valid = exp > datetime.now(timezone.utc)
                 except Exception:
                     cache_valid = False
             if resolve_error:
+                # Chaining input resolution failed; do not execute the module.
+                print(f"[binding_error] work_order_id={work_order_id} tenant_id={tenant_id} step_id={sid} module_id={mid} error={resolve_error}")
                 report = out_dir / "binding_error.json"
                 report.write_text(
                     json.dumps(
@@ -115,11 +138,54 @@ PART = r'''\
             else:
                 module_env = env_for_module(store, mid)
                 result = execute_module_runner(module_path=module_path, params=params, outputs_dir=out_dir, env=module_env)
+
+            # Resolve module contract + kind once per step so downstream logic
+            # (including delivery evidence) can always reference module_kind,
+            # even when the step fails.
             try:
                 contract = registry.get_contract(mid)
             except Exception:
                 contract = {}
             module_kind = str(contract.get('kind') or 'transform').strip() or 'transform'
+
+            # Validate deliverable outputs exist (deterministic fail-fast).
+            if str(result.get('status','') or '').upper() == 'COMPLETED' and requested_deliverables:
+                try:
+                    contract_d = deliverables_cache.get(mid)
+                    if contract_d is None:
+                        try:
+                            _c2 = registry.get_contract(mid)
+                        except Exception:
+                            _c2 = {}
+                        _d2 = _c2.get('deliverables') or {}
+                        if not isinstance(_d2, dict):
+                            _d2 = {}
+                        contract_d = {}
+                        for _did2, _dd2 in _d2.items():
+                            if not isinstance(_dd2, dict):
+                                continue
+                            contract_d[str(_did2)] = {
+                                'limited_inputs': dict(_dd2.get('limited_inputs') or {}),
+                                'output_paths': list(_dd2.get('output_paths') or []),
+                            }
+                        deliverables_cache[mid] = contract_d
+                    expected_paths = _deliverable_output_paths(contract_d, requested_deliverables)
+                    missing_paths = [rp for rp in expected_paths if not (out_dir / rp).exists()]
+                    if missing_paths:
+                        # Mark the step FAILED with a deterministic reason so downstream bindings do not fail opaquely.
+                        miss = ','.join(missing_paths)
+                        print(f"[deliverable_missing] work_order_id={work_order_id} step_id={sid} module_id={mid} missing={miss}")
+                        err = {'reason_code': 'deliverable_missing', 'message': f"missing deliverable outputs: {miss}", 'type': 'DeliverableMissing'}
+                        step_run = run_state.mark_step_run_failed(mr_id, err)
+                        result = {
+                            'status': 'FAILED',
+                            'reason_slug': 'deliverable_missing',
+                            'report_path': '',
+                            'output_ref': '',
+                        }
+                except Exception as _e:
+                    # Do not crash the orchestrator on validation helper issues; fall back to normal behavior.
+                    pass
 
             # Record outputs into RunStateStore using module contract output paths (latest wins).
             if str(result.get('status','') or '').upper() == 'COMPLETED':
@@ -161,11 +227,38 @@ PART = r'''\
                             run_state.record_output(rec)
                         except Exception:
                             pass
-                step_run = run_state.mark_step_run_succeeded(
-                    mr_id,
-                    requested_deliverables=list(requested_deliverables or []),
-                    metadata={'outputs_dir': str(out_dir)},
-                )
+
+                # Validate that deliverable-declared output paths exist when deliverables are requested.
+                if requested_deliverables:
+                    _dc = deliverables_cache.get(mid) or {}
+                    missing_paths: List[str] = []
+                    try:
+                        req_paths = _deliverable_output_paths(_dc, list(requested_deliverables or []))
+                    except Exception:
+                        req_paths = []
+                    for _rp in req_paths:
+                        _p = str(_rp or '').lstrip('/').strip()
+                        if not _p:
+                            continue
+                        if not (out_dir / _p).exists():
+                            missing_paths.append(_p)
+                    if missing_paths:
+                        msg = f"Missing deliverable outputs for {mid}: {missing_paths}"
+                        print(f"[deliverable_missing] work_order_id={work_order_id} tenant_id={tenant_id} step_id={sid} module_id={mid} missing={missing_paths}")
+                        rep = out_dir / 'deliverable_missing.json'
+                        rep.write_text(json.dumps({'missing_paths': missing_paths, 'requested_deliverables': requested_deliverables}, indent=2) + '\n', encoding='utf-8')
+                        _rs = 'deliverable_missing'
+                        _rc = _reason_code(reason_idx, 'GLOBAL', '', _rs) or _reason_code(reason_idx, 'MODULE', mid, _rs) or _rs
+                        err = {'reason_code': _rc, 'message': msg, 'type': 'DeliverableMissing'}
+                        step_run = run_state.mark_step_run_failed(mr_id, err)
+                        result = {'status': 'FAILED', 'reason_slug': _rs, 'report_path': 'deliverable_missing.json', 'output_ref': ''}
+
+                if str(result.get('status','') or '').upper() == 'COMPLETED':
+                    step_run = run_state.mark_step_run_succeeded(
+                        mr_id,
+                        requested_deliverables=list(requested_deliverables or []),
+                        metadata={'outputs_dir': str(out_dir)},
+                    )
             else:
                 if str(result.get('status','') or '').upper() == 'FAILED':
                     # Prefer canonical reason_code (from reason_catalog) in run-state logs.
@@ -427,13 +520,6 @@ PART = r'''\
                     billing.save_table("cache_index.csv", cache_index, headers=CACHE_INDEX_HEADERS)
                 except Exception as e:
                     print(f"[cache_index][WARN] failed to persist cache_index.csv mid-run: {e}")
-
-                # Persist GitHub mapping tables after any mutation so delivery indexing is durable.
-                try:
-                    billing.save_table("github_releases_map.csv", rel_map, headers=GITHUB_RELEASES_MAP_HEADERS)
-                    billing.save_table("github_assets_map.csv", asset_map, headers=GITHUB_ASSETS_MAP_HEADERS)
-                except Exception as e:
-                    print(f"[github_maps][WARN] failed to persist github_*_map.csv mid-run: {e}")
 
 
             # Refund policy
