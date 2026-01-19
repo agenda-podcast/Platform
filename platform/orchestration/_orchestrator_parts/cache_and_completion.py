@@ -127,6 +127,10 @@ PART = r'''\
                     cache_valid = False
             if resolve_error:
                 # Chaining input resolution failed; do not execute the module.
+                try:
+                    print("[binding_error] work_order_id=%s step_id=%s module_id=%s error=%s" % (work_order_id, sid, mid, resolve_error))
+                except Exception:
+                    pass
                 report = out_dir / "binding_error.json"
                 report.write_text(
                     json.dumps(
@@ -172,10 +176,18 @@ PART = r'''\
             module_kind = str(contract.get('kind') or 'transform').strip() or 'transform'
 
             # Record outputs into RunStateStore using module contract output paths (latest wins).
+            # IMPORTANT: module.yml represents ports as lists under outputs.port and outputs.limited_port.
+            # We must use the normalized ports index, not contract.get('outputs') directly.
             if str(result.get('status','') or '').upper() == 'COMPLETED':
-                outputs_def = contract.get('outputs') or {}
-                if isinstance(outputs_def, dict):
-                    for output_id, odef in outputs_def.items():
+                try:
+                    if mid not in ports_cache:
+                        ports_cache[mid] = _load_module_ports(registry, mid)
+                    _t_in, _p_in, _t_out = _ports_index(ports_cache[mid])
+                except Exception:
+                    _t_out = {}
+
+                if isinstance(_t_out, dict):
+                    for output_id, odef in _t_out.items():
                         if not isinstance(odef, dict):
                             continue
                         rel_path = str(odef.get('path') or '').lstrip('/').strip()
@@ -202,7 +214,7 @@ PART = r'''\
                                 output_id=str(output_id),
                                 path=rel_path,
                                 uri=abs_path.resolve().as_uri(),
-                                content_type=str(odef.get('format') or ''),
+                                content_type=str(odef.get('format') or odef.get('content_type') or ''),
                                 sha256=sha,
                                 bytes=bs,
                                 bytes_size=bs,
