@@ -11,22 +11,6 @@ PART = r'''\
                         if k not in platform_inputs:
                             raise KeyError(f"Deliverable limited_input '{k}' is not declared as limited_port for module {mid}")
 
-                # Debug log: show deliverables-driven limited_inputs applied to this step.
-                # Do NOT log secrets; limited_inputs are platform-only flags by contract.
-                try:
-                    print(
-                        "[inputs][limited_inputs] step_id=%s module_id=%s deliverables_source=%s requested_deliverables=%s applied_limited_inputs=%s"
-                        % (
-                            sid,
-                            mid,
-                            deliverables_source,
-                            json.dumps(list(requested_deliverables or []), sort_keys=True),
-                            json.dumps(dict(applied_limited_inputs or {}), sort_keys=True),
-                        )
-                    )
-                except Exception:
-                    pass
-
                 if tenant_inputs or platform_inputs:
                     # Reject any attempt to set platform-only inputs.
                     for k in inputs_spec.keys():
@@ -48,53 +32,7 @@ PART = r'''\
                     for k, v in (applied_limited_inputs or {}).items():
                         merged_spec[k] = v
 
-                    try:
-                        resolved_inputs = _resolve_inputs(
-                            merged_spec,
-                            step_outputs,
-                            step_allowed_outputs,
-                            run_state,
-                            tenant_id,
-                            work_order_id,
-                        )
-                    except Exception as e:
-                        # Binding / input resolution failures must be visible and must not crash the run.
-                        # The workorder can continue; downstream steps will generally be SKIPPED/FAILED.
-                        try:
-                            err = {
-                                "type": "BindingError",
-                                "message": str(e),
-                            }
-                            (out_dir / "binding_error.json").write_text(
-                                json.dumps(err, ensure_ascii=False, indent=2) + "\n",
-                                encoding="utf-8",
-                            )
-                        except Exception:
-                            err = {"type": "BindingError", "message": str(e)}
-                        try:
-                            print(
-                                "[binding_error] work_order_id=%s tenant_id=%s step_id=%s module_id=%s error=%s"
-                                % (work_order_id, tenant_id, sid, mid, str(e))
-                            )
-                        except Exception:
-                            pass
-                        try:
-                            step_run = run_state.mark_step_run_failed(step_run.module_run_id, err)
-                        except Exception:
-                            pass
-                        # Mark this step as failed and continue to the next step.
-                        any_failed = True
-                        step_statuses[sid] = "FAILED"
-                        step_outputs[sid] = out_dir
-                        continue
-
-                    try:
-                        di = None
-                        if isinstance(resolved_inputs, dict):
-                            di = resolved_inputs.get('download_images')
-                        print("[inputs][resolved] step_id=%s module_id=%s download_images=%s resolved_keys=%s" % (sid, mid, str(di), str(len(resolved_inputs) if isinstance(resolved_inputs, dict) else 0)))
-                    except Exception:
-                        pass
+                    resolved_inputs = _resolve_inputs(merged_spec, step_outputs, step_allowed_outputs, run_state, tenant_id, work_order_id)
 
                     # Required tenant inputs must be present and non-empty after resolution.
                     for pid, pspec in tenant_inputs.items():
@@ -165,10 +103,6 @@ PART = r'''\
                     cache_valid = False
             if resolve_error:
                 # Chaining input resolution failed; do not execute the module.
-                try:
-                    print("[binding_error] work_order_id=%s step_id=%s module_id=%s error=%s" % (work_order_id, sid, mid, resolve_error))
-                except Exception:
-                    pass
                 report = out_dir / "binding_error.json"
                 report.write_text(
                     json.dumps(
@@ -213,54 +147,65 @@ PART = r'''\
                 contract = {}
             module_kind = str(contract.get('kind') or 'transform').strip() or 'transform'
 
-            # Record outputs into RunStateStore using module contract output paths (latest wins).
-            # IMPORTANT: module.yml represents ports as lists under outputs.port and outputs.limited_port.
-            # We must use the normalized ports index, not contract.get('outputs') directly.
+            # Record outputs into RunStateStore using module ports output paths (latest wins).
+            # IMPORTANT: module.yml defines outputs under ports.outputs.port (and ports.outputs.limited_port),
+            # not as a direct contract['outputs'] dict. Binding resolution depends on these records.
             if str(result.get('status','') or '').upper() == 'COMPLETED':
                 try:
                     if mid not in ports_cache:
                         ports_cache[mid] = _load_module_ports(registry, mid)
-                    _t_in, _p_in, _t_out = _ports_index(ports_cache[mid])
+                    ports = ports_cache.get(mid) or {}
                 except Exception:
-                    _t_out = {}
+                    ports = {}
 
-                if isinstance(_t_out, dict):
-                    for output_id, odef in _t_out.items():
-                        if not isinstance(odef, dict):
-                            continue
-                        rel_path = str(odef.get('path') or '').lstrip('/').strip()
-                        if not rel_path:
-                            continue
-                        abs_path = out_dir / rel_path
-                        if not abs_path.exists():
-                            continue
-                        try:
-                            from platform.utils.hashing import sha256_file
-                            sha = sha256_file(abs_path)
-                            bs = int(abs_path.stat().st_size)
-                        except Exception:
-                            sha = ''
-                            bs = 0
-                        try:
-                            from platform.infra.models import OutputRecord
-                            rec = OutputRecord(
-                                tenant_id=tenant_id,
-                                work_order_id=work_order_id,
-                                step_id=sid,
-                                module_id=mid,
-                                kind=module_kind,
-                                output_id=str(output_id),
-                                path=rel_path,
-                                uri=abs_path.resolve().as_uri(),
-                                content_type=str(odef.get('format') or odef.get('content_type') or ''),
-                                sha256=sha,
-                                bytes=bs,
-                                bytes_size=bs,
-                                created_at=utcnow_iso(),
-                            )
-                            run_state.record_output(rec)
-                        except Exception:
-                            pass
+                outputs_port = {}
+                try:
+                    op = ((ports.get('outputs') or {}).get('port') or [])
+                    if isinstance(op, list):
+                        for o in op:
+                            if not isinstance(o, dict):
+                                continue
+                            oid = str(o.get('id') or '').strip()
+                            if not oid:
+                                continue
+                            outputs_port[oid] = o
+                except Exception:
+                    outputs_port = {}
+
+                for output_id, odef in outputs_port.items():
+                    rel_path = str(odef.get('path') or '').lstrip('/').strip()
+                    if not rel_path:
+                        continue
+                    abs_path = out_dir / rel_path
+                    if not abs_path.exists():
+                        continue
+                    try:
+                        from platform.utils.hashing import sha256_file
+                        sha = sha256_file(abs_path)
+                        bs = int(abs_path.stat().st_size)
+                    except Exception:
+                        sha = ''
+                        bs = 0
+                    try:
+                        from platform.infra.models import OutputRecord
+                        rec = OutputRecord(
+                            tenant_id=tenant_id,
+                            work_order_id=work_order_id,
+                            step_id=sid,
+                            module_id=mid,
+                            kind=module_kind,
+                            output_id=str(output_id),
+                            path=rel_path,
+                            uri=abs_path.resolve().as_uri(),
+                            content_type=str(odef.get('format') or ''),
+                            sha256=sha,
+                            bytes=bs,
+                            bytes_size=bs,
+                            created_at=utcnow_iso(),
+                        )
+                        run_state.record_output(rec)
+                    except Exception:
+                        pass
                 step_run = run_state.mark_step_run_succeeded(
                     mr_id,
                     requested_deliverables=list(requested_deliverables or []),
