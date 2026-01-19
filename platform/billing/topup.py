@@ -31,6 +31,43 @@ def _load_topup_methods(repo_root: Path) -> Dict[str, Dict[str, str]]:
     return {str(r.get("topup_method_id", "")).strip(): r for r in rows if r.get("topup_method_id")}
 
 
+
+
+def resolve_default_admin_topup_method_id(repo_root: Path) -> str:
+    """Return default enabled admin topup_method_id.
+
+    Deterministic selection:
+    - Prefer enabled methods whose name or instructions contain 'admin'.
+    - If multiple match, choose lexicographically smallest topup_method_id.
+    - If none match, fall back to lexicographically smallest enabled method.
+
+    Raises ValueError if no enabled methods exist.
+    """
+    methods = _load_topup_methods(repo_root)
+    enabled_ids = []
+    admin_ids = []
+    for mid, row in methods.items():
+        cmid = canon_topup_method_id(mid)
+        if not cmid:
+            continue
+        enabled = str(row.get('enabled', '') or '').strip().lower()
+        if enabled == 'false':
+            continue
+        enabled_ids.append(cmid)
+        blob = (str(row.get('name', '') or '') + ' ' + str(row.get('instructions', '') or '')).lower()
+        if 'admin' in blob:
+            admin_ids.append(cmid)
+
+    enabled_ids = sorted(set(enabled_ids))
+    admin_ids = sorted(set(admin_ids))
+    if admin_ids:
+        return admin_ids[0]
+    if enabled_ids:
+        return enabled_ids[0]
+    raise ValueError('No enabled topup methods found in platform/billing/topup_instructions.csv')
+
+
+
 def apply_admin_topup(repo_root: Path, billing: BillingState, req: TopupRequest) -> str:
     """Apply a manual top-up by appending ledger entries and updating balance.
 

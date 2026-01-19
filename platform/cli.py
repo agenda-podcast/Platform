@@ -16,7 +16,7 @@ from .orchestration.module_exec import execute_module_runner
 from .secretstore.loader import load_secretstore, env_for_module
 
 from .billing.state import BillingState
-from .billing.topup import TopupRequest, apply_admin_topup
+from .billing.topup import TopupRequest, apply_admin_topup, resolve_default_admin_topup_method_id
 from .billing.payments import (
     reconcile_repo_payments_into_billing_state,
     validate_repo_payments,
@@ -182,10 +182,14 @@ def cmd_admin_topup(args: argparse.Namespace) -> int:
         ]
     )
 
+    topup_method_id = str(getattr(args, 'topup_method_id', '') or '').strip()
+    if not topup_method_id:
+        topup_method_id = resolve_default_admin_topup_method_id(repo_root)
+
     req = TopupRequest(
         tenant_id=str(args.tenant_id),
         amount_credits=int(args.amount_credits),
-        topup_method_id=str(args.topup_method_id),
+        topup_method_id=topup_method_id,
         reference=str(args.reference),
         note=str(args.note or ""),
     )
@@ -270,7 +274,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("admin-topup", help="Admin: apply a ledger top-up to billing-state")
     sp.add_argument("--tenant-id", required=True)
     sp.add_argument("--amount-credits", required=True)
-    sp.add_argument("--topup-method-id", required=True)
+    sp.add_argument("--topup-method-id", default="", help="Optional. If omitted, uses default enabled admin topup method from platform/billing/topup_instructions.csv")
     sp.add_argument("--reference", required=True)
     sp.add_argument("--note", default="")
     sp.add_argument("--billing-state-dir", default=".billing-state")
