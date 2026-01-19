@@ -1,8 +1,6 @@
 """Orchestrator implementation part (role-based split; kept <= 500 lines)."""
-
 PART = r'''\
 from __future__ import annotations
-
 import json
 import re
 import os
@@ -12,9 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
-
 import yaml
-
 from ..billing.state import BillingState
 from ..common.id_codec import canon_module_id, canon_tenant_id, canon_work_order_id, id_key, dedupe_tenants_credits
 from ..common.id_policy import generate_unique_id, validate_id
@@ -36,9 +32,7 @@ from .idempotency import (
     key_refund,
 )
 from .status_reducer import StatusInputs, reduce_workorder_status
-
 from ..secretstore.loader import load_secretstore, env_for_module
-
 from ..workorders.preflight import validate_workorder_preflight
 
 

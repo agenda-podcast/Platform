@@ -111,6 +111,12 @@ if [[ "${PURCHASED}" == "1" ]]; then
   ENABLE_RELEASES_FLAG="--enable-github-releases"
 fi
 
+# In GitHub Actions, enabling Releases is required for delivery modules such as deliver_github_release.
+# This avoids relying on heuristic purchase detection.
+if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  ENABLE_RELEASES_FLAG="--enable-github-releases"
+fi
+
 # 3) Run orchestrator.
 python -m platform.cli orchestrator \
   --runtime-dir "${RUNTIME_DIR}" \

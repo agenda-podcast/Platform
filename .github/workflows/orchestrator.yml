@@ -100,6 +100,7 @@ jobs:
             --repo "${{ github.repository }}" \
             --tag "${BILLING_STATE_RELEASE_TAG}" \
             --billing-state-dir "${BILLING_STATE_DIR}"
+            --enable-github-releases
 
       - name: Scope queue to selected workorder
         if: steps.wo.outputs.work_order_id != ''
@@ -147,6 +148,7 @@ jobs:
             --runtime-profile config/runtime_profile.dev_github.yml \
             --runtime-dir "${RUNTIME_DIR}" \
             --billing-state-dir "${BILLING_STATE_DIR}"
+            --enable-github-releases
 
       - name: Billing-state tail (this run only)
         if: always()

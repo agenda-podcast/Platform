@@ -1,5 +1,4 @@
 """Orchestrator implementation part (role-based split; kept <= 500 lines)."""
-
 PART = r'''\
                                 'output_paths': list(_dd.get('output_paths') or []),
                             }
@@ -10,16 +9,12 @@ PART = r'''\
                             raise PermissionError(f"Deliverable limited_input '{k}' must not be a tenant input for module {mid}")
                         if k not in platform_inputs:
                             raise KeyError(f"Deliverable limited_input '{k}' is not declared as limited_port for module {mid}")
-
                 if tenant_inputs or platform_inputs:
-                    # Reject any attempt to set platform-only inputs.
                     for k in inputs_spec.keys():
                         if k in platform_inputs:
                             raise PermissionError(f"Input '{k}' is platform-only for module {mid}")
                         if k not in tenant_inputs:
                             raise KeyError(f"Unknown input '{k}' for module {mid}")
-
-                    # Inject defaults (tenant + platform) before binding resolution.
                     merged_spec: Dict[str, Any] = dict(inputs_spec)
                     for pid, pspec in tenant_inputs.items():
                         if pid not in merged_spec and "default" in pspec:
@@ -27,14 +22,9 @@ PART = r'''\
                     for pid, pspec in platform_inputs.items():
                         if pid not in merged_spec and "default" in pspec:
                             merged_spec[pid] = pspec.get("default")
-
-                    # Deliverables may request platform-only flags; these override tenant inputs and defaults.
                     for k, v in (applied_limited_inputs or {}).items():
                         merged_spec[k] = v
-
                     resolved_inputs = _resolve_inputs(merged_spec, step_outputs, step_allowed_outputs, run_state, tenant_id, work_order_id)
-
-                    # Required tenant inputs must be present and non-empty after resolution.
                     for pid, pspec in tenant_inputs.items():
                         if not bool(pspec.get("required", False)):
                             continue
@@ -44,19 +34,14 @@ PART = r'''\
                         if v is None or (isinstance(v, str) and not v.strip()):
                             raise ValueError(f"Missing required input '{pid}' for module {mid}")
                 else:
-                    # Legacy permissive behavior: if module has no ports, accept any inputs.
                     resolved_inputs = _resolve_inputs(inputs_spec, step_outputs, step_allowed_outputs, run_state, tenant_id, work_order_id)
-
                 resolve_error = ""
             except Exception as e:
                 resolved_inputs = {}
                 resolve_error = str(e)
-
             if not resolve_error:
                 effective_inputs_hash = _effective_inputs_hash(resolved_inputs)
-
             sname = str(cfg.get("step_name") or cfg.get("name") or "").strip()
-
             params: Dict[str, Any] = {
                 "tenant_id": tenant_id,
                 "work_order_id": work_order_id,
@@ -65,27 +50,18 @@ PART = r'''\
                 "reuse_output_type": str(cfg.get("reuse_output_type","")).strip(),
                 "_platform": {"plan_type": plan_type, "step_id": sid, "step_name": sname, "module_id": mid, "run_id": spend_tx},
             }
-            # Backward compatibility: also expose resolved inputs at top-level (without overriding reserved keys).
             if isinstance(resolved_inputs, dict):
                 for k, v in resolved_inputs.items():
                     if k not in params and k not in ("inputs", "_platform"):
                         params[k] = v
-
             module_path = repo_root / "modules" / mid
             out_dir = runtime_dir / "runs" / tenant_id / work_order_id / sid / mr_id
             ensure_dir(out_dir)
-
             step_run = run_state.mark_step_run_running(mr_id, metadata={'outputs_dir': str(out_dir)})
-
-            # ------------------------------------------------------------------
-            # Performance cache: reuse module outputs from runtime/cache_outputs
-            # when reuse_output_type == "cache".
-            # ------------------------------------------------------------------
             reuse_type = str(cfg.get("reuse_output_type", "")).strip().lower()
             key_inputs = resolved_inputs if isinstance(resolved_inputs, dict) else {}
             cache_key = derive_cache_key(module_id=mid, tenant_id=tenant_id, key_inputs=key_inputs)
             cache_dir = cache_root / _cache_dirname(cache_key)
-
             cache_row = None
             for r in cache_index:
                 if (str(r.get('place','')).strip() == 'cache'
@@ -93,16 +69,18 @@ PART = r'''\
                     and str(r.get('ref','')).strip() == cache_key):
                     cache_row = r
                     break
-
             cache_valid = False
             if cache_row is not None:
                 try:
-                    exp = _parse_iso_z(str(cache_row.get("expires_at", "")))
-                    cache_valid = exp > datetime.now(timezone.utc)
+                    exp_s = str(cache_row.get("expires_at", "") or "").strip()
+                    if not exp_s:
+                        cache_valid = True
+                    else:
+                        exp = _parse_iso_z(exp_s)
+                        cache_valid = exp > datetime.now(timezone.utc)
                 except Exception:
                     cache_valid = False
             if resolve_error:
-                # Chaining input resolution failed; do not execute the module.
                 report = out_dir / "binding_error.json"
                 report.write_text(
                     json.dumps(
@@ -137,10 +115,6 @@ PART = r'''\
             else:
                 module_env = env_for_module(store, mid)
                 result = execute_module_runner(module_path=module_path, params=params, outputs_dir=out_dir, env=module_env)
-
-            # Resolve module contract + kind once per step so downstream logic
-            # (including delivery evidence) can always reference module_kind,
-            # even when the step fails.
             try:
                 contract = registry.get_contract(mid)
             except Exception:
