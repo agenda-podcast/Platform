@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       work_order_choice:
-        description: Run a single platform workorder (tenant_id=000000, enabled=true). Select __FULL_QUEUE__ to run the normal full queue.
+        description: Run a single platform workorder (tenant_id=00000t, enabled=true). Select __FULL_QUEUE__ to run the normal full queue.
         required: true
         type: choice
         options:

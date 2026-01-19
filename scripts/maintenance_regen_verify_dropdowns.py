@@ -91,7 +91,7 @@ def _load_platform_workorder_ids(repo_root: Path) -> List[str]:
         enabled = str(r.get("enabled", "") or "").strip().lower() == "true"
         if not wid:
             continue
-        if tid != "000000":
+        if tid != "00000t":
             continue
         if not enabled:
             continue

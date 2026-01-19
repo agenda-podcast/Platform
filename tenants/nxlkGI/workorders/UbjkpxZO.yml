@@ -6,7 +6,7 @@ metadata:
   created_at: '2025-12-31T12:00:00Z'
   notes: 'Steps chaining demo: 9SD -> wxi -> U2T.'
 steps:
-- step_id: a1
+- step_id: a1t
   step_name: derive_queries
   module_id: 9SD
   kind: transform
@@ -17,7 +17,7 @@ steps:
     topic: Word News Today
     language: en
     freshness_days: '7'
-- step_id: b2
+- step_id: b2t
   step_name: search_images
   module_id: wxi
   kind: transform
@@ -27,13 +27,13 @@ steps:
   - thumbnails
   inputs:
     queries:
-      from_step: a1
+      from_step: a1t
       from_file: derived_queries.txt
       selector: lines
       take: 5
     safe: active
     max_items_per_query: 10
-- step_id: c3
+- step_id: c3t
   step_name: seed_text
   module_id: U2T
   kind: transform
@@ -42,11 +42,11 @@ steps:
   - tenant_outputs
   inputs:
     topic:
-      from_step: b2
+      from_step: b2t
       from_file: results.jsonl
       selector: jsonl_first
       json_path: $.title
-- step_id: p4
+- step_id: p4t
   step_name: package_outputs
   module_id: package_std
   kind: packaging
@@ -54,13 +54,13 @@ steps:
   - package_artifacts
   inputs:
     bound_outputs:
-    - from_step: a1
+    - from_step: a1t
       output_id: derived_queries
       as_path: derived_queries.txt
-    - from_step: a1
+    - from_step: a1t
       output_id: report
       as_path: derive_queries_report.json
-- step_id: d5
+- step_id: d5t
   step_name: deliver_to_dropbox_stub
   module_id: deliver_dropbox
   kind: delivery
@@ -68,10 +68,10 @@ steps:
   - delivery_receipt
   inputs:
     package_zip:
-      from_step: p4
+      from_step: p4t
       output_id: package_zip
     manifest_json:
-      from_step: p4
+      from_step: p4t
       output_id: manifest_json
     remote_base_path: /Apps/Platform/Demo
 promotions: []

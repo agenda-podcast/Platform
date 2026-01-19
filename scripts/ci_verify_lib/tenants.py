@@ -20,12 +20,12 @@ def _validate_tenants(repo_root: Path) -> None:
         tid = d.name.strip()
         validate_id("tenant_id", tid, "tenant_id")
 
-    # spot-check platform tenant workorders path exists if tenant 000000 exists
-    platform_tenant = tenants_dir / "000000"
+    # spot-check platform tenant workorders path exists if tenant 00000t exists
+    platform_tenant = tenants_dir / "00000t"
     if platform_tenant.exists():
         wo_dir = platform_tenant / "workorders"
         if not wo_dir.exists():
-            core._fail("Platform tenant 000000 exists but tenants/000000/workorders missing")
+            core._fail("Platform tenant 00000t exists but tenants/00000t/workorders missing")
 
     # maintenance-state/workorders_index.csv header and ID formats
     idx = repo_root / "maintenance-state" / "workorders_index.csv"

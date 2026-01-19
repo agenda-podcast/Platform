@@ -16,7 +16,7 @@ Authoritative documentation:
   - Used by: `.github/workflows/verify_modules.yml`.
 
 - `verify_workorder.py`
-  - Scope: execute one platform-tenant workorder end-to-end (`tenant_id=000000`).
+  - Scope: execute one platform-tenant workorder end-to-end (`tenant_id=00000t`).
   - Optional helper for local single-workorder runs; the canonical CI path is `.github/workflows/orchestrator.yml`.
 
 - `maintenance_regen_verify_dropdowns.py`

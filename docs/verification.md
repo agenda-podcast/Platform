@@ -4,7 +4,7 @@ This repository provides three verification workflows that progressively increas
 
 1. **Verify Platform**: repository invariants only (no module execution, no workorder execution).
 2. **Verify Modules**: executes a *single module* self-test declared in `module.yml`.
-3. **Verify Workorders**: executes a *full workorder* end-to-end for the **platform tenant** (`tenant_id=000000`).
+3. **Verify Workorders**: executes a *full workorder* end-to-end for the **platform tenant** (`tenant_id=00000t`).
 
 The intent is to make verification:
 - deterministic (stable selection inputs, stable indexes, stable outputs),
@@ -133,7 +133,7 @@ python scripts/verify_module.py --module-id deliver_email
 ### Responsibility
 Runs the canonical **Orchestrator** workflow against either:
 - the normal full queue, or
-- one selected platform-tenant workorder (`tenant_id=000000`).
+- one selected platform-tenant workorder (`tenant_id=00000t`).
 
 This is the platform's **workorder verification** path: it uses the same orchestrator entrypoint and the same billing, publishing, and delivery behavior as the full run.
 
@@ -158,7 +158,7 @@ Source of truth:
 - `maintenance-state/workorders_index.csv`
 
 Filter rules applied by dropdown regeneration:
-- `tenant_id == "000000"`
+- `tenant_id == "00000t"`
 - `enabled == true`
 
 Regeneration:

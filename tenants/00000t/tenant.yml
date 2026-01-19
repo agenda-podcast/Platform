@@ -1,4 +1,4 @@
-tenant_id: '000000'
+tenant_id: 00000t
 tenant_name: Platform Tenant
 registered_at: '2026-01-16T00:00:00Z'
 billing:
@@ -6,4 +6,4 @@ billing:
   external_customer_id: ''
   notes: Internal platform tenant used for deterministic verification workorders.
 allow_release_consumers:
-- '000000'
+- '00000t'

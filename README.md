@@ -106,7 +106,7 @@ This repository uses three verification workflows with progressively broader sco
 
 - **Verify Platform**: repository invariants only (no module execution).
 - **Verify Modules**: executes a single module `testing.self_test`.
-- **Verify Workorders**: executes a real platform-tenant workorder (`tenant_id=000000`).
+- **Verify Workorders**: executes a real platform-tenant workorder (`tenant_id=00000t`).
 
 Details, including dropdown generation, manual overrides, and cache cleanup policy:
 - `docs/verification.md`
