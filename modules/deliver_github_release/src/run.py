@@ -174,8 +174,10 @@ def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
     if release_tag == "auto":
         release_tag = _compute_auto_tag(tenant_id=tenant_id, work_order_id=work_order_id, module_run_id=module_run_id)
 
-    # Prefer explicit env injection from workflow; fall back to GH_TOKEN if present.
-    token = _env("GITHUB_TOKEN") or _env("GH_TOKEN")
+    # Prefer an explicit PAT injected by workflow for release publishing.
+    # Rationale: repo-level secrets can provide a PAT with stable permissions,
+    # while the default GitHub Actions token may be restricted depending on repo settings.
+    token = _env("WORKFLOW_PUSH_TOKEN") or _env("GITHUB_TOKEN") or _env("GH_TOKEN")
     repo = _env("GITHUB_REPOSITORY")
 
     started_at = utcnow_iso()
