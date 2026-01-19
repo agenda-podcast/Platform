@@ -147,10 +147,18 @@ PART = r'''\
                 contract = {}
             module_kind = str(contract.get('kind') or 'transform').strip() or 'transform'
 
+            # Determine effective status for completion handling. Some legacy modules return
+            # only a 'files' list and omit 'status'. Treat presence of a files list as COMPLETED.
+            _raw_status = str(result.get('status','') or '').strip().upper()
+            _effective_status = _raw_status
+            if not _effective_status:
+                _files = result.get('files')
+                _effective_status = 'COMPLETED' if isinstance(_files, list) else 'FAILED'
+
             # Record outputs into RunStateStore using module ports output paths (latest wins).
             # IMPORTANT: module.yml defines outputs under ports.outputs.port (and ports.outputs.limited_port),
             # not as a direct contract['outputs'] dict. Binding resolution depends on these records.
-            if str(result.get('status','') or '').upper() == 'COMPLETED':
+            if _effective_status == 'COMPLETED':
                 try:
                     if mid not in ports_cache:
                         ports_cache[mid] = _load_module_ports(registry, mid)
@@ -212,7 +220,7 @@ PART = r'''\
                     metadata={'outputs_dir': str(out_dir)},
                 )
             else:
-                if str(result.get('status','') or '').upper() == 'FAILED':
+                if _effective_status == 'FAILED':
                     # Prefer canonical reason_code (from reason_catalog) in run-state logs.
                     _rs = str(result.get('reason_slug') or result.get('reason_key') or 'module_failed').strip() or 'module_failed'
                     _rc = _reason_code(reason_idx, "MODULE", mid, _rs) or _reason_code(reason_idx, "GLOBAL", "", _rs) or ""
