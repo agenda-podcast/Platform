@@ -179,7 +179,8 @@ def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
         except Exception as e:
             return _error(outputs_dir, "bad_input_format", f"bound_outputs[{i}] invalid uri: {e}")
 
-        if not src_path.exists() or not src_path.is_file():
+
+        if not src_path.exists():
             missing_outputs.append({
                 "step_id": str(rec.get("step_id") or rec.get("from_step") or "").strip(),
                 "output_id": str(rec.get("output_id") or rec.get("from_output_id") or "").strip(),
@@ -190,33 +191,69 @@ def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
         as_path = rec.get("as_path")
         if as_path is None:
             as_path = rec.get("as")
-        dest = _default_dest(rec, src_path) if not as_path else str(as_path)
 
+        # For deterministic packaging, we support both file and dir outputs.
+        # - file: package exactly that file to dest_path
+        # - dir: package all files under it, rooted at dest_path
         try:
-            dest_path = _safe_dest_path(dest)
+            dest_base = _safe_dest_path(_default_dest(rec, src_path) if not as_path else str(as_path))
         except Exception as e:
             return _error(outputs_dir, "bad_input_format", f"bound_outputs[{i}] invalid as_path: {e}")
 
-        dest_abs = staging / dest_path
-        dest_abs.parent.mkdir(parents=True, exist_ok=True)
-        dest_abs.write_bytes(src_path.read_bytes())
+        def _stage_one(src_file: Path, dest_path: str) -> None:
+            dest_abs = staging / dest_path
+            dest_abs.parent.mkdir(parents=True, exist_ok=True)
+            dest_abs.write_bytes(src_file.read_bytes())
 
-        sha = sha256_file(dest_abs)
-        bs = int(dest_abs.stat().st_size)
+            sha = sha256_file(dest_abs)
+            bs = int(dest_abs.stat().st_size)
 
-        files_meta.append(
-            {
-                "dest_path": dest_path,
-                "bytes": bs,
-                "sha256": sha,
-                "content_type": str(rec.get("content_type") or ""),
-                "source_step_id": str(rec.get("step_id") or ""),
-                "source_module_id": str(rec.get("module_id") or ""),
-                "source_output_id": str(rec.get("output_id") or ""),
-                "source_path": str(rec.get("path") or ""),
-                "source_uri": uri,
-            }
-        )
+            files_meta.append(
+                {
+                    "dest_path": dest_path,
+                    "bytes": bs,
+                    "sha256": sha,
+                    "content_type": str(rec.get("content_type") or ""),
+                    "source_step_id": str(rec.get("step_id") or ""),
+                    "source_module_id": str(rec.get("module_id") or ""),
+                    "source_output_id": str(rec.get("output_id") or ""),
+                    "source_path": str(rec.get("path") or ""),
+                    "source_uri": str(rec.get("uri") or uri),
+                }
+            )
+
+        if src_path.is_file():
+            # Single file output.
+            _stage_one(src_path, dest_base)
+            continue
+
+        if not src_path.is_dir():
+            missing_outputs.append({
+                "step_id": str(rec.get("step_id") or rec.get("from_step") or "").strip(),
+                "output_id": str(rec.get("output_id") or rec.get("from_output_id") or "").strip(),
+                "index": i,
+            })
+            continue
+
+        # Directory output: include all files under the directory.
+        dir_files = sorted([p for p in src_path.rglob('*') if p.is_file()])
+        if not dir_files:
+            missing_outputs.append({
+                "step_id": str(rec.get("step_id") or rec.get("from_step") or "").strip(),
+                "output_id": str(rec.get("output_id") or rec.get("from_output_id") or "").strip(),
+                "index": i,
+            })
+            continue
+
+        for f in dir_files:
+            rel = f.relative_to(src_path).as_posix()
+            # Ensure safe zip path.
+            try:
+                dest_path = _safe_dest_path(f"{dest_base}/{rel}")
+            except Exception as e:
+                return _error(outputs_dir, "bad_input_format", f"bound_outputs[{i}] invalid derived path: {e}")
+            _stage_one(f, dest_path)
+
 
     if missing_outputs:
         # Runtime validation: bound_outputs referenced outputs that cannot be packaged.

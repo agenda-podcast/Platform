@@ -294,22 +294,60 @@ def main() -> int:
     if not upload_url_template:
         raise RuntimeError("[billing-bootstrap] Release JSON missing upload_url")
 
-    # Policy: Billing is the source of truth and is append-only.
-    # Maintenance must NEVER overwrite existing Release assets with repo templates.
-    # Templates are only used to seed *missing* assets when they do not exist yet.
+    # Load template hashes (source of truth for what should be in the Release)
+    template_manifest_path = template_dir / "state_manifest.json"
+    template_manifest = json.loads(template_manifest_path.read_text(encoding="utf-8"))
+    template_hashes: Dict[str, str] = {
+        a["name"]: a["sha256"] for a in (template_manifest.get("assets") or [])
+        if isinstance(a, dict) and a.get("name") and a.get("sha256")
+    }
+    # Also enforce the manifest itself.
+    template_hashes["state_manifest.json"] = _sha256_hex(template_manifest_path.read_bytes())
 
     existing_meta = _map_assets(release)
     missing = [fn for fn in REQUIRED_FILES if fn not in existing_meta]
 
-    if not missing:
-        print("[billing-bootstrap] All required assets already present. Nothing to do.")
+    # Detect mismatched assets (present in Release but not matching the template hash)
+    mismatched: List[str] = []
+    for fn in REQUIRED_FILES:
+        if fn in existing_meta and fn in template_hashes:
+            try:
+                data = _download_release_asset_bytes(existing_meta[fn]["url"], token)
+                got = _sha256_hex(data)
+                exp = template_hashes[fn]
+                if got != exp:
+                    mismatched.append(fn)
+            except Exception as e:
+                # If we cannot download/validate, treat as mismatched so we repair it.
+                print(f"[billing-bootstrap] Warning: could not validate {fn}: {e}")
+                mismatched.append(fn)
+
+    if not missing and not mismatched:
+        print("[billing-bootstrap] All required assets already present and match template. Nothing to do.")
         return 0
 
-    print(f"[billing-bootstrap] Missing assets (will seed from templates): {missing}")
+    if missing:
+        print(f"[billing-bootstrap] Missing assets: {missing}")
+    if mismatched:
+        print(f"[billing-bootstrap] Mismatched assets (will replace): {mismatched}")
 
     errors: List[str] = []
 
-    # Upload missing assets only
+    # Replace mismatched assets (delete then upload to avoid 422 conflicts)
+    for fn in mismatched:
+        try:
+            asset_url = existing_meta[fn]["url"]
+            _delete_release_asset(asset_url, token)
+            p = template_dir / fn
+            status, code, text = _upload_asset(upload_url_template, token, p, fn)
+            if status == "ok":
+                print(f"[billing-bootstrap] Replaced: {fn}")
+            else:
+                errors.append(f"replace {fn}: HTTP {code} {text}")
+        except Exception as e:
+            errors.append(f"replace {fn}: {e}")
+
+    # Upload missing assets
     for fn in missing:
         p = template_dir / fn
         status, code, text = _upload_asset(upload_url_template, token, p, fn)

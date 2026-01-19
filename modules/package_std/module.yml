@@ -14,7 +14,7 @@ ports:
       format: application/json
       description: List of output bindings to include in the package. Each item binds
         an upstream step output using from_step + output_id and optionally renames
-        it in the ZIP via as_path.
+        it in the ZIP via as_path. Supports file outputs and directory outputs. When a directory is bound, all files under it are included recursively under as_path.
       schema:
         minItems: 1
       examples:
@@ -24,6 +24,9 @@ ports:
       - from_step: s1
         output_id: source_text
         as_path: texts/source_text.txt
+      - from_step: s2
+        output_id: images_dir
+        as_path: images
       binding:
         allowed: true
         require_output_id: true

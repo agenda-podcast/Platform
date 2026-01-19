@@ -258,13 +258,6 @@ PART = r'''\
                         if provider == "github_release":
                             gh_rel_id = str(receipt.get("github_release_id") or remote_object_id_ev or "").strip()
                             gh_tag = str(receipt.get("release_tag") or remote_path_ev or "").strip()
-                            gh_url = str(receipt.get("release_url") or "").strip()
-                            try:
-                                assets_n = len(receipt.get("assets") or []) if isinstance(receipt.get("assets"), list) else 0
-                            except Exception:
-                                assets_n = 0
-                            if gh_tag or gh_rel_id:
-                                print(f"[delivery][github_release] tag={gh_tag or remote_path_ev} url={gh_url} assets={assets_n}")
                             if gh_rel_id or gh_tag:
                                 # Avoid duplicates across retries.
                                 exists = False

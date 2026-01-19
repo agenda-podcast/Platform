@@ -59,9 +59,9 @@ def _sanitize_asset_name(name: str) -> str:
 
 
 def _compute_auto_tag(*, tenant_id: str, work_order_id: str, module_run_id: str) -> str:
-    # Stable per tenant/workorder so the Release is discoverable and assets can be updated in-place.
-    # module_run_id is intentionally ignored.
-    return f"tenant-{tenant_id}-workorder-{work_order_id}"
+    # Deterministic per run; short, safe, and collision-resistant enough for CI.
+    mr = (module_run_id or "")[:12]
+    return f"tenant-{tenant_id}-workorder-{work_order_id}-run-{mr}"
 
 
 def _extract_image_assets_from_zip(package_zip: Path, tmp_dir: Path, *, max_assets: int = 100) -> List[_Asset]:
@@ -174,10 +174,8 @@ def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
     if release_tag == "auto":
         release_tag = _compute_auto_tag(tenant_id=tenant_id, work_order_id=work_order_id, module_run_id=module_run_id)
 
-    # Prefer an explicit PAT injected by workflow for release publishing.
-    # Rationale: repo-level secrets can provide a PAT with stable permissions,
-    # while the default GitHub Actions token may be restricted depending on repo settings.
-    token = _env("WORKFLOW_PUSH_TOKEN") or _env("GITHUB_TOKEN") or _env("GH_TOKEN")
+    # Prefer explicit env injection from workflow; fall back to GH_TOKEN if present.
+    token = _env("GITHUB_TOKEN") or _env("GH_TOKEN")
     repo = _env("GITHUB_REPOSITORY")
 
     started_at = utcnow_iso()
