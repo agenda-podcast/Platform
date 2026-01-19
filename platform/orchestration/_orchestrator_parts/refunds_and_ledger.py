@@ -141,6 +141,18 @@ PART = r'''\
             f"completed_steps={completed_steps} failed_steps={failed_steps}"
         )
 
+
+        try:
+            run_results.append({
+                'tenant_id': tenant_id,
+                'work_order_id': work_order_id,
+                'status': final_status,
+                'completed_steps': list(completed_steps),
+                'failed_steps': list(failed_steps),
+            })
+        except Exception:
+            pass
+
         note = f"{final_status}: {plan_human}"
         if awaiting_publish:
             note = f"PARTIAL: AWAITING_PUBLISH: {plan_human}"
@@ -225,6 +237,30 @@ PART = r'''\
         billing.save_table("github_assets_map.csv", asset_map, headers=GITHUB_ASSETS_MAP_HEADERS)
     except Exception as e:
         print(f"[billing-state][WARN] failed to persist billing-state tables: {e}")
+
+
+    overall = 'COMPLETED'
+    try:
+        for r in run_results:
+            st = str(r.get('status') or '').strip().upper()
+            if st not in ('COMPLETED', 'PARTIAL', 'AWAITING_PUBLISH'):
+                overall = 'FAILED'
+                break
+            if st == 'PARTIAL' and overall == 'COMPLETED':
+                overall = 'PARTIAL'
+    except Exception:
+        pass
+
+    return {
+        'queue_source': str(queue_source),
+        'workorders_seen': int(len(workorders or [])),
+        'workorders_ran': int(len(run_results)),
+        'overall_status': overall,
+        'results': run_results,
+    }
+
+
+
 
     # Adapter mode: orchestrator no longer persists billing-state tables directly.
     # LedgerWriter and RunStateStore are the only write paths.

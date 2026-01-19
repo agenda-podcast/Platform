@@ -51,13 +51,17 @@ def cmd_orchestrate(args: argparse.Namespace) -> int:
         runtime_dir=runtime_dir,
     )
 
-    run_orchestrator(
+    res = run_orchestrator(
         repo_root=repo_root,
         billing_state_dir=billing_state_dir,
         runtime_dir=runtime_dir,
         enable_github_releases=enable_releases,
         infra=infra,
     )
+
+    overall = str((res or {}).get('overall_status') or '').strip().upper()
+    if overall and overall not in ('COMPLETED', 'PARTIAL', 'AWAITING_PUBLISH'):
+        return 2
     return 0
 
 

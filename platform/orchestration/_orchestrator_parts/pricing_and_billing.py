@@ -224,7 +224,7 @@ class OrchestratorContext:
     runtime_profile_name: str
 
 
-def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path, enable_github_releases: bool = False, infra: InfraBundle | None = None) -> None:
+def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path, enable_github_releases: bool = False, infra: InfraBundle | None = None) -> Dict[str, Any]:
     if infra is None:
         from ..infra.config import load_runtime_profile
         from ..infra.factory import build_infra
@@ -297,6 +297,8 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
     ensure_dir(cache_root)
 
     queue_source, workorders = _load_workorders_queue(repo_root)
+
+    run_results: List[Dict[str, Any]] = []
 
     # Module deliverables contracts cached per run
     deliverables_cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
