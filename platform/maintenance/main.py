@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-import shutil
+import subprocess
 from pathlib import Path
 import sys
 
@@ -22,23 +22,25 @@ def _env(name: str, default: str) -> str:
     return v if v else default
 
 
-def _ensure_local_billing_state(template_dir: Path, billing_state_dir: Path) -> None:
-    billing_state_dir.mkdir(parents=True, exist_ok=True)
+def _hydrate_local_billing_state(billing_tag: str, billing_state_dir: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    script = repo_root / "scripts" / "billing_state_hydrate.py"
+    if not script.exists():
+        raise FileNotFoundError(f"Missing required script: {script}")
 
-    missing = []
-    for fn in REQUIRED_FILES:
-        src = template_dir / fn
-        dst = billing_state_dir / fn
-        if not src.exists():
-            missing.append(fn)
-            continue
-        if not dst.exists():
-            shutil.copyfile(src, dst)
-
-    if missing:
-        raise FileNotFoundError(
-            f"Maintenance cannot bootstrap local billing-state; missing template files in {template_dir}: {missing}"
-        )
+    cmd = [
+        sys.executable,
+        str(script),
+        "--billing-state-dir",
+        str(billing_state_dir),
+        "--release-tag",
+        billing_tag,
+        "--require-release",
+    ]
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    print(p.stdout)
+    if p.returncode != 0:
+        raise RuntimeError(f"billing_state_hydrate failed rc={p.returncode}")
 
 
 def main() -> int:
@@ -69,9 +71,10 @@ def main() -> int:
         print(f"[maintenance] Billing release ensure failed with rc={rc}")
         return int(rc)
 
-    # 2) Bootstrap local billing-state directory from repo templates (fresh-start)
-    _ensure_local_billing_state(template_dir, billing_state_dir)
-    print("[maintenance] Local billing-state bootstrap: OK")
+    # 2) Hydrate local billing-state directory from Release (source of truth)
+    #    This prevents Maintenance from ever overwriting real ledger data with checked-in templates.
+    _hydrate_local_billing_state(billing_tag, billing_state_dir)
+    print("[maintenance] Local billing-state hydrate: OK")
 
     print("[maintenance] Done")
     return 0
