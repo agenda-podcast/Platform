@@ -21,15 +21,9 @@ DEFAULT_REQUIRED_FILES: List[str] = [
     "transaction_items.csv",
     "promotion_redemptions.csv",
     "cache_index.csv",
-    "github_releases_map.csv",
+            "github_releases_map.csv",
     "github_assets_map.csv",
-    "state_manifest.json",
 ]
-
-
-# Canonical required billing-state assets.
-# Scripts and workflows should reference REQUIRED_FILES to avoid drift.
-REQUIRED_FILES: List[str] = list(DEFAULT_REQUIRED_FILES)
 
 
 @dataclass

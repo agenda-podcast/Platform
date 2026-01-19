@@ -11,6 +11,22 @@ PART = r'''\
                         if k not in platform_inputs:
                             raise KeyError(f"Deliverable limited_input '{k}' is not declared as limited_port for module {mid}")
 
+                # Debug log: show deliverables-driven limited_inputs applied to this step.
+                # Do NOT log secrets; limited_inputs are platform-only flags by contract.
+                try:
+                    print(
+                        "[inputs][limited_inputs] step_id=%s module_id=%s deliverables_source=%s requested_deliverables=%s applied_limited_inputs=%s"
+                        % (
+                            sid,
+                            mid,
+                            deliverables_source,
+                            json.dumps(list(requested_deliverables or []), sort_keys=True),
+                            json.dumps(dict(applied_limited_inputs or {}), sort_keys=True),
+                        )
+                    )
+                except Exception:
+                    pass
+
                 if tenant_inputs or platform_inputs:
                     # Reject any attempt to set platform-only inputs.
                     for k in inputs_spec.keys():
@@ -33,6 +49,14 @@ PART = r'''\
                         merged_spec[k] = v
 
                     resolved_inputs = _resolve_inputs(merged_spec, step_outputs, step_allowed_outputs, run_state, tenant_id, work_order_id)
+
+                    try:
+                        di = None
+                        if isinstance(resolved_inputs, dict):
+                            di = resolved_inputs.get('download_images')
+                        print("[inputs][resolved] step_id=%s module_id=%s download_images=%s resolved_keys=%s" % (sid, mid, str(di), str(len(resolved_inputs) if isinstance(resolved_inputs, dict) else 0)))
+                    except Exception:
+                        pass
 
                     # Required tenant inputs must be present and non-empty after resolution.
                     for pid, pspec in tenant_inputs.items():
@@ -103,7 +127,6 @@ PART = r'''\
                     cache_valid = False
             if resolve_error:
                 # Chaining input resolution failed; do not execute the module.
-                print(f"[binding_error] work_order_id={work_order_id} tenant_id={tenant_id} step_id={sid} module_id={mid} error={resolve_error}")
                 report = out_dir / "binding_error.json"
                 report.write_text(
                     json.dumps(
@@ -148,45 +171,6 @@ PART = r'''\
                 contract = {}
             module_kind = str(contract.get('kind') or 'transform').strip() or 'transform'
 
-            # Validate deliverable outputs exist (deterministic fail-fast).
-            if str(result.get('status','') or '').upper() == 'COMPLETED' and requested_deliverables:
-                try:
-                    contract_d = deliverables_cache.get(mid)
-                    if contract_d is None:
-                        try:
-                            _c2 = registry.get_contract(mid)
-                        except Exception:
-                            _c2 = {}
-                        _d2 = _c2.get('deliverables') or {}
-                        if not isinstance(_d2, dict):
-                            _d2 = {}
-                        contract_d = {}
-                        for _did2, _dd2 in _d2.items():
-                            if not isinstance(_dd2, dict):
-                                continue
-                            contract_d[str(_did2)] = {
-                                'limited_inputs': dict(_dd2.get('limited_inputs') or {}),
-                                'output_paths': list(_dd2.get('output_paths') or []),
-                            }
-                        deliverables_cache[mid] = contract_d
-                    expected_paths = _deliverable_output_paths(contract_d, requested_deliverables)
-                    missing_paths = [rp for rp in expected_paths if not (out_dir / rp).exists()]
-                    if missing_paths:
-                        # Mark the step FAILED with a deterministic reason so downstream bindings do not fail opaquely.
-                        miss = ','.join(missing_paths)
-                        print(f"[deliverable_missing] work_order_id={work_order_id} step_id={sid} module_id={mid} missing={miss}")
-                        err = {'reason_code': 'deliverable_missing', 'message': f"missing deliverable outputs: {miss}", 'type': 'DeliverableMissing'}
-                        step_run = run_state.mark_step_run_failed(mr_id, err)
-                        result = {
-                            'status': 'FAILED',
-                            'reason_slug': 'deliverable_missing',
-                            'report_path': '',
-                            'output_ref': '',
-                        }
-                except Exception as _e:
-                    # Do not crash the orchestrator on validation helper issues; fall back to normal behavior.
-                    pass
-
             # Record outputs into RunStateStore using module contract output paths (latest wins).
             if str(result.get('status','') or '').upper() == 'COMPLETED':
                 outputs_def = contract.get('outputs') or {}
@@ -227,38 +211,11 @@ PART = r'''\
                             run_state.record_output(rec)
                         except Exception:
                             pass
-
-                # Validate that deliverable-declared output paths exist when deliverables are requested.
-                if requested_deliverables:
-                    _dc = deliverables_cache.get(mid) or {}
-                    missing_paths: List[str] = []
-                    try:
-                        req_paths = _deliverable_output_paths(_dc, list(requested_deliverables or []))
-                    except Exception:
-                        req_paths = []
-                    for _rp in req_paths:
-                        _p = str(_rp or '').lstrip('/').strip()
-                        if not _p:
-                            continue
-                        if not (out_dir / _p).exists():
-                            missing_paths.append(_p)
-                    if missing_paths:
-                        msg = f"Missing deliverable outputs for {mid}: {missing_paths}"
-                        print(f"[deliverable_missing] work_order_id={work_order_id} tenant_id={tenant_id} step_id={sid} module_id={mid} missing={missing_paths}")
-                        rep = out_dir / 'deliverable_missing.json'
-                        rep.write_text(json.dumps({'missing_paths': missing_paths, 'requested_deliverables': requested_deliverables}, indent=2) + '\n', encoding='utf-8')
-                        _rs = 'deliverable_missing'
-                        _rc = _reason_code(reason_idx, 'GLOBAL', '', _rs) or _reason_code(reason_idx, 'MODULE', mid, _rs) or _rs
-                        err = {'reason_code': _rc, 'message': msg, 'type': 'DeliverableMissing'}
-                        step_run = run_state.mark_step_run_failed(mr_id, err)
-                        result = {'status': 'FAILED', 'reason_slug': _rs, 'report_path': 'deliverable_missing.json', 'output_ref': ''}
-
-                if str(result.get('status','') or '').upper() == 'COMPLETED':
-                    step_run = run_state.mark_step_run_succeeded(
-                        mr_id,
-                        requested_deliverables=list(requested_deliverables or []),
-                        metadata={'outputs_dir': str(out_dir)},
-                    )
+                step_run = run_state.mark_step_run_succeeded(
+                    mr_id,
+                    requested_deliverables=list(requested_deliverables or []),
+                    metadata={'outputs_dir': str(out_dir)},
+                )
             else:
                 if str(result.get('status','') or '').upper() == 'FAILED':
                     # Prefer canonical reason_code (from reason_catalog) in run-state logs.

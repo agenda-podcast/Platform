@@ -58,9 +58,6 @@ def cmd_orchestrate(args: argparse.Namespace) -> int:
         enable_github_releases=enable_releases,
         infra=infra,
     )
-
-    # The orchestrator is expected to handle step failures gracefully and record them in billing-state
-    # and runtime evidences. The CLI should not fail the process solely due to a workorder failure.
     return 0
 
 

@@ -7,7 +7,7 @@ import pathlib
 import subprocess
 import json
 import hashlib
-from typing import Dict, List, Optional
+from typing import List
 
 REQUIRED_FILES = [
     "tenants_credits.csv",
@@ -15,7 +15,7 @@ REQUIRED_FILES = [
     "transaction_items.csv",
     "promotion_redemptions.csv",
     "cache_index.csv",
-    "github_releases_map.csv",
+            "github_releases_map.csv",
     "github_assets_map.csv",
     "state_manifest.json",
 ]
@@ -23,21 +23,8 @@ REQUIRED_FILES = [
 BASELINE_MANIFEST_NAME = "baseline_manifest.json"
 
 
-def _gh_env() -> Dict[str, str]:
-    env: Dict[str, str] = dict(os.environ)
-    if not env.get("GH_TOKEN") and env.get("GITHUB_TOKEN"):
-        env["GH_TOKEN"] = env["GITHUB_TOKEN"]
-    return env
-
-
-def run(cmd: List[str], *, env: Optional[Dict[str, str]] = None) -> None:
-    proc = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        env=env or _gh_env(),
-    )
+def run(cmd: List[str]) -> None:
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     if proc.returncode != 0:
         raise RuntimeError(f"Command failed ({proc.returncode}): {' '.join(cmd)}\n{proc.stdout}")
     print(proc.stdout)
@@ -53,8 +40,8 @@ def main() -> int:
 
     billing_dir = pathlib.Path(args.billing_state_dir)
 
-    if "GITHUB_ACTIONS" in os.environ and (not os.environ.get("GH_TOKEN")) and (not os.environ.get("GITHUB_TOKEN")):
-        print("[bootstrap_billing_state_from_release][FAIL] Missing auth token. On Actions, set env GH_TOKEN: ${{ github.token }}")
+    if "GITHUB_ACTIONS" in os.environ and not os.environ.get("GH_TOKEN"):
+        print("[bootstrap_billing_state_from_release][FAIL] GH_TOKEN is not set. On Actions, set env GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}")
         return 2
 
     if billing_dir.exists():
@@ -63,7 +50,7 @@ def main() -> int:
                 p.unlink()
     billing_dir.mkdir(parents=True, exist_ok=True)
 
-    # Download required billing-state assets explicitly (includes non-CSV files such as state_manifest.json)
+      # Download required billing-state assets explicitly (includes non-CSV files such as state_manifest.json)
     for fn in REQUIRED_FILES:
         run([
             "gh", "release", "download", args.tag,

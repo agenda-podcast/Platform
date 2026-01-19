@@ -57,20 +57,6 @@ def _which(cmd: str) -> Optional[str]:
     return shutil.which(cmd)
 
 
-def _gh_env() -> dict:
-    """Environment for invoking the gh CLI.
-
-    GitHub Actions provides an ephemeral token as GITHUB_TOKEN. The gh CLI
-    expects GH_TOKEN. To avoid brittle workflow wiring, map GITHUB_TOKEN to
-    GH_TOKEN when GH_TOKEN is not already present.
-    """
-
-    env = dict(os.environ)
-    if not env.get("GH_TOKEN") and env.get("GITHUB_TOKEN"):
-        env["GH_TOKEN"] = env["GITHUB_TOKEN"]
-    return env
-
-
 def _truthy_env(name: str) -> bool:
     v = (os.getenv(name) or "").strip().lower()
     return v in ("1", "true", "yes", "y", "on")
@@ -123,7 +109,7 @@ def _list_release_assets(repo: str, tag: str) -> Set[str]:
         "--jq",
         ".assets[].name",
     ]
-    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=_gh_env())
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if p.returncode != 0:
         return set()
     assets = set()
@@ -159,7 +145,7 @@ def _download_release_asset(repo: str, tag: str, asset_name: str, out_dir: Path)
         "--pattern",
         asset_name,
     ]
-    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=_gh_env())
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if p.returncode != 0:
         return False
     return (out_dir / asset_name).exists()
