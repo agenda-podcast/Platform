@@ -64,7 +64,7 @@ jobs:
       - name: Publish module outputs to Release
         if: success()
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           TAG="module-${{ inputs.module_id }}-${{ github.run_id }}"
           TITLE="Module outputs: ${{ inputs.module_id }} (run ${{ github.run_id }})"

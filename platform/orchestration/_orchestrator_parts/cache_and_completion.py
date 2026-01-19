@@ -454,6 +454,13 @@ PART = r'''\
                 except Exception as e:
                     print(f"[cache_index][WARN] failed to persist cache_index.csv mid-run: {e}")
 
+                # Persist GitHub mapping tables after any mutation so delivery indexing is durable.
+                try:
+                    billing.save_table("github_releases_map.csv", rel_map, headers=GITHUB_RELEASES_MAP_HEADERS)
+                    billing.save_table("github_assets_map.csv", asset_map, headers=GITHUB_ASSETS_MAP_HEADERS)
+                except Exception as e:
+                    print(f"[github_maps][WARN] failed to persist github_*_map.csv mid-run: {e}")
+
 
             # Refund policy
             # - Refund reasons are governed by reason_catalog.csv (refundable=true)
