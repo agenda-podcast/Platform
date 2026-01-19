@@ -138,14 +138,18 @@ PART = r'''\
                 module_env = env_for_module(store, mid)
                 result = execute_module_runner(module_path=module_path, params=params, outputs_dir=out_dir, env=module_env)
 
+            # Resolve module contract + kind once per step so downstream logic
+            # (including delivery evidence) can always reference module_kind,
+            # even when the step fails.
+            try:
+                contract = registry.get_contract(mid)
+            except Exception:
+                contract = {}
+            module_kind = str(contract.get('kind') or 'transform').strip() or 'transform'
+
             # Record outputs into RunStateStore using module contract output paths (latest wins).
             if str(result.get('status','') or '').upper() == 'COMPLETED':
-                try:
-                    contract = registry.get_contract(mid)
-                except Exception:
-                    contract = {}
                 outputs_def = contract.get('outputs') or {}
-                module_kind = str(contract.get('kind') or 'transform').strip() or 'transform'
                 if isinstance(outputs_def, dict):
                     for output_id, odef in outputs_def.items():
                         if not isinstance(odef, dict):
