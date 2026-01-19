@@ -59,9 +59,9 @@ def _sanitize_asset_name(name: str) -> str:
 
 
 def _compute_auto_tag(*, tenant_id: str, work_order_id: str, module_run_id: str) -> str:
-    # Deterministic per run; short, safe, and collision-resistant enough for CI.
-    mr = (module_run_id or "")[:12]
-    return f"tenant-{tenant_id}-workorder-{work_order_id}-run-{mr}"
+    # Stable per tenant/workorder so the Release is discoverable and assets can be updated in-place.
+    # module_run_id is intentionally ignored.
+    return f"tenant-{tenant_id}-workorder-{work_order_id}"
 
 
 def _extract_image_assets_from_zip(package_zip: Path, tmp_dir: Path, *, max_assets: int = 100) -> List[_Asset]:
