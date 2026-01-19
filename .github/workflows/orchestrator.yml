@@ -93,7 +93,7 @@ jobs:
 
       - name: Bootstrap billing-state from GitHub Release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           python scripts/bootstrap_billing_state_from_release.py \
@@ -138,7 +138,8 @@ jobs:
       - name: Run orchestrator
         env:
           SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           WORKFLOW_PUSH_TOKEN: ${{ secrets.WORKFLOW_PUSH_TOKEN }}
         shell: bash
@@ -161,7 +162,7 @@ jobs:
       - name: Publish billing-state Source of Truth to GitHub Release
         if: always()
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           python scripts/billing_state_publish.py \

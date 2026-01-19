@@ -36,7 +36,7 @@ REQUIRED_FILES = [
     "transaction_items.csv",
     "promotion_redemptions.csv",
     "cache_index.csv",
-            "github_releases_map.csv",
+    "github_releases_map.csv",
     "github_assets_map.csv",
     "state_manifest.json",
 ]
