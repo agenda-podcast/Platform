@@ -48,7 +48,45 @@ PART = r'''\
                     for k, v in (applied_limited_inputs or {}).items():
                         merged_spec[k] = v
 
-                    resolved_inputs = _resolve_inputs(merged_spec, step_outputs, step_allowed_outputs, run_state, tenant_id, work_order_id)
+                    try:
+                        resolved_inputs = _resolve_inputs(
+                            merged_spec,
+                            step_outputs,
+                            step_allowed_outputs,
+                            run_state,
+                            tenant_id,
+                            work_order_id,
+                        )
+                    except Exception as e:
+                        # Binding / input resolution failures must be visible and must not crash the run.
+                        # The workorder can continue; downstream steps will generally be SKIPPED/FAILED.
+                        try:
+                            err = {
+                                "type": "BindingError",
+                                "message": str(e),
+                            }
+                            (out_dir / "binding_error.json").write_text(
+                                json.dumps(err, ensure_ascii=False, indent=2) + "\n",
+                                encoding="utf-8",
+                            )
+                        except Exception:
+                            err = {"type": "BindingError", "message": str(e)}
+                        try:
+                            print(
+                                "[binding_error] work_order_id=%s tenant_id=%s step_id=%s module_id=%s error=%s"
+                                % (work_order_id, tenant_id, sid, mid, str(e))
+                            )
+                        except Exception:
+                            pass
+                        try:
+                            step_run = run_state.mark_step_run_failed(step_run.module_run_id, err)
+                        except Exception:
+                            pass
+                        # Mark this step as failed and continue to the next step.
+                        any_failed = True
+                        step_statuses[sid] = "FAILED"
+                        step_outputs[sid] = out_dir
+                        continue
 
                     try:
                         di = None
