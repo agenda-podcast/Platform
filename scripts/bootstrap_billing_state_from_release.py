@@ -5,6 +5,8 @@ import argparse
 import os
 import pathlib
 import subprocess
+import json
+import hashlib
 from typing import List
 
 REQUIRED_FILES = [
@@ -17,6 +19,8 @@ REQUIRED_FILES = [
     "github_assets_map.csv",
     "state_manifest.json",
 ]
+
+BASELINE_MANIFEST_NAME = "baseline_manifest.json"
 
 
 def run(cmd: List[str]) -> None:
@@ -72,6 +76,30 @@ def main() -> int:
         for p in sorted(billing_dir.glob('*')):
             print(" -", p.name)
         return 2
+
+    # Write baseline manifest so publish can decide whether state changed.
+    baseline = {"assets": []}
+    for fn in REQUIRED_FILES:
+        p = billing_dir / fn
+        if not p.exists() or not p.is_file():
+            continue
+        h = hashlib.sha256(p.read_bytes()).hexdigest()
+        baseline["assets"].append({"name": fn, "sha256": h})
+    (billing_dir / BASELINE_MANIFEST_NAME).write_text(
+        json.dumps(baseline, indent=2, sort_keys=False) + "\n", encoding="utf-8"
+    )
+
+    # Recompute tenants_credits.csv deterministically from ledger.
+    try:
+        import sys
+        repo_root = pathlib.Path(__file__).resolve().parents[1]
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        from platform.billing.recompute_credits import recompute_tenants_credits  # type: ignore
+
+        recompute_tenants_credits(billing_dir)
+    except Exception:
+        pass
 
     print("[bootstrap_billing_state_from_release][OK] Billing-state bootstrapped and validated.")
     return 0

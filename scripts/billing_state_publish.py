@@ -18,6 +18,8 @@ import argparse
 import os
 from pathlib import Path
 from typing import Any, Dict, List
+import json
+import hashlib
 
 
 def _env(name: str) -> str:
@@ -123,6 +125,38 @@ def main() -> int:
         "github_assets_map.csv",
         "state_manifest.json",
     ]
+
+    baseline_path = billing_dir / "baseline_manifest.json"
+    in_ci = (os.getenv("GITHUB_ACTIONS") or "").strip().lower() in ("1", "true", "yes")
+    if in_ci and not baseline_path.exists():
+        print("[BILLING_PUBLISH][SKIP] missing baseline_manifest.json (refusing to overwrite SoT from scaffold)")
+        return 0
+
+    baseline: Dict[str, str] = {}
+    if baseline_path.exists():
+        try:
+            data = json.loads(baseline_path.read_text(encoding="utf-8"))
+            for a in (data.get("assets") or []):
+                n = str(a.get("name") or "").strip()
+                h = str(a.get("sha256") or "").strip()
+                if n and h:
+                    baseline[n] = h
+        except Exception:
+            baseline = {}
+
+    changed = False
+    for fname in required:
+        p = billing_dir / fname
+        if not p.exists():
+            continue
+        h = hashlib.sha256(p.read_bytes()).hexdigest()
+        if baseline.get(fname) != h:
+            changed = True
+            break
+
+    if not changed:
+        print("[BILLING_PUBLISH][SKIP] no billing-state changes detected")
+        return 0
 
     missing = [f for f in required if not (billing_dir / f).exists()]
     if missing:

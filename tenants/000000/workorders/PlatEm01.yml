@@ -1,0 +1,50 @@
+work_order_id: PlatEm01
+enabled: true
+mode: PARTIAL_ALLOWED
+metadata:
+  title: Platform verification (package -> email delivery, dev stub).
+  created_at: '2026-01-16T00:00:00Z'
+  notes: Deterministic baseline. Generates a small fixed binary, packages it, and delivers via email module in dev stub mode (no secrets required).
+steps:
+- step_id: g1
+  step_name: generate_small_file
+  module_id: bigfile_gen
+  kind: transform
+  reuse_output_type: cache
+  deliverables:
+  - tenant_outputs
+  inputs:
+    bytes: 1024
+    seed: platform_verify_v1
+- step_id: p2
+  step_name: package_outputs
+  module_id: package_std
+  kind: packaging
+  deliverables:
+  - package_artifacts
+  inputs:
+    bound_outputs:
+    - from_step: g1
+      output_id: big_file
+      as_path: big.bin
+    - from_step: g1
+      output_id: report
+      as_path: bigfile_report.json
+- step_id: d3
+  step_name: deliver_email_stub
+  module_id: deliver_email
+  kind: delivery
+  deliverables:
+  - delivery_receipt
+  inputs:
+    recipient_email: recipient@example.invalid
+    subject: Platform verification delivery (dev stub)
+    body: 'This is a deterministic platform verification delivery from tenant 000000.'
+    package_zip:
+      from_step: p2
+      output_id: package_zip
+    manifest_json:
+      from_step: p2
+      output_id: manifest_json
+promotions: []
+artifacts_requested: true

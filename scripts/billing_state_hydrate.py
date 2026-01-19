@@ -23,6 +23,7 @@ This script is designed to run in CI (GitHub Actions) and locally.
 """
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -42,6 +43,14 @@ DEFAULT_REQUIRED_FILES = [
 ]
 
 DEFAULT_RELEASE_TAG = "billing-state-v1"
+
+# Written into billing_state_dir after hydration so publish can decide whether
+# any billing-state assets actually changed.
+BASELINE_MANIFEST_NAME = "baseline_manifest.json"
+
+# Conservative: in CI we require Release hydration to avoid accidentally
+# publishing scaffold seeds over the accounting SoT.
+DEFAULT_REQUIRE_RELEASE_IN_CI = True
 
 
 def _which(cmd: str) -> Optional[str]:
@@ -167,6 +176,7 @@ def hydrate_billing_state_dir(
     repo: Optional[str],
     required_files: Sequence[str],
     allow_release_download: bool,
+    require_release: bool,
 ) -> None:
     """
     Main hydration routine.
@@ -181,20 +191,35 @@ def hydrate_billing_state_dir(
     if repo is None:
         repo = (os.getenv("GITHUB_REPOSITORY") or "").strip() or None
 
-    # Step 1: release best-effort
+    # Step 1: release hydration
+    release_attempted = False
+    release_ok = False
     if allow_release_download and repo and _which("gh") and (os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")):
+        release_attempted = True
         assets = _list_release_assets(repo, release_tag)
-        # Attempt to download any missing required files that exist as assets
+        # If we require release hydration, all required files must exist as assets.
+        if require_release:
+            missing_assets = [n for n in required_files if n not in assets]
+            if missing_assets:
+                raise FileNotFoundError(
+                    "Billing-state release is missing required assets: "
+                    + ", ".join(missing_assets)
+                    + "\n"
+                    + "Refusing scaffold fallback because require_release is enabled.\n"
+                    + f"release_tag={release_tag} repo={repo}"
+                )
+        # Download every required asset that exists (and all of them if require_release)
         for name in required_files:
-            dst = billing_state_dir / name
-            if dst.exists():
+            if name not in assets:
                 continue
-            if name in assets:
-                _download_release_asset(repo, release_tag, name, billing_state_dir)
+            _download_release_asset(repo, release_tag, name, billing_state_dir)
+
+        release_ok = all((billing_state_dir / n).exists() for n in required_files if n in assets)
 
     # Step 2: scaffold fallback per-file
+    # Only allowed when we are not enforcing release hydration.
     missing = [n for n in required_files if not (billing_state_dir / n).exists()]
-    if missing and scaffold_dir:
+    if missing and scaffold_dir and (not require_release):
         missing = _copy_missing_from_scaffold(missing, scaffold_dir, billing_state_dir)
 
     # Step 3: fail only if not present anywhere
@@ -209,6 +234,32 @@ def hydrate_billing_state_dir(
             + f"release_tag={release_tag}\n"
             + f"repo={repo}\n"
         )
+
+    # Step 4: write baseline manifest so publish can detect changes.
+    baseline = {"assets": []}
+    for n in required_files:
+        p = billing_state_dir / n
+        if not p.exists() or not p.is_file():
+            continue
+        try:
+            import hashlib
+
+            h = hashlib.sha256(p.read_bytes()).hexdigest()
+            baseline["assets"].append({"name": n, "sha256": h})
+        except Exception:
+            continue
+    (billing_state_dir / BASELINE_MANIFEST_NAME).write_text(
+        json.dumps(baseline, indent=2, sort_keys=False) + "\n", encoding="utf-8"
+    )
+
+    # Step 5: deterministically recompute tenants_credits.csv from ledger (append-only SoT)
+    try:
+        from platform.billing.recompute_credits import recompute_tenants_credits  # type: ignore
+
+        recompute_tenants_credits(billing_state_dir)
+    except Exception:
+        # Never hard-fail hydration for a derived table recompute.
+        pass
 
 
 def _default_scaffold_dir(repo_root: Path) -> Optional[Path]:
@@ -234,6 +285,11 @@ def main() -> int:
         action="store_true",
         help="Disable attempting to download billing-state assets from GitHub Releases",
     )
+    ap.add_argument(
+        "--require-release",
+        action="store_true",
+        help="Fail if billing-state release assets are missing; do not fall back to scaffold",
+    )
     args = ap.parse_args()
 
     repo_root = _repo_root_from_script()
@@ -249,6 +305,14 @@ def main() -> int:
             repo=args.repo.strip() or None,
             required_files=required,
             allow_release_download=(not args.no_release_download),
+            require_release=(
+                bool(args.require_release)
+                or (
+                    DEFAULT_REQUIRE_RELEASE_IN_CI
+                    and _truthy_env("GITHUB_ACTIONS")
+                    and (not args.no_release_download)
+                )
+            ),
         )
     except FileNotFoundError as e:
         print(str(e))
