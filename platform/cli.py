@@ -51,7 +51,7 @@ def cmd_orchestrate(args: argparse.Namespace) -> int:
         runtime_dir=runtime_dir,
     )
 
-    res = run_orchestrator(
+    run_orchestrator(
         repo_root=repo_root,
         billing_state_dir=billing_state_dir,
         runtime_dir=runtime_dir,
@@ -59,9 +59,8 @@ def cmd_orchestrate(args: argparse.Namespace) -> int:
         infra=infra,
     )
 
-    overall = str((res or {}).get('overall_status') or '').strip().upper()
-    if overall and overall not in ('COMPLETED', 'PARTIAL', 'AWAITING_PUBLISH'):
-        return 2
+    # The orchestrator is expected to handle step failures gracefully and record them in billing-state
+    # and runtime evidences. The CLI should not fail the process solely due to a workorder failure.
     return 0
 
 
