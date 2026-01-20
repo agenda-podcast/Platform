@@ -146,30 +146,21 @@ PART = r'''\
             except Exception:
                 contract = {}
             module_kind = str(contract.get('kind') or 'transform').strip() or 'transform'
-            # Determine effective status even when module runner omits a top-level status.
-            raw_status = str(result.get("status", "") or "").strip()
-            if raw_status:
-                status = raw_status.upper()
-            else:
-                _files = result.get("files")
-                status = "COMPLETED" if isinstance(_files, list) else "FAILED"
-
 
             # Record outputs into RunStateStore using module ports output paths (latest wins).
             # IMPORTANT: module.yml defines outputs under ports.outputs.port (and ports.outputs.limited_port),
             # not as a direct contract['outputs'] dict. Binding resolution depends on these records.
-            if status == "COMPLETED":
+            if str(result.get('status','') or '').upper() == 'COMPLETED':
                 try:
                     if mid not in ports_cache:
                         ports_cache[mid] = _load_module_ports(registry, mid)
                     ports = ports_cache.get(mid) or {}
                 except Exception:
                     ports = {}
+
                 outputs_port = {}
                 try:
-                    op = ports.get('outputs_port')
-                    if not isinstance(op, list):
-                        op = ((ports.get('outputs') or {}).get('port') or [])
+                    op = ((ports.get('outputs') or {}).get('port') or [])
                     if isinstance(op, list):
                         for o in op:
                             if not isinstance(o, dict):
@@ -221,13 +212,19 @@ PART = r'''\
                     metadata={'outputs_dir': str(out_dir)},
                 )
             else:
-                if status == "FAILED":
+                if str(result.get('status','') or '').upper() == 'FAILED':
                     # Prefer canonical reason_code (from reason_catalog) in run-state logs.
                     _rs = str(result.get('reason_slug') or result.get('reason_key') or 'module_failed').strip() or 'module_failed'
                     _rc = _reason_code(reason_idx, "MODULE", mid, _rs) or _reason_code(reason_idx, "GLOBAL", "", _rs) or ""
                     err = {'reason_code': _rc or _rs, 'message': 'module failed', 'type': 'ModuleFailed'}
                     step_run = run_state.mark_step_run_failed(mr_id, err)
 
+            raw_status = str(result.get("status", "") or "").strip()
+            if raw_status:
+                status = raw_status.upper()
+            else:
+                files = result.get("files")
+                status = "COMPLETED" if isinstance(files, list) else "FAILED"
 
             reason_slug = str(result.get("reason_slug", "") or "").strip() or str(result.get("reason_key", "") or "").strip()
             if status == "COMPLETED":

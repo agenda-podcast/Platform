@@ -33,14 +33,18 @@ def _load_orchestrator_namespace() -> Dict[str, Any]:
         ]
     )
 
+
     mod_name = "platform.orchestration._orchestrator._impl"
+
+    # Ensure __name__ is set inside the exec() code so dataclasses assigns cls.__module__ reliably
+    prefix = "__name__ = '%s'\n__package__ = 'platform.orchestration'\n" % mod_name
+    code = prefix + code
+
     mod = ModuleType(mod_name)
+    mod.__dict__['__name__'] = mod_name
+    mod.__dict__['__package__'] = 'platform.orchestration'
+    mod.__dict__['__file__'] = __file__
     mod.__package__ = "platform.orchestration"
-    # Ensure exec() globals include __name__ so dataclasses and other
-    # reflection utilities can resolve sys.modules[__name__].
-    mod.__dict__["__name__"] = mod_name
-    mod.__dict__["__package__"] = "platform.orchestration"
-    mod.__dict__["__file__"] = __file__
     sys.modules[mod_name] = mod
 
     exec(code, mod.__dict__, mod.__dict__)
