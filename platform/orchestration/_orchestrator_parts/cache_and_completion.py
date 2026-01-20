@@ -147,6 +147,7 @@ PART = r'''\
                 contract = {}
             module_kind = str(contract.get('kind') or 'transform').strip() or 'transform'
 
+
             # Determine effective status for completion handling. Some legacy modules return
             # only a 'files' list and omit 'status'. Treat presence of a files list as COMPLETED.
             _raw_status = str(result.get('status','') or '').strip().upper()
@@ -155,9 +156,13 @@ PART = r'''\
                 _files = result.get('files')
                 _effective_status = 'COMPLETED' if isinstance(_files, list) else 'FAILED'
 
+            print(f"[step_result] step_id={sid} module_id={mid} status={_effective_status} raw_status={_raw_status or 'NONE'}")
+
             # Record outputs into RunStateStore using module ports output paths (latest wins).
             # IMPORTANT: module.yml defines outputs under ports.outputs.port (and ports.outputs.limited_port),
             # not as a direct contract['outputs'] dict. Binding resolution depends on these records.
+            _recorded = 0
+            _missing_paths = []
             if _effective_status == 'COMPLETED':
                 try:
                     if mid not in ports_cache:
@@ -186,6 +191,7 @@ PART = r'''\
                         continue
                     abs_path = out_dir / rel_path
                     if not abs_path.exists():
+                        _missing_paths.append(rel_path)
                         continue
                     try:
                         from platform.utils.hashing import sha256_file
@@ -212,8 +218,21 @@ PART = r'''\
                             created_at=utcnow_iso(),
                         )
                         run_state.record_output(rec)
-                    except Exception:
-                        pass
+                        _recorded += 1
+                    except Exception as e:
+                        print(f"[outputs][record_failed] step_id={sid} module_id={mid} output_id={output_id} error={e}")
+
+                # Verify the outputs are actually discoverable through RunStateStore.
+                for output_id in outputs_port.keys():
+                    try:
+                        _ = run_state.get_output(tenant_id, work_order_id, sid, str(output_id))
+                    except Exception as e:
+                        print(f"[outputs][not_discoverable] step_id={sid} module_id={mid} output_id={output_id} error={e}")
+
+                print(
+                    f"[outputs][recorded] step_id={sid} module_id={mid} recorded={_recorded} missing_paths={_missing_paths}"
+                )
+
                 step_run = run_state.mark_step_run_succeeded(
                     mr_id,
                     requested_deliverables=list(requested_deliverables or []),
@@ -223,7 +242,7 @@ PART = r'''\
                 if _effective_status == 'FAILED':
                     # Prefer canonical reason_code (from reason_catalog) in run-state logs.
                     _rs = str(result.get('reason_slug') or result.get('reason_key') or 'module_failed').strip() or 'module_failed'
-                    _rc = _reason_code(reason_idx, "MODULE", mid, _rs) or _reason_code(reason_idx, "GLOBAL", "", _rs) or ""
+                    _rc = _reason_code(reason_idx, 'MODULE', mid, _rs) or _reason_code(reason_idx, 'GLOBAL', '', _rs) or ''
                     err = {'reason_code': _rc or _rs, 'message': 'module failed', 'type': 'ModuleFailed'}
                     step_run = run_state.mark_step_run_failed(mr_id, err)
 
