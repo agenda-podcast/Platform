@@ -147,17 +147,24 @@ PART = r'''\
                 contract = {}
             module_kind = str(contract.get('kind') or 'transform').strip() or 'transform'
 
-            raw_status = str(result.get("status", "") or "").strip()
-            if raw_status:
-                status = raw_status.upper()
-            else:
-                files = result.get("files")
-                status = "COMPLETED" if isinstance(files, list) else "FAILED"
+            # Record outputs into RunStateStore using module output ports.
+            #
+            # Two compatibility constraints:
+            # 1) Some modules return result dictionaries without a top-level 'status'.
+            #    In that case, treat the presence of a non-empty 'files' list as COMPLETED.
+            # 2) Registry ports are normalized by _load_module_ports() to the shape:
+            #      inputs_port, inputs_limited_port, outputs_port, outputs_limited_port
+            #    (not nested under outputs.port).
+            raw_status = str(result.get('status') or '').strip().upper()
+            effective_status = raw_status
+            if not effective_status:
+                try:
+                    if isinstance(result.get('files'), list) and len(result.get('files') or []) > 0:
+                        effective_status = 'COMPLETED'
+                except Exception:
+                    effective_status = ''
 
-            # Record outputs into RunStateStore using module ports output paths (latest wins).
-            # IMPORTANT: module.yml defines outputs under ports.outputs.port (and ports.outputs.limited_port),
-            # not as a direct contract['outputs'] dict. Binding resolution depends on these records.
-            if status == 'COMPLETED':
+            if effective_status == 'COMPLETED':
                 try:
                     if mid not in ports_cache:
                         ports_cache[mid] = _load_module_ports(registry, mid)
@@ -165,20 +172,19 @@ PART = r'''\
                 except Exception:
                     ports = {}
 
-                # NOTE: registry.get_contract normalizes module.yml ports to flat keys:
-                #   inputs_port, inputs_limited_port, outputs_port, outputs_limited_port
-                # Do not assume nested ports.outputs.port shape here.
-                outputs_defs: Dict[str, Dict[str, Any]] = {}
-                for o in (ports.get('outputs_port') or []):
-                    if not isinstance(o, dict):
-                        continue
-                    oid = str(o.get('id') or '').strip()
-                    if not oid:
-                        continue
-                    outputs_defs[oid] = o
+                outputs_port: Dict[str, Dict[str, Any]] = {}
+                try:
+                    for o in (ports.get('outputs_port') or []):
+                        if not isinstance(o, dict):
+                            continue
+                        oid = str(o.get('id') or '').strip()
+                        if not oid:
+                            continue
+                        outputs_port[oid] = o
+                except Exception:
+                    outputs_port = {}
 
-                # Record tenant-visible outputs first.
-                for output_id, odef in outputs_defs.items():
+                for output_id, odef in outputs_port.items():
                     rel_path = str(odef.get('path') or '').lstrip('/').strip()
                     if not rel_path:
                         continue
@@ -212,60 +218,25 @@ PART = r'''\
                         run_state.record_output(rec)
                     except Exception:
                         pass
-
-                # Also record limited outputs if present (these are not bindable by tenant inputs,
-                # but can be useful for platform-only downstream steps).
-                for o in (ports.get('outputs_limited_port') or []):
-                    if not isinstance(o, dict):
-                        continue
-                    output_id = str(o.get('id') or '').strip()
-                    if not output_id:
-                        continue
-                    rel_path = str(o.get('path') or '').lstrip('/').strip()
-                    if not rel_path:
-                        continue
-                    abs_path = out_dir / rel_path
-                    if not abs_path.exists():
-                        continue
-                    try:
-                        from platform.utils.hashing import sha256_file
-                        sha = sha256_file(abs_path)
-                        bs = int(abs_path.stat().st_size)
-                    except Exception:
-                        sha = ''
-                        bs = 0
-                    try:
-                        from platform.infra.models import OutputRecord
-                        rec = OutputRecord(
-                            tenant_id=tenant_id,
-                            work_order_id=work_order_id,
-                            step_id=sid,
-                            module_id=mid,
-                            kind=module_kind,
-                            output_id=str(output_id),
-                            path=rel_path,
-                            uri=abs_path.resolve().as_uri(),
-                            content_type=str(o.get('format') or ''),
-                            sha256=sha,
-                            bytes=bs,
-                            bytes_size=bs,
-                            created_at=utcnow_iso(),
-                        )
-                        run_state.record_output(rec)
-                    except Exception:
-                        pass
                 step_run = run_state.mark_step_run_succeeded(
                     mr_id,
                     requested_deliverables=list(requested_deliverables or []),
                     metadata={'outputs_dir': str(out_dir)},
                 )
             else:
-                if status == 'FAILED':
+                if str(result.get('status','') or '').upper() == 'FAILED':
                     # Prefer canonical reason_code (from reason_catalog) in run-state logs.
                     _rs = str(result.get('reason_slug') or result.get('reason_key') or 'module_failed').strip() or 'module_failed'
                     _rc = _reason_code(reason_idx, "MODULE", mid, _rs) or _reason_code(reason_idx, "GLOBAL", "", _rs) or ""
                     err = {'reason_code': _rc or _rs, 'message': 'module failed', 'type': 'ModuleFailed'}
                     step_run = run_state.mark_step_run_failed(mr_id, err)
+
+            raw_status = str(result.get("status", "") or "").strip()
+            if raw_status:
+                status = raw_status.upper()
+            else:
+                files = result.get("files")
+                status = "COMPLETED" if isinstance(files, list) else "FAILED"
 
             reason_slug = str(result.get("reason_slug", "") or "").strip() or str(result.get("reason_key", "") or "").strip()
             if status == "COMPLETED":
