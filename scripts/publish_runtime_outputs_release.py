@@ -222,6 +222,19 @@ def _publish_one(*, repo_root: Path, runtime_dir: Path, tenant_id: str, work_ord
     outputs_dir = (repo_root / runtime_dir / 'debug_publish_outputs' / tenant_id / work_order_id / module_run_id).resolve()
     result = deliver_run(params, outputs_dir)
 
+    # Print delivery receipt details (release URL + asset names) for easy discovery in CI logs.
+    try:
+        receipt_path = outputs_dir / 'delivery_receipt.json'
+        if receipt_path.exists():
+            receipt = json.loads(receipt_path.read_text(encoding='utf-8'))
+            rel_url = str(receipt.get('release_url') or '')
+            assets = receipt.get('assets') if isinstance(receipt.get('assets'), list) else []
+            asset_names = [str(a.get('asset_name') or '') for a in assets if isinstance(a, dict)]
+            print(f"[debug_publish_outputs][RECEIPT] release_url={rel_url}")
+            print(f"[debug_publish_outputs][RECEIPT] assets={asset_names}")
+    except Exception as _e:
+        print('[debug_publish_outputs][RECEIPT] failed to read delivery_receipt.json')
+
     # Surface failures clearly in CI logs and propagate a non-zero exit later.
     status = str((result or {}).get('status') or '').strip().upper()
     ok = (status == 'COMPLETED')
