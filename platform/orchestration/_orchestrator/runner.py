@@ -18,6 +18,7 @@ from .._orchestrator_parts.queue_resolution import get_part as _part_queue
 from .._orchestrator_parts.pricing_and_billing import get_part as _part_pricing
 from .._orchestrator_parts.step_execution import get_part as _part_steps
 from .._orchestrator_parts.cache_and_completion import get_part as _part_cache
+from .._orchestrator_parts.runtime_evidence import get_part as _part_runtime_evidence
 from .._orchestrator_parts.refunds_and_ledger import get_part as _part_refunds
 
 
@@ -29,6 +30,7 @@ def _load_orchestrator_namespace() -> Dict[str, Any]:
             _part_pricing(),
             _part_steps(),
             _part_cache(),
+            _part_runtime_evidence(),
             _part_refunds(),
         ]
     )

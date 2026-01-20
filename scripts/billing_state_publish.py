@@ -126,6 +126,18 @@ def main() -> int:
         "state_manifest.json",
     ]
 
+    # Optional debug evidence published by orchestrator to keep Billing as the SoT.
+    # These files are produced only when runs occur and may be absent in fresh bootstraps.
+    evidence_dir = billing_dir / "runtime_evidence_zips"
+    extra_assets: List[Path] = []
+    if evidence_dir.exists() and evidence_dir.is_dir():
+        for p in sorted(evidence_dir.glob("runtime_evidence__*.zip")):
+            if p.is_file():
+                extra_assets.append(p)
+        for p in sorted(evidence_dir.glob("runtime_evidence__*.manifest.json")):
+            if p.is_file():
+                extra_assets.append(p)
+
     baseline_path = billing_dir / "baseline_manifest.json"
     in_ci = (os.getenv("GITHUB_ACTIONS") or "").strip().lower() in ("1", "true", "yes")
     if in_ci and not baseline_path.exists():
@@ -154,6 +166,10 @@ def main() -> int:
             changed = True
             break
 
+    # Any runtime evidence forces a publish so users can download the proof artifacts.
+    if not changed and extra_assets:
+        changed = True
+
     if not changed:
         print("[BILLING_PUBLISH][SKIP] no billing-state changes detected")
         return 0
@@ -176,6 +192,9 @@ def main() -> int:
         p = billing_dir / fname
         _delete_asset_if_exists(repo, token, release, p.name)
 
+    for p in extra_assets:
+        _delete_asset_if_exists(repo, token, release, p.name)
+
     # Re-fetch to avoid trying to delete twice if the API response was stale
     r = req.get(f"{base}/releases/tags/{tag}", headers=_headers(token), timeout=30)
     if r.status_code == 200:
@@ -184,7 +203,10 @@ def main() -> int:
     for fname in required:
         _upload_asset(repo, token, release, billing_dir / fname)
 
-    print(f"[BILLING_PUBLISH][OK] published {len(required)} assets to tag={tag}")
+    for p in extra_assets:
+        _upload_asset(repo, token, release, p)
+
+    print(f"[BILLING_PUBLISH][OK] published {len(required) + len(extra_assets)} assets to tag={tag}")
     return 0
 
 

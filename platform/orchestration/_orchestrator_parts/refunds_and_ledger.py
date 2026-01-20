@@ -160,9 +160,44 @@ PART = r'''\
         except Exception:
             pass
 
-	        # No parallel workorder ledger: billing-state transactions + transaction_items are the
-	        # durable source of truth for actions and outcomes. Operational status is kept in
-	        # runtime run-state only.
+        # Persist runtime evidence into billing-state so users can download and audit
+        # step outputs even when packaging or delivery does not run.
+        try:
+            receipt = persist_runtime_evidence_into_billing_state(
+                billing_state_dir=billing_state_dir,
+                runtime_dir=runtime_dir,
+                tenant_id=tenant_id,
+                work_order_id=work_order_id,
+                run_stamp_iso=ended_at,
+            )
+            if receipt is not None:
+                zip_path, manifest_path = receipt
+                now_dt = datetime.now(timezone.utc).replace(microsecond=0)
+                cache_index_upsert(
+                    cache_index,
+                    platform_cfg=platform_cfg,
+                    ttl_days_by_place_type=cache_ttl_days_by_place_type,
+                    place='billing_state',
+                    typ='runtime_evidence',
+                    ref=str(Path('runtime_evidence_zips') / zip_path.name),
+                    now_dt=now_dt,
+                )
+                cache_index_upsert(
+                    cache_index,
+                    platform_cfg=platform_cfg,
+                    ttl_days_by_place_type=cache_ttl_days_by_place_type,
+                    place='billing_state',
+                    typ='runtime_evidence_manifest',
+                    ref=str(Path('runtime_evidence_zips') / manifest_path.name),
+                    now_dt=now_dt,
+                )
+        except Exception as e:
+            print(f"[runtime_evidence][WARN] failed to persist evidence: {e}")
+
+
+        # No parallel workorder ledger: billing-state transactions + transaction_items are the
+        # durable source of truth for actions and outcomes. Operational status is kept in
+        # runtime run-state only.
 
 
 
