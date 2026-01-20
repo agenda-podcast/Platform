@@ -1,7 +1,6 @@
 """Orchestrator implementation part (role-based split; kept <= 500 lines)."""
 
 PART = r'''\
-from __future__ import annotations
 
 import json
 import re
