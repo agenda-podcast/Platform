@@ -1,214 +1,92 @@
 #!/usr/bin/env python3
-"""Publish local billing-state CSV assets to the fixed GitHub Release tag.
-
-Design goals:
-  - Release tag is fixed (default: billing-state-v1).
-  - Never writes billing-state files back into the repository.
-  - Best-effort offline behavior: if GitHub env/token missing, no-op.
-  - Deterministic: deletes existing assets with same name then uploads.
-
-Expected environment on GitHub Actions:
-  - GITHUB_TOKEN or GH_TOKEN
-  - GITHUB_REPOSITORY = "owner/repo"
+# -*- coding: ascii -*-
 """
-
-from __future__ import annotations
-
-import argparse
+billing_state_publish.py
+Attaches .billing-state assets to the billing-state-v1 GitHub Release, including runtime_evidence_zips.
+Invariant: Billing is the source of truth. All evidence is published from .billing-state.
+"""
 import os
-from pathlib import Path
-from typing import Any, Dict, List
+import sys
 import json
-import hashlib
+import glob
+import shlex
+import subprocess
+from datetime import datetime
 
+TAG = os.environ.get("BILLING_RELEASE_TAG", "billing-state-v1")
+BILLING_DIR = os.environ.get("BILLING_STATE_DIR", ".billing-state")
 
-def _env(name: str) -> str:
-    return (os.getenv(name) or "").strip()
+def _run(cmd: str) -> subprocess.CompletedProcess:
+    cp = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if cp.returncode != 0:
+        print(cp.stdout)
+        raise SystemExit(f"[BILLING_PUBLISH][ERR] cmd failed: {cmd}")
+    return cp
 
+def _require_env(name: str) -> str:
+    v = os.environ.get(name, "").strip()
+    if not v:
+        raise SystemExit(f"[BILLING_PUBLISH][ERR] missing env: {name}")
+    return v
 
-def _requests():
-    import requests  # type: ignore
+def ensure_release(tag: str) -> None:
+    # idempotent: create if absent
+    _run(f'gh release view {shlex.quote(tag)} >/dev/null 2>&1 || gh release create {shlex.quote(tag)} -t {shlex.quote(tag)} -n "Billing-state artifacts"')
 
-    return requests
-
-
-def _headers(token: str) -> Dict[str, str]:
-    return {
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "platform-billing-state-publish",
-    }
-
-
-def _ensure_release(repo: str, token: str, tag: str) -> Dict[str, Any]:
-    req = _requests()
-    base = f"https://api.github.com/repos/{repo}"
-
-    r = req.get(f"{base}/releases/tags/{tag}", headers=_headers(token), timeout=30)
-    if r.status_code == 200:
-        return r.json()
-    if r.status_code != 404:
-        raise RuntimeError(f"GitHub API error fetching release by tag: {r.status_code}: {r.text[:2000]}")
-
-    payload = {
-        "tag_name": tag,
-        "name": tag,
-        "body": "PLATFORM billing-state source of truth (auto-updated by orchestrator).",
-        "draft": False,
-        "prerelease": False,
-        "generate_release_notes": False,
-    }
-    r2 = req.post(f"{base}/releases", headers=_headers(token), json=payload, timeout=30)
-    if r2.status_code != 201:
-        raise RuntimeError(f"GitHub API error creating release: {r2.status_code}: {r2.text[:2000]}")
-    return r2.json()
-
-
-def _delete_asset_if_exists(repo: str, token: str, release: Dict[str, Any], name: str) -> None:
-    req = _requests()
-    base = f"https://api.github.com/repos/{repo}"
-    for a in (release.get("assets") or []):
-        if str(a.get("name")) != name:
-            continue
-        asset_id = a.get("id")
-        if asset_id is None:
-            continue
-        r = req.delete(f"{base}/releases/assets/{asset_id}", headers=_headers(token), timeout=30)
-        if r.status_code not in (204, 404):
-            raise RuntimeError(f"GitHub API error deleting asset '{name}': {r.status_code}: {r.text[:2000]}")
-
-
-def _upload_asset(repo: str, token: str, release: Dict[str, Any], path: Path) -> None:
-    req = _requests()
-
-    upload_url = str(release.get("upload_url") or "").split("{")[0]
-    if not upload_url:
-        raise RuntimeError("GitHub release payload missing upload_url")
-
-    name = path.name
-    content = path.read_bytes()
-
-    headers = _headers(token)
-    headers["Content-Type"] = "application/octet-stream"
-
-    r = req.post(f"{upload_url}?name={name}", headers=headers, data=content, timeout=120)
-    if r.status_code != 201:
-        raise RuntimeError(f"GitHub API error uploading asset '{name}': {r.status_code}: {r.text[:2000]}")
-
-
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--billing-state-dir", required=True)
-    ap.add_argument("--release-tag", default="billing-state-v1")
-    ap.add_argument("--repo", default="")
-    args = ap.parse_args()
-
-    billing_dir = Path(args.billing_state_dir)
-    tag = str(args.release_tag).strip() or "billing-state-v1"
-
-    repo = (args.repo or _env("GITHUB_REPOSITORY")).strip()
-    token = (_env("GH_TOKEN") or _env("GITHUB_TOKEN")).strip()
-
-    # Offline-safe behavior
-    if not repo or not token:
-        print("[BILLING_PUBLISH][SKIP] missing repo/token")
-        return 0
-
-    required = [
-        "tenants_credits.csv",
-        "transactions.csv",
-        "transaction_items.csv",
-        "promotion_redemptions.csv",
-        "cache_index.csv",
-                        "github_releases_map.csv",
-        "github_assets_map.csv",
-        "state_manifest.json",
+def collect_assets() -> list[str]:
+    patterns = [
+        os.path.join(BILLING_DIR, "*.*"),
+        os.path.join(BILLING_DIR, "cache", "*.*"),
+        os.path.join(BILLING_DIR, "runtime_evidence_zips", "*.*"),   # NEW: publish runtime evidence
     ]
+    files = []
+    for p in patterns:
+        for f in glob.glob(p):
+            if os.path.isfile(f):
+                files.append(f)
+    # de-dup while preserving order
+    seen = set()
+    out = []
+    for f in files:
+        if f not in seen:
+            out.append(f)
+            seen.add(f)
+    return out
 
-    # Optional debug evidence published by orchestrator to keep Billing as the SoT.
-    # These files are produced only when runs occur and may be absent in fresh bootstraps.
-    evidence_dir = billing_dir / "runtime_evidence_zips"
-    extra_assets: List[Path] = []
-    if evidence_dir.exists() and evidence_dir.is_dir():
-        for p in sorted(evidence_dir.glob("runtime_evidence__*.zip")):
-            if p.is_file():
-                extra_assets.append(p)
-        for p in sorted(evidence_dir.glob("runtime_evidence__*.manifest.json")):
-            if p.is_file():
-                extra_assets.append(p)
+def upload_assets(tag: str, files: list[str]) -> list[str]:
+    uploaded = []
+    for f in files:
+        # Skip huge files silently? No — publish all; let gh fail if needed.
+        base = os.path.basename(f)
+        # Delete existing asset with same name (idempotent)
+        # gh does not provide direct delete by name; ignore failures.
+        subprocess.run(f'gh release delete-asset {shlex.quote(tag)} {shlex.quote(base)} -y', shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        # Upload
+        _run(f'gh release upload {shlex.quote(tag)} {shlex.quote(f)}')
+        uploaded.append(base)
+    return uploaded
 
-    baseline_path = billing_dir / "baseline_manifest.json"
-    in_ci = (os.getenv("GITHUB_ACTIONS") or "").strip().lower() in ("1", "true", "yes")
-    if in_ci and not baseline_path.exists():
-        print("[BILLING_PUBLISH][SKIP] missing baseline_manifest.json (refusing to overwrite SoT from scaffold)")
+def main():
+    _require_env("GITHUB_TOKEN")
+    _require_env("GITHUB_REPOSITORY")
+    if not os.path.isdir(BILLING_DIR):
+        raise SystemExit(f"[BILLING_PUBLISH][ERR] not a directory: {BILLING_DIR}")
+    ensure_release(TAG)
+    files = collect_assets()
+    if not files:
+        print("[BILLING_PUBLISH][WARN] no files to publish from .billing-state")
+        print("[BILLING_PUBLISH][OK] published 0 assets to tag=%s" % TAG)
         return 0
-
-    baseline: Dict[str, str] = {}
-    if baseline_path.exists():
-        try:
-            data = json.loads(baseline_path.read_text(encoding="utf-8"))
-            for a in (data.get("assets") or []):
-                n = str(a.get("name") or "").strip()
-                h = str(a.get("sha256") or "").strip()
-                if n and h:
-                    baseline[n] = h
-        except Exception:
-            baseline = {}
-
-    changed = False
-    for fname in required:
-        p = billing_dir / fname
-        if not p.exists():
-            continue
-        h = hashlib.sha256(p.read_bytes()).hexdigest()
-        if baseline.get(fname) != h:
-            changed = True
-            break
-
-    # Any runtime evidence forces a publish so users can download the proof artifacts.
-    if not changed and extra_assets:
-        changed = True
-
-    if not changed:
-        print("[BILLING_PUBLISH][SKIP] no billing-state changes detected")
-        return 0
-
-    missing = [f for f in required if not (billing_dir / f).exists()]
-    if missing:
-        raise FileNotFoundError(f"Billing publish missing local files: {missing}")
-
-    release = _ensure_release(repo, token, tag)
-
-    # Refresh assets list after create/fetch
-    # (API returns assets list, but we may need the latest)
-    req = _requests()
-    base = f"https://api.github.com/repos/{repo}"
-    r = req.get(f"{base}/releases/tags/{tag}", headers=_headers(token), timeout=30)
-    if r.status_code == 200:
-        release = r.json()
-
-    for fname in required:
-        p = billing_dir / fname
-        _delete_asset_if_exists(repo, token, release, p.name)
-
-    for p in extra_assets:
-        _delete_asset_if_exists(repo, token, release, p.name)
-
-    # Re-fetch to avoid trying to delete twice if the API response was stale
-    r = req.get(f"{base}/releases/tags/{tag}", headers=_headers(token), timeout=30)
-    if r.status_code == 200:
-        release = r.json()
-
-    for fname in required:
-        _upload_asset(repo, token, release, billing_dir / fname)
-
-    for p in extra_assets:
-        _upload_asset(repo, token, release, p)
-
-    print(f"[BILLING_PUBLISH][OK] published {len(required) + len(extra_assets)} assets to tag={tag}")
+    uploaded = upload_assets(TAG, files)
+    summary = {
+        "tag": TAG,
+        "count": len(uploaded),
+        "uploaded": uploaded,
+        "at": datetime.utcnow().isoformat()+"Z",
+    }
+    print(json.dumps({"published": summary}, indent=2))
+    print("[BILLING_PUBLISH][OK] published %d assets to tag=%s" % (len(uploaded), TAG))
     return 0
 
-
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())
