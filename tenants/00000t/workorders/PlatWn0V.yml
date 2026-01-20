@@ -27,7 +27,7 @@ steps:
   kind: transform
   reuse_output_type: cache
   deliverables:
-  - images
+  - thumbnails
   inputs:
     queries:
     - most popular world news today
@@ -49,11 +49,11 @@ steps:
       output_id: report
       as_path: search_pages/report.json
     - from_step: s2u
-      output_id: images_dir
-      as_path: images
+      output_id: thumbnails_dir
+      as_path: thumbnails
     - from_step: s2u
-      output_id: images_index
-      as_path: images/index.jsonl
+      output_id: thumbnails_index
+      as_path: thumbnails/index.jsonl
     - from_step: s2u
       output_id: results
       as_path: search_images/results.jsonl
