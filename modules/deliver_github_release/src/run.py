@@ -128,13 +128,23 @@ def _ensure_release(repo: str, token: str, tag: str, name: str, notes: str) -> D
 
 
 def _upload_asset(repo: str, token: str, tag: str, asset_path: Path, *, name_override: Optional[str] = None) -> None:
-    name = _sanitize_asset_name(name_override or asset_path.name)
+    # gh release upload does not reliably support a name override across versions.
+    # To ensure deterministic asset names, we copy the file to a temporary path
+    # that has the desired final name and upload that file.
+    desired = _sanitize_asset_name(name_override or asset_path.name)
+    upload_path = asset_path
+    tmp_dir = asset_path.parent / "_tmp_named_assets"
+    if desired and desired != asset_path.name:
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        upload_path = tmp_dir / desired
+        shutil.copy2(asset_path, upload_path)
+
     rc, out, err = _run(
-        ["gh", "release", "upload", tag, str(asset_path), "--repo", repo, "--clobber", "--name", name],
+        ["gh", "release", "upload", tag, str(upload_path), "--repo", repo, "--clobber"],
         env=_gh_env(token),
     )
     if rc != 0:
-        raise RuntimeError(f"gh release upload failed for {name} rc={rc}: {err.strip()}")
+        raise RuntimeError(f"gh release upload failed for {desired} rc={rc}: {err.strip()}")
 
 
 def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:

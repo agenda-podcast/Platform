@@ -222,6 +222,25 @@ def _publish_one(*, repo_root: Path, runtime_dir: Path, tenant_id: str, work_ord
     outputs_dir = (repo_root / runtime_dir / 'debug_publish_outputs' / tenant_id / work_order_id / module_run_id).resolve()
     result = deliver_run(params, outputs_dir)
 
+    # Surface failures clearly in CI logs and propagate a non-zero exit later.
+    status = str((result or {}).get('status') or '').strip().upper()
+    ok = (status == 'COMPLETED')
+    if status and not ok:
+        report_path = outputs_dir / 'report.json'
+        report_txt = ''
+        if report_path.exists():
+            try:
+                report_txt = report_path.read_text(encoding='utf-8')
+            except Exception:
+                report_txt = ''
+        print('[debug_publish_outputs][ERROR] deliver_github_release returned non-completed status')
+        print(f'[debug_publish_outputs][ERROR] status={status} outputs_dir={outputs_dir}')
+        if report_txt:
+            print('[debug_publish_outputs][ERROR] report.json:')
+            print(report_txt)
+        else:
+            print(f'[debug_publish_outputs][ERROR] report.json not found at: {report_path}')
+
     # Emit a small console summary.
     out = {
         'tenant_id': tenant_id,
@@ -230,6 +249,7 @@ def _publish_one(*, repo_root: Path, runtime_dir: Path, tenant_id: str, work_ord
         'zip_path': str(zip_path),
         'manifest_path': str(manifest_path),
         'deliver_result': result,
+        'deliver_ok': ok,
         'collected_meta': meta,
     }
     return out
@@ -271,19 +291,25 @@ def main() -> int:
         return 0
 
     results: List[Dict[str, Any]] = []
+    failures: List[Dict[str, Any]] = []
     for tenant_id, work_order_id in targets:
         tag = str(args.release_tag or '').strip()
         if tag == 'auto' or not tag:
             tag = f'debug-outputs-tenant-{tenant_id}-workorder-{work_order_id}-{_utcnow_iso_compact()}'
         res = _publish_one(repo_root=repo_root, runtime_dir=runtime_dir, tenant_id=tenant_id, work_order_id=work_order_id, release_tag=tag)
         results.append(res)
-        print(f"[debug_publish_outputs][OK] tenant_id={tenant_id} work_order_id={work_order_id} tag={tag}")
+        status = str((res.get('deliver_result') or {}).get('status') or '').strip().upper()
+        if status and status != 'COMPLETED':
+            failures.append(res)
+            print(f"[debug_publish_outputs][FAILED] tenant_id={tenant_id} work_order_id={work_order_id} tag={tag} status={status}")
+        else:
+            print(f"[debug_publish_outputs][OK] tenant_id={tenant_id} work_order_id={work_order_id} tag={tag}")
 
     out_path = (repo_root / runtime_dir / 'dist' / 'debug_outputs' / f'debug_publish_outputs_summary__{_utcnow_iso_compact()}.json').resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(results, indent=2) + "\n", encoding='utf-8')
     print(f'[debug_publish_outputs] wrote summary: {out_path}')
-    return 0
+    return 2 if failures else 0
 
 
 if __name__ == '__main__':
