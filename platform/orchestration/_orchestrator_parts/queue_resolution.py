@@ -197,32 +197,77 @@ def _load_module_display_names(registry: Any) -> Dict[str, str]:
 
 
 def _load_module_ports(registry: Any, module_id: str) -> Dict[str, Any]:
-    """Load module port definitions using registry.get_contract(module_id).
+    """Load module port definitions from the module contract.
 
-    This preserves the older return shape expected by _ports_index while avoiding direct filesystem reads.
+    The platform canonical schema is module.yml: ports.inputs.port / ports.inputs.limited_port
+    and ports.outputs.port / ports.outputs.limited_port.
+
+    This function normalizes that schema into the older shape expected by _ports_index:
+      - inputs_port: list[dict]
+      - inputs_limited_port: list[dict]
+      - outputs_port: list[dict]
+      - outputs_limited_port: list[dict]
+
+    Backward compatibility: if a contract does not include ports, fall back to legacy
+    contract['inputs'] map and contract['outputs'] map.
     """
     mid = canon_module_id(module_id)
     if not mid:
         raise ValueError(f"Invalid module_id for ports: {module_id!r}")
+
     contract = registry.get_contract(mid)
-    inputs = contract.get("inputs") or {}
+
+    in_port = []
+    in_limited = []
+    out_port = []
+    out_limited = []
+
+    ports = contract.get('ports') if isinstance(contract, dict) else None
+    if isinstance(ports, dict):
+        inputs = ports.get('inputs') if isinstance(ports.get('inputs'), dict) else {}
+        outputs = ports.get('outputs') if isinstance(ports.get('outputs'), dict) else {}
+
+        ip = inputs.get('port') or []
+        il = inputs.get('limited_port') or []
+        op = outputs.get('port') or []
+        ol = outputs.get('limited_port') or []
+
+        if isinstance(ip, list):
+            in_port = [p for p in ip if isinstance(p, dict)]
+        if isinstance(il, list):
+            in_limited = [p for p in il if isinstance(p, dict)]
+        if isinstance(op, list):
+            out_port = [p for p in op if isinstance(p, dict)]
+        if isinstance(ol, list):
+            out_limited = [p for p in ol if isinstance(p, dict)]
+
+        return {
+            'inputs_port': in_port,
+            'inputs_limited_port': in_limited,
+            'outputs_port': out_port,
+            'outputs_limited_port': out_limited,
+        }
+
+    # Legacy permissive behavior (older contracts).
+    inputs = contract.get('inputs') or {}
     if not isinstance(inputs, dict):
         inputs = {}
 
-    in_port = [v for v in inputs.values() if isinstance(v, dict) and not bool(v.get("is_limited"))]
-    in_limited = [v for v in inputs.values() if isinstance(v, dict) and bool(v.get("is_limited"))]
+    in_port = [v for v in inputs.values() if isinstance(v, dict) and not bool(v.get('is_limited'))]
+    in_limited = [v for v in inputs.values() if isinstance(v, dict) and bool(v.get('is_limited'))]
 
-    outputs_map = contract.get("outputs") or {}
-    out_port = []
-    out_limited = []
+    outputs_map = contract.get('outputs') or {}
     if isinstance(outputs_map, dict):
         for o in outputs_map.values():
-            if not isinstance(o, dict):
-                continue
-            # Registry does not encode limited vs non-limited outputs; treat all as tenant outputs.
-            out_port.append(o)
+            if isinstance(o, dict):
+                out_port.append(o)
 
-    return {"inputs_port": in_port, "inputs_limited_port": in_limited, "outputs_port": out_port, "outputs_limited_port": out_limited}
+    return {
+        'inputs_port': in_port,
+        'inputs_limited_port': in_limited,
+        'outputs_port': out_port,
+        'outputs_limited_port': out_limited,
+    }
 
 
 def _ports_index(ports: Dict[str, Any]) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]], Set[str]]:
