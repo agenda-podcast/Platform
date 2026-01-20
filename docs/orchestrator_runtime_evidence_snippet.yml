@@ -1,0 +1,7 @@
+# ADD BELOW WITHOUT REMOVING EXISTING INPUTS / DROPDOWNS
+- name: Upload runtime evidence zips artifact
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: runtime-evidence-zips
+    path: .billing-state/runtime_evidence_zips/*
