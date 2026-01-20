@@ -193,15 +193,15 @@ deliverables:
       outputs: [results, report]
 
     - deliverable_id: thumbnails
-      description: "Download thumbnails and provide thumbnails/index.jsonl."
+      description: "Download thumbnails and provide thumbnails/index.jsonl (also includes results.jsonl + report.json)."
       limited_inputs:
         download_thumbnails: true
-      outputs: [thumbnails_dir, thumbnails_index]
+      outputs: [results, report, thumbnails_dir, thumbnails_index]
 
     - deliverable_id: images
-      description: "Download full images and provide images/index.jsonl."
+      description: "Download full images and provide images/index.jsonl (also includes results.jsonl + report.json)."
       limited_inputs:
         download_images: true
-      outputs: [images_dir, images_index]
+      outputs: [results, report, images_dir, images_index]
 
   limited_port: []

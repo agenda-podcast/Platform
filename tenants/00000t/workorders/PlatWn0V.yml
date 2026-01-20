@@ -28,7 +28,6 @@ steps:
   reuse_output_type: cache
   deliverables:
   - images
-  - metadata
   inputs:
     queries:
     - most popular world news today
