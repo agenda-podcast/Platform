@@ -126,7 +126,9 @@ def _format_compact_row(path: Path, row: dict[str, str], lookups: Lookups) -> st
     elif fname == "transaction_items.csv":
         # include module_id (schema) and infer work_order_id via transactions.csv join
         keys_preferred = ["transaction_item_id", "transaction_id", "tenant_id", "work_order_id", "step_id", "module_id", "module", "deliverable_id", "feature", "type", "amount_credits", "created_at", "note"]
-        keys_preferred = ["module_run_id", "tenant_id", "work_order_id", "module", "status", "started_at", "ended_at", "reason"]
+    elif fname == "cache_index.csv":
+        keys_preferred = ["place", "type", "ref", "created_at", "expires_at"]
+
     else:
         # generic
         keys_preferred = list(enriched.keys())[:8]
