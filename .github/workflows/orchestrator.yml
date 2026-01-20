@@ -148,6 +148,24 @@ jobs:
             --runtime-dir "${RUNTIME_DIR}" \
             --billing-state-dir "${BILLING_STATE_DIR}"
 
+      
+
+      - name: Publish runtime outputs (debug bundle)
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${PLATFORM_WORKORDERS_INDEX_PATH:-}" ] && [ -f "${PLATFORM_WORKORDERS_INDEX_PATH}" ]; then
+            python scripts/publish_runtime_outputs_release.py \
+              --runtime-dir "${RUNTIME_DIR}" \
+              --queue-csv "${PLATFORM_WORKORDERS_INDEX_PATH}"
+          else
+            echo "[orchestrator] PLATFORM_WORKORDERS_INDEX_PATH not set or file missing; skipping runtime publish"
+          fi
+
       - name: Billing-state tail (this run only)
         if: always()
         shell: bash
