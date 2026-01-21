@@ -66,7 +66,6 @@ steps:
   kind: delivery
   deliverables:
   - delivery_receipt
-  - delivery_log
   inputs:
     release_tag: auto
     release_name: "Platform Verify \u2013 Workorder PlatWn0V"

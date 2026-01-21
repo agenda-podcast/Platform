@@ -224,7 +224,7 @@ class OrchestratorContext:
     runtime_profile_name: str
 
 
-def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path, enable_github_releases: bool = False, infra: InfraBundle | None = None) -> int:
+def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path, enable_github_releases: bool = False, infra: InfraBundle | None = None) -> None:
     if infra is None:
         from ..infra.config import load_runtime_profile
         from ..infra.factory import build_infra
@@ -258,7 +258,6 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
     prices = _load_module_prices(repo_root)
     artifacts_policy = _load_module_artifacts_policy(repo_root)
     module_names = _load_module_display_names(registry)
-    any_workorder_not_completed = False
 
     billing = BillingState(billing_state_dir)
     billing_state_dir.mkdir(parents=True, exist_ok=True)

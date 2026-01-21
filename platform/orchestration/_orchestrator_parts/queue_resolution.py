@@ -199,31 +199,49 @@ def _load_module_display_names(registry: Any) -> Dict[str, str]:
 def _load_module_ports(registry: Any, module_id: str) -> Dict[str, Any]:
     """Load module port definitions using registry.get_contract(module_id).
 
-    This preserves the older return shape expected by _ports_index while avoiding direct filesystem reads.
+    Canonical source is module.yml (contract['ports']).
+    Return shape is the legacy dict expected by _ports_index and other orchestrator parts:
+      - inputs_port
+      - inputs_limited_port
+      - outputs_port
+      - outputs_limited_port
     """
     mid = canon_module_id(module_id)
     if not mid:
         raise ValueError(f"Invalid module_id for ports: {module_id!r}")
+
     contract = registry.get_contract(mid)
-    inputs = contract.get("inputs") or {}
+    ports = contract.get("ports") or {}
+    if not isinstance(ports, dict):
+        ports = {}
+
+    inputs = ports.get("inputs") or {}
     if not isinstance(inputs, dict):
         inputs = {}
+    outputs = ports.get("outputs") or {}
+    if not isinstance(outputs, dict):
+        outputs = {}
 
-    in_port = [v for v in inputs.values() if isinstance(v, dict) and not bool(v.get("is_limited"))]
-    in_limited = [v for v in inputs.values() if isinstance(v, dict) and bool(v.get("is_limited"))]
+    in_port = inputs.get("port") or []
+    in_limited = inputs.get("limited_port") or []
+    out_port = outputs.get("port") or []
+    out_limited = outputs.get("limited_port") or []
 
-    outputs_map = contract.get("outputs") or {}
-    out_port = []
-    out_limited = []
-    if isinstance(outputs_map, dict):
-        for o in outputs_map.values():
-            if not isinstance(o, dict):
-                continue
-            # Registry does not encode limited vs non-limited outputs; treat all as tenant outputs.
-            out_port.append(o)
+    if not isinstance(in_port, list):
+        in_port = []
+    if not isinstance(in_limited, list):
+        in_limited = []
+    if not isinstance(out_port, list):
+        out_port = []
+    if not isinstance(out_limited, list):
+        out_limited = []
 
-    return {"inputs_port": in_port, "inputs_limited_port": in_limited, "outputs_port": out_port, "outputs_limited_port": out_limited}
-
+    return {
+        "inputs_port": in_port,
+        "inputs_limited_port": in_limited,
+        "outputs_port": out_port,
+        "outputs_limited_port": out_limited,
+    }
 
 def _ports_index(ports: Dict[str, Any]) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]], Set[str]]:
     """Return (tenant_inputs, platform_inputs, tenant_output_paths)."""
