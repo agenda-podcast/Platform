@@ -409,13 +409,9 @@ PART = r'''\
             #  - output bindings: {from_step, output_id} -> OutputRecord.path
             #  - file bindings: {from_step, from_file} -> relative path under upstream outputs_dir
             # Both cases are path-based, so we enforce exposure at the path level.
-            allowed_paths = set()
-            for _oid, _odef in (_t_out or {}).items():
-                if not isinstance(_odef, dict):
-                    continue
-                _p = str(_odef.get("path") or "").lstrip("/").strip()
-                if _p:
-                    allowed_paths.add(_p)
+            # _ports_index() returns tenant-visible output paths as a set.
+            # Enforce exposure at the path level (not output_id).
+            allowed_paths = set(_t_out or set())
             step_allowed_outputs[st_step_id] = allowed_paths
 
         # Execute steps (modules-only workorders and steps-based chaining workorders)
