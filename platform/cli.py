@@ -40,6 +40,12 @@ def cmd_orchestrate(args: argparse.Namespace) -> int:
     billing_state_dir = Path(args.billing_state_dir).resolve()
     enable_releases = bool(args.enable_github_releases)
 
+    queue_source = str(getattr(args, "queue_source", "") or "").strip()
+    if queue_source:
+        # Orchestrator queue override. Maps to PLATFORM_WORKORDERS_INDEX_PATH used by _load_workorders_queue().
+        # Keep value as provided (relative paths resolve from repo_root).
+        os.environ["PLATFORM_WORKORDERS_INDEX_PATH"] = queue_source
+
     runtime_dir.mkdir(parents=True, exist_ok=True)
     billing_state_dir.mkdir(parents=True, exist_ok=True)
 
@@ -244,6 +250,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument('--runtime-profile', default='', help=argparse.SUPPRESS)
     sp.add_argument("--runtime-dir", default="runtime")
     sp.add_argument("--billing-state-dir", default=".billing-state")
+    sp.add_argument("--queue-source", default="", help="Optional override CSV path for workorders_index (used by verification flows)")
     sp.add_argument("--enable-github-releases", action="store_true")
     sp.set_defaults(func=cmd_orchestrate)
 
@@ -251,6 +258,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument('--runtime-profile', default='', help=argparse.SUPPRESS)
     sp.add_argument("--runtime-dir", default="runtime")
     sp.add_argument("--billing-state-dir", default=".billing-state")
+    sp.add_argument("--queue-source", default="", help="Optional override CSV path for workorders_index (used by verification flows)")
     sp.add_argument("--enable-github-releases", action="store_true")
     sp.set_defaults(func=cmd_orchestrate)
 

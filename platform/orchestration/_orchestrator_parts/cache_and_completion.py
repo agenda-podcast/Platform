@@ -1,5 +1,4 @@
 """Orchestrator implementation part (role-based split; kept <= 500 lines)."""
-
 PART = r'''\
                                 'output_paths': list(_dd.get('output_paths') or []),
                             }
@@ -10,7 +9,6 @@ PART = r'''\
                             raise PermissionError(f"Deliverable limited_input '{k}' must not be a tenant input for module {mid}")
                         if k not in platform_inputs:
                             raise KeyError(f"Deliverable limited_input '{k}' is not declared as limited_port for module {mid}")
-
                 if tenant_inputs or platform_inputs:
                     # Reject any attempt to set platform-only inputs.
                     for k in inputs_spec.keys():
@@ -18,7 +16,6 @@ PART = r'''\
                             raise PermissionError(f"Input '{k}' is platform-only for module {mid}")
                         if k not in tenant_inputs:
                             raise KeyError(f"Unknown input '{k}' for module {mid}")
-
                     # Inject defaults (tenant + platform) before binding resolution.
                     merged_spec: Dict[str, Any] = dict(inputs_spec)
                     for pid, pspec in tenant_inputs.items():
@@ -27,13 +24,10 @@ PART = r'''\
                     for pid, pspec in platform_inputs.items():
                         if pid not in merged_spec and "default" in pspec:
                             merged_spec[pid] = pspec.get("default")
-
                     # Deliverables may request platform-only flags; these override tenant inputs and defaults.
                     for k, v in (applied_limited_inputs or {}).items():
                         merged_spec[k] = v
-
                     resolved_inputs = _resolve_inputs(merged_spec, step_outputs, step_allowed_outputs, run_state, tenant_id, work_order_id)
-
                     # Required tenant inputs must be present and non-empty after resolution.
                     for pid, pspec in tenant_inputs.items():
                         if not bool(pspec.get("required", False)):
@@ -46,17 +40,13 @@ PART = r'''\
                 else:
                     # Legacy permissive behavior: if module has no ports, accept any inputs.
                     resolved_inputs = _resolve_inputs(inputs_spec, step_outputs, step_allowed_outputs, run_state, tenant_id, work_order_id)
-
                 resolve_error = ""
             except Exception as e:
                 resolved_inputs = {}
                 resolve_error = str(e)
-
             if not resolve_error:
                 effective_inputs_hash = _effective_inputs_hash(resolved_inputs)
-
             sname = str(cfg.get("step_name") or cfg.get("name") or "").strip()
-
             params: Dict[str, Any] = {
                 "tenant_id": tenant_id,
                 "work_order_id": work_order_id,
@@ -70,13 +60,10 @@ PART = r'''\
                 for k, v in resolved_inputs.items():
                     if k not in params and k not in ("inputs", "_platform"):
                         params[k] = v
-
             module_path = repo_root / "modules" / mid
             out_dir = runtime_dir / "runs" / tenant_id / work_order_id / sid / mr_id
             ensure_dir(out_dir)
-
             step_run = run_state.mark_step_run_running(mr_id, metadata={'outputs_dir': str(out_dir)})
-
             # ------------------------------------------------------------------
             # Performance cache: reuse module outputs from runtime/cache_outputs
             # when reuse_output_type == "cache".
@@ -85,7 +72,6 @@ PART = r'''\
             key_inputs = resolved_inputs if isinstance(resolved_inputs, dict) else {}
             cache_key = derive_cache_key(module_id=mid, tenant_id=tenant_id, key_inputs=key_inputs)
             cache_dir = cache_root / _cache_dirname(cache_key)
-
             cache_row = None
             for r in cache_index:
                 if (str(r.get('place','')).strip() == 'cache'
@@ -93,7 +79,6 @@ PART = r'''\
                     and str(r.get('ref','')).strip() == cache_key):
                     cache_row = r
                     break
-
             cache_valid = False
             if cache_row is not None:
                 try:
@@ -137,7 +122,6 @@ PART = r'''\
             else:
                 module_env = env_for_module(store, mid)
                 result = execute_module_runner(module_path=module_path, params=params, outputs_dir=out_dir, env=module_env)
-
             # Resolve module contract + kind once per step so downstream logic
             # (including delivery evidence) can always reference module_kind,
             # even when the step fails.
@@ -146,7 +130,6 @@ PART = r'''\
             except Exception:
                 contract = {}
             module_kind = str(contract.get('kind') or 'transform').strip() or 'transform'
-
             # Record outputs into RunStateStore using module ports output paths (latest wins).
             # IMPORTANT: module.yml defines outputs under ports.outputs.port (and ports.outputs.limited_port),
             # not as a direct contract['outputs'] dict. Binding resolution depends on these records.
@@ -157,10 +140,14 @@ PART = r'''\
                     ports = ports_cache.get(mid) or {}
                 except Exception:
                     ports = {}
-
                 outputs_port = {}
                 try:
-                    op = ((ports.get('outputs') or {}).get('port') or [])
+                    op = []
+                    if isinstance(ports, dict):
+                        if isinstance(ports.get('outputs'), dict):
+                            op = (ports.get('outputs') or {}).get('port') or []
+                        elif isinstance(ports.get('outputs_port'), list):
+                            op = ports.get('outputs_port') or []
                     if isinstance(op, list):
                         for o in op:
                             if not isinstance(o, dict):
@@ -171,7 +158,6 @@ PART = r'''\
                             outputs_port[oid] = o
                 except Exception:
                     outputs_port = {}
-
                 for output_id, odef in outputs_port.items():
                     rel_path = str(odef.get('path') or '').lstrip('/').strip()
                     if not rel_path:
@@ -218,14 +204,12 @@ PART = r'''\
                     _rc = _reason_code(reason_idx, "MODULE", mid, _rs) or _reason_code(reason_idx, "GLOBAL", "", _rs) or ""
                     err = {'reason_code': _rc or _rs, 'message': 'module failed', 'type': 'ModuleFailed'}
                     step_run = run_state.mark_step_run_failed(mr_id, err)
-
             raw_status = str(result.get("status", "") or "").strip()
             if raw_status:
                 status = raw_status.upper()
             else:
                 files = result.get("files")
                 status = "COMPLETED" if isinstance(files, list) else "FAILED"
-
             reason_slug = str(result.get("reason_slug", "") or "").strip() or str(result.get("reason_key", "") or "").strip()
             if status == "COMPLETED":
                 completed_steps.append(sid)
@@ -236,23 +220,18 @@ PART = r'''\
                 if not reason_slug:
                     reason_slug = "module_failed"
                 reason_code = _reason_code(reason_idx, "MODULE", mid, reason_slug) or _reason_code(reason_idx, "GLOBAL", "", reason_slug) or _reason_code(reason_idx, "GLOBAL", "", "module_failed")
-
             # output ref / report path: optional
             report_path = str(result.get("report_path","") or "")
             output_ref = str(result.get("output_ref","") or "")
-
             cache_hit = bool(result.get("_cache_hit", False))
-
             # Keep per-step statuses in memory for the final workorder status reduction.
             # Billing-state is the system of record for charges/refunds; this avoids duplicating
             # run logs into additional CSV tables.
             if sid:
                 step_statuses[sid] = status
-
             # Make outputs discoverable for downstream bindings (even if the step failed).
             if sid:
                 step_outputs[sid] = out_dir
-
             # Delivery evidence line-item (zero-credit) for reporting.
             # This keeps audit metadata (provider, remote_path, verification, bytes) in the ledger
             # without mutating the original __run__ charge row.
@@ -269,7 +248,6 @@ PART = r'''\
                     verification_status_ev = str(receipt.get("verification_status") or "").strip()
                     bytes_ev = int(str(receipt.get("bytes") or "0").strip() or "0")
                     sha256_ev = str(receipt.get("sha256") or "").strip()
-
                     # If the delivery provider is GitHub Releases, index the release and assets
                     # into billing-state mapping tables so downstream automation and Cache Prune
                     # have a complete inventory.
@@ -300,7 +278,6 @@ PART = r'''\
                                         "work_order_id": work_order_id,
                                         "created_at": utcnow_iso(),
                                     })
-
                                 assets_list = receipt.get("assets")
                                 if isinstance(assets_list, list) and release_id_local:
                                     used_asset = {id_key(r.get("asset_id")) for r in asset_map if id_key(r.get("asset_id"))}
@@ -330,13 +307,11 @@ PART = r'''\
                                         })
                     except Exception:
                         pass
-
                     idem_ev = key_delivery_evidence(tenant_id=tenant_id, work_order_id=work_order_id, step_id=sid, module_id=mid)
                     try:
                         receipt_rel = str(receipt_path.relative_to(repo_root)).replace("\\", "/")
                     except Exception:
                         receipt_rel = str(receipt_path)
-
                     ev_meta = {
                         "idempotency_key": idem_ev,
                         "step_id": sid,
@@ -394,7 +369,6 @@ PART = r'''\
                             ))
                         except Exception:
                             pass
-
                         # Index delivery receipts and remote objects for Cache Prune.
                         try:
                             if receipt_rel:
@@ -419,15 +393,12 @@ PART = r'''\
                                 )
                         except Exception:
                             pass
-
             # Persist successful outputs into the local module cache.
             # Cache is only reused when reuse_output_type == "cache".
             if status == "COMPLETED":
                 if not cache_hit:
                     _copy_tree(out_dir, cache_dir)
-
                 now_dt = datetime.now(timezone.utc).replace(microsecond=0)
-
                 # Index module run cache key (GitHub Actions cache) and local filesystem outputs.
                 cache_index_upsert(
                     cache_index,
@@ -438,7 +409,6 @@ PART = r'''\
                     ref=cache_key,
                     now_dt=now_dt,
                 )
-
                 try:
                     out_rel = str(out_dir.relative_to(repo_root)).replace("\\", "/")
                     cache_index_upsert(
@@ -452,7 +422,6 @@ PART = r'''\
                     )
                 except Exception:
                     pass
-
                 try:
                     cache_rel = str(cache_dir.relative_to(repo_root)).replace("\\", "/")
                     cache_index_upsert(
@@ -466,14 +435,11 @@ PART = r'''\
                     )
                 except Exception:
                     pass
-
                 # Persist cache_index.csv after any mutation so cache entries are durable even if later steps fail.
                 try:
                     billing.save_table("cache_index.csv", cache_index, headers=CACHE_INDEX_HEADERS)
                 except Exception as e:
                     print(f"[cache_index][WARN] failed to persist cache_index.csv mid-run: {e}")
-
-
             # Refund policy
             # - Refund reasons are governed by reason_catalog.csv (refundable=true)
             # - For delivery steps, refund is only allowed when the module returns refund_eligible=true,
@@ -484,7 +450,6 @@ PART = r'''\
             refundable = bool(reason_idx.refundable.get(reason_code, False))
             if is_delivery_step:
                 refundable = refundable and refund_eligible
-
             # IMPORTANT: refunds must be itemized to mirror spend line-items (__run__ + deliverables).
             if status != "COMPLETED" and reason_code and refundable:
                 # Prefer the itemized parts captured at spend time. If missing for any reason,
@@ -494,9 +459,7 @@ PART = r'''\
                     breakdown = _price_breakdown_for_step(prices, mid, per_step_requested_deliverables.get(sid, []) or [])
                 refund_amt = _sum_prices(breakdown)
                 if refund_amt > 0:
-
                     m_label = _label(mid, sid, sname)
-
                     # Create an idempotent refund transaction keyed off the step + reason.
                     refund_tx_idem = "tx_" + key_refund(
                         tenant_id=tenant_id,
@@ -506,7 +469,6 @@ PART = r'''\
                         deliverable_id="__run__",
                         reason_key=reason_code,
                     )
-
                     refund_tx = ""
                     for tx in transactions:
                         try:
@@ -516,9 +478,7 @@ PART = r'''\
                         if str(meta.get("idempotency_key") or "") == refund_tx_idem:
                             refund_tx = str(tx.get("transaction_id") or "")
                             break
-
                     now = utcnow_iso()
-
                     if not refund_tx:
                         refund_tx = _new_id("transaction_id", used_tx)
                         tx_meta = {
@@ -533,6 +493,5 @@ PART = r'''\
                             "transaction_id": refund_tx,
                             "tenant_id": tenant_id,
 '''
-
 def get_part() -> str:
     return PART
