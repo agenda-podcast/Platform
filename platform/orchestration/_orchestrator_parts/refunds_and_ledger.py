@@ -134,6 +134,9 @@ PART = r'''\
         awaiting_publish = (reduced == "AWAITING_PUBLISH")
         final_status = "PARTIAL" if awaiting_publish else reduced
 
+        if final_status != "COMPLETED":
+            any_workorder_not_completed = True
+
         print(
             f"[orchestrator] work_order_id={work_order_id} status={final_status} plan_type={plan_type} "
             f"completed_steps={completed_steps}"
@@ -259,8 +262,8 @@ PART = r'''\
     except Exception as e:
         print(f"[billing-state][WARN] failed to persist billing-state tables: {e}")
 
-    # Adapter mode: orchestrator no longer persists billing-state tables directly.
-    # LedgerWriter and RunStateStore are the only write paths.
+    return 1 if any_workorder_not_completed else 0
+
 '''
 
 def get_part() -> str:
