@@ -134,9 +134,6 @@ PART = r'''\
         awaiting_publish = (reduced == "AWAITING_PUBLISH")
         final_status = "PARTIAL" if awaiting_publish else reduced
 
-        if final_status != "COMPLETED":
-            overall_failed = True
-
         print(
             f"[orchestrator] work_order_id={work_order_id} status={final_status} plan_type={plan_type} "
             f"completed_steps={completed_steps}"
@@ -261,8 +258,6 @@ PART = r'''\
         billing.save_table("github_assets_map.csv", asset_map, headers=GITHUB_ASSETS_MAP_HEADERS)
     except Exception as e:
         print(f"[billing-state][WARN] failed to persist billing-state tables: {e}")
-
-    return 1 if overall_failed else 0
 
     # Adapter mode: orchestrator no longer persists billing-state tables directly.
     # LedgerWriter and RunStateStore are the only write paths.

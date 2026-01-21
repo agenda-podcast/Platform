@@ -224,7 +224,7 @@ class OrchestratorContext:
     runtime_profile_name: str
 
 
-def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path, enable_github_releases: bool = False, infra: InfraBundle | None = None) -> int:
+def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path, enable_github_releases: bool = False, infra: InfraBundle | None = None) -> None:
     if infra is None:
         from ..infra.config import load_runtime_profile
         from ..infra.factory import build_infra
@@ -352,8 +352,6 @@ def run_orchestrator(repo_root: Path, billing_state_dir: Path, runtime_dir: Path
                     break
             if wants_releases:
                 enable_github_releases = True
-
-    overall_failed = False
 
     for item in workorders:
         w = dict(item["workorder"])

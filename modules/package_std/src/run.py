@@ -144,6 +144,9 @@ def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
     inputs = params.get("inputs") if isinstance(params.get("inputs"), dict) else {}
     bound = inputs.get("bound_outputs") if "bound_outputs" in inputs else params.get("bound_outputs")
 
+    allow_missing = inputs.get("allow_missing_outputs") if isinstance(inputs.get("allow_missing_outputs"), bool) else params.get("allow_missing_outputs")
+    allow_missing = bool(allow_missing)
+
     if not isinstance(bound, list) or not bound:
         return _error(outputs_dir, "missing_required_input", "Input 'bound_outputs' is required and must be a non-empty list")
 
@@ -255,13 +258,13 @@ def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
             _stage_one(f, dest_path)
 
 
-    if missing_outputs:
+    missing_pairs = [
+        {"step_id": str(m.get("step_id") or ""), "output_id": str(m.get("output_id") or "")}
+        for m in missing_outputs
+    ]
+
+    if missing_pairs and not allow_missing:
         # Runtime validation: bound_outputs referenced outputs that cannot be packaged.
-        # Provide a structured payload listing missing {step_id, output_id} pairs.
-        missing_pairs = [
-            {"step_id": str(m.get("step_id") or ""), "output_id": str(m.get("output_id") or "")}
-            for m in missing_outputs
-        ]
         return _fail(
             outputs_dir,
             "package_failed",
@@ -278,6 +281,8 @@ def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
         "schema_version": 1,
         "module_id": MODULE_ID,
         "files": files_meta,
+        "missing_outputs": missing_pairs,
+        "allow_missing_outputs": allow_missing,
     }
 
     manifest_json_path = outputs_dir / "manifest.json"
@@ -294,5 +299,6 @@ def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
         "metadata": {
             "module_id": MODULE_ID,
             "file_count": len(files_meta),
+            "missing_outputs_count": len(missing_pairs),
         },
     }

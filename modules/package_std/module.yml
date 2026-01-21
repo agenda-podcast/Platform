@@ -14,7 +14,8 @@ ports:
       format: application/json
       description: List of output bindings to include in the package. Each item binds
         an upstream step output using from_step + output_id and optionally renames
-        it in the ZIP via as_path. Supports file outputs and directory outputs. When a directory is bound, all files under it are included recursively under as_path.
+        it in the ZIP via as_path. Supports file outputs and directory outputs. When
+        a directory is bound, all files under it are included recursively under as_path.
       schema:
         minItems: 1
       examples:
@@ -36,6 +37,11 @@ ports:
         - as_path
         allowed_selectors: []
         selector_rules: {}
+    - id: allow_missing_outputs
+      type: boolean
+      required: false
+      description: If true, missing bound outputs are skipped and listed in manifest.warnings.missing_outputs.
+        If false (default), any missing output causes FAILED.
     limited_port: []
   outputs:
     port:

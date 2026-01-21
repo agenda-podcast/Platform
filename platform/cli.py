@@ -57,14 +57,14 @@ def cmd_orchestrate(args: argparse.Namespace) -> int:
         runtime_dir=runtime_dir,
     )
 
-    rc = run_orchestrator(
+    run_orchestrator(
         repo_root=repo_root,
         billing_state_dir=billing_state_dir,
         runtime_dir=runtime_dir,
         enable_github_releases=enable_releases,
         infra=infra,
     )
-    return int(rc or 0)
+    return 0
 
 
 def cmd_module_exec(args: argparse.Namespace) -> int:
