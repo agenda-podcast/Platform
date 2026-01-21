@@ -30,6 +30,7 @@ concurrency:
 jobs:
   admin_topup:
     runs-on: ubuntu-latest
+    environment: Main
     steps:
       - name: Checkout
         uses: actions/checkout@v4

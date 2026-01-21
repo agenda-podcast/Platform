@@ -30,6 +30,7 @@ on:
 jobs:
   orchestrator:
     runs-on: ubuntu-latest
+    environment: Main
     permissions:
       contents: write
 
