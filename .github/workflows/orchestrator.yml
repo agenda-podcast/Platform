@@ -66,8 +66,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          override="${{ inputs.work_order_id_override || '' }}"
-          choice="${{ inputs.work_order_id || inputs.work_order_id || '__MANUAL__' }}"
+          # NOTE: GitHub provides different input contexts depending on trigger.
+          # - workflow_dispatch: github.event.inputs.*
+          # - workflow_call:     inputs.*
+          # Using the wrong context can make the workflow invalid and hide it from the Actions UI.
+          override="${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.work_order_id_override) || inputs.work_order_id_override || '' }}"
+          choice="${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.work_order_id) || inputs.work_order_id || '__MANUAL__' }}"
 
           if [ -n "${override}" ]; then
             wo="${override}"
@@ -89,19 +93,19 @@ jobs:
           RUN_DIR="runtime/orchestrator/single/${WO}"
           mkdir -p "${RUN_DIR}"
           python - <<'PY'
-from pathlib import Path
-import os
+          from pathlib import Path
+          import os
 
-wo = os.environ["WO"]
-run_dir = Path(os.environ["RUN_DIR"])
-csv_path = run_dir / "workorders_index.single.csv"
-csv_path.write_text(
-    "tenant_id,work_order_id,path,enabled\n"
-    f"00000t,{wo},tenants/00000t/workorders/{wo}.yml,true\n",
-    encoding="utf-8",
-)
-print(f"[orchestrator] wrote {csv_path.as_posix()}")
-PY
+          wo = os.environ["WO"]
+          run_dir = Path(os.environ["RUN_DIR"])
+          csv_path = run_dir / "workorders_index.single.csv"
+          csv_path.write_text(
+              "tenant_id,work_order_id,path,enabled\n"
+              f"00000t,{wo},tenants/00000t/workorders/{wo}.yml,true\n",
+              encoding="utf-8",
+          )
+          print(f"[orchestrator] wrote {csv_path.as_posix()}")
+          PY
         env:
           WO: ${{ steps.resolve.outputs.wo }}
           RUN_DIR: runtime/orchestrator/single/${{ steps.resolve.outputs.wo }}
