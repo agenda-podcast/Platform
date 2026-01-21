@@ -68,14 +68,17 @@ jobs:
           python - <<'PY'
           import csv
           import os
+
           wo = os.environ["WO"]
           out_dir = os.path.join("runtime", "orchestrator", "single", wo)
           os.makedirs(out_dir, exist_ok=True)
+
           out_path = os.path.join(out_dir, "workorders_index.single.csv")
           with open(out_path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
-            w.writerow(["tenant_id","work_order_id","path","enabled"])
+            w.writerow(["tenant_id", "work_order_id", "path", "enabled"])
             w.writerow(["00000t", wo, f"tenants/00000t/workorders/{wo}.yml", "true"])
+
           print(f"[orchestrator] wrote {out_path}")
           PY
         env:
@@ -84,20 +87,18 @@ jobs:
       - name: Bootstrap billing-state from release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           mkdir -p ".billing-state" "runtime"
-          python scripts/bootstrap_billing_state_from_release.py --billing-state-dir ".billing-state"
+          python scripts/bootstrap_billing_state_from_release.py             --repo "$GITHUB_REPOSITORY"             --billing-state-dir ".billing-state"
 
       - name: Run orchestrator
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          python -m platform.cli orchestrator \
-            --work-order-id "${{ steps.resolve.outputs.wo }}" \
-            --billing-state-dir ".billing-state" \
-            --runtime-dir "runtime/orchestrator"
+          python -m platform.cli orchestrator             --work-order-id "${{ steps.resolve.outputs.wo }}"             --billing-state-dir ".billing-state"             --runtime-dir "runtime/orchestrator"
 
       - name: Upload runtime evidence zips
         if: always()
