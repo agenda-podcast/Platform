@@ -17,6 +17,7 @@ cache:
   enabled: true
   retention_default: 1w
   key_inputs:
+  - mock_mode
   - queries
   - safe
   - max_items_per_query
@@ -203,6 +204,13 @@ ports:
           minLength: 1
           maxLength: 256
       item_type: string
+    - id: mock_mode
+      type: boolean
+      required: false
+      default: false
+      format: text/plain
+      case_sensitive: false
+      description: When true, do not call external APIs; generate deterministic mock results.
     - id: rights
       type: string
       required: false

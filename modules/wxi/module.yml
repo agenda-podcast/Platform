@@ -18,6 +18,7 @@ cache:
   enabled: true
   retention_default: 1w
   key_inputs:
+    - mock_mode
     - queries
     - safe
     - max_items_per_query
@@ -107,6 +108,14 @@ ports:
         schema:
           nullable: true
           enum: [black, blue, brown, gray, green, orange, pink, purple, red, teal, white, yellow, null]
+
+      - id: mock_mode
+        type: boolean
+        required: false
+        default: false
+        format: text/plain
+        case_sensitive: false
+        description: "When true, do not call external APIs; generate deterministic mock results."
 
     limited_port:
       - id: search_type
