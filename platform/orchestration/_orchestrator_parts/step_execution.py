@@ -94,6 +94,65 @@ PART = r'''\
                 )
             except Exception:
                 pass
+
+            # Persist runtime evidence for preflight failures so CI can always upload a zip.
+            # This is done inline because this code path uses `continue`.
+            try:
+                preflight_root = runtime_dir / 'runs' / tenant_id / work_order_id
+                ensure_dir(preflight_root)
+                (preflight_root / 'preflight_failed.json').write_text(
+                    json.dumps(
+                        {
+                            'type': 'preflight_failed',
+                            'tenant_id': tenant_id,
+                            'work_order_id': work_order_id,
+                            'created_at': ended,
+                            'reason_code': rc,
+                            'missing_secrets': e.missing,
+                        },
+                        indent=2,
+                        sort_keys=False,
+                    )
+                    + "\n",
+                    encoding='utf-8',
+                )
+            except Exception:
+                pass
+
+            try:
+                receipt = persist_runtime_evidence_into_billing_state(
+                    billing_state_dir=billing_state_dir,
+                    runtime_dir=runtime_dir,
+                    tenant_id=tenant_id,
+                    work_order_id=work_order_id,
+                    run_stamp_iso=ended,
+                )
+                if receipt is not None:
+                    zip_path, manifest_path = receipt
+                    try:
+                        now_dt = datetime.now(timezone.utc).replace(microsecond=0)
+                        cache_index_upsert(
+                            cache_index,
+                            platform_cfg=platform_cfg,
+                            ttl_days_by_place_type=cache_ttl_days_by_place_type,
+                            place='billing_state',
+                            typ='runtime_evidence',
+                            ref=str(Path('runtime_evidence_zips') / zip_path.name),
+                            now_dt=now_dt,
+                        )
+                        cache_index_upsert(
+                            cache_index,
+                            platform_cfg=platform_cfg,
+                            ttl_days_by_place_type=cache_ttl_days_by_place_type,
+                            place='billing_state',
+                            typ='runtime_evidence_manifest',
+                            ref=str(Path('runtime_evidence_zips') / manifest_path.name),
+                            now_dt=now_dt,
+                        )
+                    except Exception:
+                        pass
+            except Exception as ev_e:
+                print(f"[runtime_evidence][WARN] failed to persist preflight evidence: {ev_e}")
             continue
 
 
@@ -345,7 +404,19 @@ PART = r'''\
             if st_module_id not in ports_cache:
                 ports_cache[st_module_id] = _load_module_ports(registry, st_module_id)
             _t_in, _p_in, _t_out = _ports_index(ports_cache[st_module_id])
-            step_allowed_outputs[st_step_id] = set(_t_out)
+            # allowed_outputs is a set of tenant-visible OUTPUT PATHS (not output_ids).
+            # Input bindings reference either:
+            #  - output bindings: {from_step, output_id} -> OutputRecord.path
+            #  - file bindings: {from_step, from_file} -> relative path under upstream outputs_dir
+            # Both cases are path-based, so we enforce exposure at the path level.
+            allowed_paths = set()
+            for _oid, _odef in (_t_out or {}).items():
+                if not isinstance(_odef, dict):
+                    continue
+                _p = str(_odef.get("path") or "").lstrip("/").strip()
+                if _p:
+                    allowed_paths.add(_p)
+            step_allowed_outputs[st_step_id] = allowed_paths
 
         # Execute steps (modules-only workorders and steps-based chaining workorders)
         for step in plan:

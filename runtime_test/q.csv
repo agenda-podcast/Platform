@@ -1,0 +1,2 @@
+tenant_id,work_order_id,path,enabled
+00000t,PlatWn0V,tenants/00000t/workorders/PlatWn0V.yml,true

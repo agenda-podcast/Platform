@@ -34,8 +34,17 @@ jobs:
       contents: write
 
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Required by scripts/billing_state_publish.py
+      GITHUB_TOKEN: ${{ github.token }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+
+      # Used by gh CLI and some helper scripts
+      GH_TOKEN: ${{ github.token }}
       BILLING_GH_REPO: ${{ github.repository }}
+
+      # Optional: allow secretstore decryption in CI if configured.
+      SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE != '' && secrets.SECRETSTORE_PASSPHRASE || secrets.SECRETSTORE_PASSWORD || '' }}
+      SECRETSTORE_PASSPHRASE_B64: ${{ secrets.SECRETSTORE_PASSPHRASE_B64 != '' && secrets.SECRETSTORE_PASSPHRASE_B64 || secrets.SECRETSTORE_PASSWORD_B64 || '' }}
 
     steps:
       - name: Checkout
@@ -70,8 +79,8 @@ jobs:
           # - workflow_dispatch: github.event.inputs.*
           # - workflow_call:     inputs.*
           # Using the wrong context can make the workflow invalid and hide it from the Actions UI.
-          override="${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.work_order_id_override) || inputs.work_order_id_override || '' }}"
-          choice="${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.work_order_id) || inputs.work_order_id || '__MANUAL__' }}"
+          override="${{ inputs.work_order_id_override != '' && inputs.work_order_id_override || github.event.inputs.work_order_id_override || '' }}"
+          choice="${{ inputs.work_order_id != '' && inputs.work_order_id || github.event.inputs.work_order_id || '__MANUAL__' }}"
 
           if [ -n "${override}" ]; then
             wo="${override}"
@@ -95,20 +104,43 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import os
-
+          
           wo = os.environ["WO"]
           run_dir = Path(os.environ["RUN_DIR"])
           csv_path = run_dir / "workorders_index.single.csv"
           csv_path.write_text(
-              "tenant_id,work_order_id,path,enabled\n"
-              f"00000t,{wo},tenants/00000t/workorders/{wo}.yml,true\n",
-              encoding="utf-8",
+          "tenant_id,work_order_id,path,enabled\n"
+          f"00000t,{wo},tenants/00000t/workorders/{wo}.yml,true\n",
+          encoding="utf-8",
           )
           print(f"[orchestrator] wrote {csv_path.as_posix()}")
           PY
         env:
           WO: ${{ steps.resolve.outputs.wo }}
           RUN_DIR: runtime/orchestrator/single/${{ steps.resolve.outputs.wo }}
+
+      - name: Secretstore diagnostics (non-sensitive)
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          from platform.secretstore.loader import load_secretstore
+          
+          repo_root = Path('.').resolve()
+          gpg_path = repo_root / 'platform' / 'secretstore' / 'secretstore.json.gpg'
+          has_pass = bool((os.environ.get('SECRETSTORE_PASSPHRASE') or '').rstrip('\r\n') or (os.environ.get('SECRETSTORE_PASSPHRASE_B64') or '').strip())
+          
+          print(f"[secretstore][diag] gpg_path_exists={gpg_path.exists()}")
+          print(f"[secretstore][diag] passphrase_provided={has_pass}")
+          
+          store = load_secretstore(repo_root)
+          mods = store.raw.get('modules') if isinstance(store.raw, dict) else {}
+          ints = store.raw.get('integrations') if isinstance(store.raw, dict) else {}
+          print(f"[secretstore][diag] store_version={store.version}")
+          print(f"[secretstore][diag] modules_count={len(mods) if isinstance(mods, dict) else 0}")
+          print(f"[secretstore][diag] integrations_count={len(ints) if isinstance(ints, dict) else 0}")
+          PY
 
       - name: Run orchestrator (wrapper)
         run: |

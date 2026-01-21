@@ -1,0 +1,1 @@
+tenant_id,work_order_id,step_id,module_id,deliverable_id,artifact_key,artifact_uri,content_type,status,created_at,idempotency_key,sha256,bytes,bytes_size,metadata_json

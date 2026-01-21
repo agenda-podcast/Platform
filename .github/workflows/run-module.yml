@@ -52,7 +52,8 @@ jobs:
       - name: Execute module
         if: steps.modcache.outputs.cache-hit != 'true'
         env:
-          SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE }}
+          SECRETSTORE_PASSPHRASE: ${{ secrets.SECRETSTORE_PASSPHRASE != '' && secrets.SECRETSTORE_PASSPHRASE || secrets.SECRETSTORE_PASSWORD || '' }}
+          SECRETSTORE_PASSPHRASE_B64: ${{ secrets.SECRETSTORE_PASSPHRASE_B64 != '' && secrets.SECRETSTORE_PASSPHRASE_B64 || secrets.SECRETSTORE_PASSWORD_B64 || '' }}
         run: |
           mkdir -p runtime/manual
           python -m platform.cli module-exec \
@@ -64,7 +65,7 @@ jobs:
       - name: Publish module outputs to Release
         if: success()
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           TAG="module-${{ inputs.module_id }}-${{ github.run_id }}"
           TITLE="Module outputs: ${{ inputs.module_id }} (run ${{ github.run_id }})"

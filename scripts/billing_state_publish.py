@@ -65,8 +65,14 @@ def upload_assets(tag: str, files: list[str]) -> list[str]:
     return uploaded
 
 def main() -> int:
-    _require_env("GITHUB_TOKEN")
-    _require_env("GITHUB_REPOSITORY")
+    # In CI we require a token to publish to the release tag.
+    # For local/offline runs we do not fail the orchestrator; we simply skip publishing.
+    if not os.environ.get("GITHUB_TOKEN", "").strip() or not os.environ.get("GITHUB_REPOSITORY", "").strip():
+        if os.environ.get("GITHUB_ACTIONS", "").strip().lower() == "true":
+            _require_env("GITHUB_TOKEN")
+            _require_env("GITHUB_REPOSITORY")
+        print("[BILLING_PUBLISH][SKIP] missing GITHUB_TOKEN or GITHUB_REPOSITORY")
+        return 0
     if not os.path.isdir(BILLING_DIR):
         raise SystemExit(f"[BILLING_PUBLISH][ERR] not a directory: {BILLING_DIR}")
     ensure_release(TAG)
