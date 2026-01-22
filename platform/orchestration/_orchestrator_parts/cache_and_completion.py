@@ -18,16 +18,17 @@ PART = r'''\
                             raise KeyError(f"Unknown input '{k}' for module {mid}")
                     # Inject defaults (tenant + platform) before binding resolution.
                     merged_spec: Dict[str, Any] = dict(inputs_spec)
-                    for pid, pspec in tenant_inputs.items():
-                        if pid not in merged_spec and "default" in pspec:
-                            merged_spec[pid] = pspec.get("default")
-                    for pid, pspec in platform_inputs.items():
-                        if pid not in merged_spec and "default" in pspec:
-                            merged_spec[pid] = pspec.get("default")
-                    # Deliverables may request platform-only flags; these override tenant inputs and defaults.
-                    for k, v in (applied_limited_inputs or {}).items():
-                        merged_spec[k] = v
-                    resolved_inputs = _resolve_inputs(merged_spec, step_outputs, step_allowed_outputs, step_output_defs, run_state, tenant_id, work_order_id)
+                    if tenant_inputs:
+                        for pid, pspec in tenant_inputs.items():
+                            if pid in merged_spec or not bool(pspec.get('required', False)):
+                                continue
+                            for prev_sid in reversed(completed_steps):
+                                if pid in (step_output_specs_by_step.get(prev_sid) or {}):
+                                    merged_spec[pid] = {'from_step': prev_sid, 'output_id': pid}
+                                    break
+                    if mid == 'package_std' and (not isinstance(merged_spec.get('bound_outputs'), list) or not merged_spec.get('bound_outputs')):
+                        merged_spec['bound_outputs'] = [{'from_step': psid, 'output_id': oid} for psid in completed_steps for oid in (step_output_specs_by_step.get(psid) or {})]
+                    resolved_inputs = _resolve_inputs(merged_spec, step_outputs, step_allowed_outputs, run_state, tenant_id, work_order_id, step_output_specs_by_step, step_id_to_module_id)
                     # Required tenant inputs must be present and non-empty after resolution.
                     for pid, pspec in tenant_inputs.items():
                         if not bool(pspec.get("required", False)):
@@ -39,7 +40,7 @@ PART = r'''\
                             raise ValueError(f"Missing required input '{pid}' for module {mid}")
                 else:
                     # Legacy permissive behavior: if module has no ports, accept any inputs.
-                    resolved_inputs = _resolve_inputs(inputs_spec, step_outputs, step_allowed_outputs, run_state, tenant_id, work_order_id)
+                    resolved_inputs = _resolve_inputs(inputs_spec, step_outputs, step_allowed_outputs, run_state, tenant_id, work_order_id, step_output_specs_by_step, step_id_to_module_id)
                 resolve_error = ""
             except Exception as e:
                 resolved_inputs = {}

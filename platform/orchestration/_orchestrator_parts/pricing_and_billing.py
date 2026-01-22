@@ -104,21 +104,24 @@ def _resolve_inputs(
     inputs_spec: Any,
     step_outputs: Dict[str, Path],
     allowed_outputs: Dict[str, Set[str]],
-    output_defs: Dict[str, Dict[str, str]],
     run_state: Any,
     tenant_id: str,
     work_order_id: str,
+    step_output_specs_by_step: Dict[str, Dict[str, Dict[str, str]]],
+    step_id_to_module_id: Dict[str, str],
 ) -> Any:
     """Resolve bindings within an inputs spec.
 
     Supported binding forms:
       - file selector binding: {from_step, from_file, selector, ...}
-      - output binding (Option A): {from_step, output_id, ...} returning a resolved OutputRecord dict
+      - output binding: {from_step, output_id, ...} returning a resolved OutputRecord dict
 
-    Rules:
-      - bindings may appear at any depth (inside dicts/lists)
-      - for file bindings, from_file must be exposed by upstream step (tenant-visible outputs)
-      - for output bindings, output_id must exist in run_state and its output path must be exposed
+    Output binding resolution order:
+      1) run_state.get_output (preferred)
+      2) contract-derived path (step_output_specs_by_step) + filesystem existence
+
+    Exposure enforcement:
+      - exposure is path-based (tenant-visible output paths)
     """
     if _is_binding(inputs_spec):
         src = inputs_spec
@@ -133,55 +136,51 @@ def _resolve_inputs(
 
         output_id = str(src.get("output_id") or src.get("from_output_id") or "").strip()
         if output_id:
+            allowed = allowed_outputs.get(from_step) or set()
+            spec = (step_output_specs_by_step.get(from_step) or {}).get(output_id) or {}
+            rel_path = str(spec.get("path") or "").lstrip("/").strip()
+
+            rec = None
             try:
                 rec = run_state.get_output(tenant_id, work_order_id, from_step, output_id)
-            except Exception as e:
-                # Fallback: if run_state output log was not written for the upstream step,
-                # resolve by contract-defined path and filesystem existence.
-                try:
-                    from platform.infra.errors import NotFoundError
-                except Exception:
-                    NotFoundError = Exception  # type: ignore
-                if not isinstance(e, NotFoundError):
-                    raise
-                rel = ""
-                try:
-                    rel = str((output_defs.get(from_step) or {}).get(output_id) or "").lstrip("/").strip()
-                except Exception:
-                    rel = ""
-                if not rel:
-                    raise
-                abs_path = (step_outputs[from_step] / rel)
-                if not abs_path.exists():
-                    raise
-                out = {
-                    "tenant_id": tenant_id,
-                    "work_order_id": work_order_id,
-                    "step_id": from_step,
-                    "module_id": "",
-                    "kind": "transform",
-                    "output_id": output_id,
-                    "path": rel,
-                    "uri": abs_path.resolve().as_uri(),
-                    "content_type": "",
-                    "sha256": "",
-                    "bytes": 0,
-                    "bytes_size": 0,
-                    "created_at": "",
-                    "metadata": {},
-                }
-                if "as_path" in src:
-                    out["as_path"] = src.get("as_path")
-                elif "as" in src:
-                    out["as_path"] = src.get("as")
-                return out
+            except Exception:
+                rec = None
 
-            allowed = allowed_outputs.get(from_step) or set()
-            if allowed and rec.path and rec.path not in allowed:
-                raise PermissionError(
-                    f"binding.output_id '{output_id}' is not exposed by upstream step '{from_step}' (allowed: {sorted(allowed)})"
-                )
-            out = asdict(rec)
+            out = asdict(rec) if rec is not None else {}
+
+            # Prefer contract-derived path when available
+            if rel_path:
+                if allowed and rel_path not in allowed:
+                    raise PermissionError(
+                        f"binding.output_id '{output_id}' is not exposed by upstream step '{from_step}' (allowed: {sorted(allowed)})"
+                    )
+                out["path"] = rel_path
+            else:
+                rel_path = str(out.get("path") or "").lstrip("/").strip()
+                if not rel_path:
+                    raise KeyError(f"Upstream output_id '{output_id}' is not declared and has no recorded path")
+                if allowed and rel_path not in allowed:
+                    raise PermissionError(
+                        f"binding.output_id '{output_id}' is not exposed by upstream step '{from_step}' (allowed: {sorted(allowed)})"
+                    )
+
+            abs_path = step_outputs[from_step] / rel_path
+            if abs_path.exists():
+                if not out.get("uri"):
+                    out["uri"] = f"file://{abs_path}"
+            else:
+                if not out.get("uri"):
+                    raise FileNotFoundError(f"Upstream output missing: step={from_step} output_id={output_id} path={rel_path}")
+
+            out.setdefault("tenant_id", tenant_id)
+            out.setdefault("work_order_id", work_order_id)
+            out["step_id"] = from_step
+            out["module_id"] = step_id_to_module_id.get(from_step, str(out.get("module_id") or ""))
+            out["output_id"] = output_id
+            out["path"] = rel_path
+            if "content_type" not in out:
+                out["content_type"] = str(spec.get("format") or "").strip()
+
             if "as_path" in src:
                 out["as_path"] = src.get("as_path")
             elif "as" in src:
@@ -200,9 +199,33 @@ def _resolve_inputs(
         return _load_binding_value(step_outputs[from_step], src)
 
     if isinstance(inputs_spec, dict):
-        return {k: _resolve_inputs(v, step_outputs, allowed_outputs, run_state, tenant_id, work_order_id) for k, v in inputs_spec.items()}
+        return {
+            k: _resolve_inputs(
+                v,
+                step_outputs,
+                allowed_outputs,
+                run_state,
+                tenant_id,
+                work_order_id,
+                step_output_specs_by_step,
+                step_id_to_module_id,
+            )
+            for k, v in inputs_spec.items()
+        }
     if isinstance(inputs_spec, list):
-        return [_resolve_inputs(v, step_outputs, allowed_outputs, run_state, tenant_id, work_order_id) for v in inputs_spec]
+        return [
+            _resolve_inputs(
+                v,
+                step_outputs,
+                allowed_outputs,
+                run_state,
+                tenant_id,
+                work_order_id,
+                step_output_specs_by_step,
+                step_id_to_module_id,
+            )
+            for v in inputs_spec
+        ]
     return inputs_spec
 def _build_execution_plan(workorder: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Normalize a workorder into an ordered execution plan.

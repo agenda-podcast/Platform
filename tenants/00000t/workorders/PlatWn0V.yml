@@ -67,7 +67,6 @@ steps:
     - from_step: s2u
       output_id: report
       as_path: search_images/report.json
-    allow_missing_outputs: true
 - step_id: d4x
   step_name: deliver_github_release
   module_id: deliver_github_release

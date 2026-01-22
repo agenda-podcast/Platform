@@ -396,6 +396,8 @@ PART = r'''\
         # Ports (tenant-visible vs platform-only) and output exposure rules.
         ports_cache: Dict[str, Dict[str, Any]] = {}
         step_allowed_outputs: Dict[str, Set[str]] = {}
+        step_output_specs_by_step: Dict[str, Dict[str, Dict[str, str]]] = {}
+        step_id_to_module_id: Dict[str, str] = {}
         for st in plan:
             st_step_id = str(st.get("step_id") or "").strip()
             st_module_id = canon_module_id(st.get("module_id") or "")
@@ -413,6 +415,17 @@ PART = r'''\
             # Enforce exposure at the path level (not output_id).
             allowed_paths = set(_t_out or set())
             step_allowed_outputs[st_step_id] = allowed_paths
+            step_id_to_module_id[st_step_id] = st_module_id
+            out_specs: Dict[str, Dict[str, str]] = {}
+            for op in (ports_cache[st_module_id].get('outputs_port') or []):
+                if not isinstance(op, dict):
+                    continue
+                oid = str(op.get('id') or '').strip()
+                pth = str(op.get('path') or '').lstrip('/').strip()
+                fmt = str(op.get('format') or op.get('content_type') or '').strip()
+                if oid and pth:
+                    out_specs[oid] = {'path': pth, 'format': fmt}
+            step_output_specs_by_step[st_step_id] = out_specs
 
         # Execute steps (modules-only workorders and steps-based chaining workorders)
         for step in plan:

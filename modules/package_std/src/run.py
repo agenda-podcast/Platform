@@ -254,30 +254,24 @@ def run(params: Dict[str, Any], outputs_dir: Path) -> Dict[str, Any]:
                 return _error(outputs_dir, "bad_input_format", f"bound_outputs[{i}] invalid derived path: {e}")
             _stage_one(f, dest_path)
 
-
-    if missing_outputs:
-        # Runtime validation: bound_outputs referenced outputs that cannot be packaged.
-        # Provide a structured payload listing missing {step_id, output_id} pairs.
-        missing_pairs = [
-            {"step_id": str(m.get("step_id") or ""), "output_id": str(m.get("output_id") or "")}
-            for m in missing_outputs
-        ]
-        return _fail(
-            outputs_dir,
-            "package_failed",
-            {
-                "message": "One or more bound outputs were missing at runtime",
-                "missing_outputs": missing_pairs,
-            },
-        )
+    # Pack-as-is policy: missing bound outputs do not hard-fail packaging.
+    # We only fail if nothing is staged.
+    missing_pairs = [
+        {"step_id": str(m.get("step_id") or ""), "output_id": str(m.get("output_id") or "")}
+        for m in (missing_outputs or [])
+    ]
 
     # Deterministic ordering.
     files_meta = sorted(files_meta, key=lambda r: (str(r.get("dest_path") or ""), str(r.get("sha256") or "")))
+
+    if not files_meta:
+        return _fail(outputs_dir, "package_failed", {"message": "No files were staged for packaging", "missing_outputs": missing_pairs})
 
     manifest = {
         "schema_version": 1,
         "module_id": MODULE_ID,
         "files": files_meta,
+        "missing_outputs": missing_pairs,
     }
 
     manifest_json_path = outputs_dir / "manifest.json"
