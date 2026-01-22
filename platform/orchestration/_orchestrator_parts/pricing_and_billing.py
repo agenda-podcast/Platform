@@ -104,6 +104,7 @@ def _resolve_inputs(
     inputs_spec: Any,
     step_outputs: Dict[str, Path],
     allowed_outputs: Dict[str, Set[str]],
+    output_defs: Dict[str, Dict[str, str]],
     run_state: Any,
     tenant_id: str,
     work_order_id: str,
@@ -132,7 +133,49 @@ def _resolve_inputs(
 
         output_id = str(src.get("output_id") or src.get("from_output_id") or "").strip()
         if output_id:
-            rec = run_state.get_output(tenant_id, work_order_id, from_step, output_id)
+            try:
+                rec = run_state.get_output(tenant_id, work_order_id, from_step, output_id)
+            except Exception as e:
+                # Fallback: if run_state output log was not written for the upstream step,
+                # resolve by contract-defined path and filesystem existence.
+                try:
+                    from platform.infra.errors import NotFoundError
+                except Exception:
+                    NotFoundError = Exception  # type: ignore
+                if not isinstance(e, NotFoundError):
+                    raise
+                rel = ""
+                try:
+                    rel = str((output_defs.get(from_step) or {}).get(output_id) or "").lstrip("/").strip()
+                except Exception:
+                    rel = ""
+                if not rel:
+                    raise
+                abs_path = (step_outputs[from_step] / rel)
+                if not abs_path.exists():
+                    raise
+                out = {
+                    "tenant_id": tenant_id,
+                    "work_order_id": work_order_id,
+                    "step_id": from_step,
+                    "module_id": "",
+                    "kind": "transform",
+                    "output_id": output_id,
+                    "path": rel,
+                    "uri": abs_path.resolve().as_uri(),
+                    "content_type": "",
+                    "sha256": "",
+                    "bytes": 0,
+                    "bytes_size": 0,
+                    "created_at": "",
+                    "metadata": {},
+                }
+                if "as_path" in src:
+                    out["as_path"] = src.get("as_path")
+                elif "as" in src:
+                    out["as_path"] = src.get("as")
+                return out
+
             allowed = allowed_outputs.get(from_step) or set()
             if allowed and rec.path and rec.path not in allowed:
                 raise PermissionError(

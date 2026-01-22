@@ -27,7 +27,7 @@ PART = r'''\
                     # Deliverables may request platform-only flags; these override tenant inputs and defaults.
                     for k, v in (applied_limited_inputs or {}).items():
                         merged_spec[k] = v
-                    resolved_inputs = _resolve_inputs(merged_spec, step_outputs, step_allowed_outputs, run_state, tenant_id, work_order_id)
+                    resolved_inputs = _resolve_inputs(merged_spec, step_outputs, step_allowed_outputs, step_output_defs, run_state, tenant_id, work_order_id)
                     # Required tenant inputs must be present and non-empty after resolution.
                     for pid, pspec in tenant_inputs.items():
                         if not bool(pspec.get("required", False)):
