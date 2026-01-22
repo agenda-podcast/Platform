@@ -14,6 +14,7 @@ billing-state release assets.
 PART = r'''\
 
 import zipfile
+import hashlib
 
 
 def _safe_ts_for_path(iso_ts: str) -> str:
@@ -65,9 +66,6 @@ def persist_runtime_evidence_into_billing_state(
     stamp = _safe_ts_for_path(run_stamp_iso)
 
     src = runtime_dir / 'runs' / tenant_id / work_order_id
-    if not src.exists():
-        print(f"[runtime_evidence][SKIP] missing src: {src}")
-        return None
 
     out_dir = billing_state_dir / 'runtime_evidence_zips'
     ensure_dir(out_dir)
@@ -78,6 +76,7 @@ def persist_runtime_evidence_into_billing_state(
     manifest_path = out_dir / manifest_name
 
     files = _iter_files_deterministic(src)
+    src_missing = (not src.exists())
 
     # Zip content under a stable root so users can unzip cleanly.
     root_prefix = Path('runtime_evidence') / 'runs' / tenant_id / work_order_id
@@ -85,6 +84,11 @@ def persist_runtime_evidence_into_billing_state(
     manifest_files: List[Dict[str, str]] = []
 
     with zipfile.ZipFile(zip_path, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
+        if src_missing:
+            msg = f"missing runtime source dir: {src}\n"
+            arc0 = str(Path('runtime_evidence') / 'NO_RUNTIME_DIR.txt')
+            zf.writestr(arc0, msg)
+            manifest_files.append({'path': arc0, 'sha256': hashlib.sha256(msg.encode('utf-8')).hexdigest()})
         for p in files:
             rel = p.relative_to(src)
             arc = str(root_prefix / rel)

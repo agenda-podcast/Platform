@@ -28,6 +28,18 @@ PART = r'''\
             # Orchestrator continues even if run-state logging fails (dev mode ergonomics).
             pass
 
+        # Ensure runtime root exists for evidence even if execution aborts early.
+        try:
+            run_root = runtime_dir / 'runs' / tenant_id / work_order_id
+            ensure_dir(run_root)
+            wo_path = repo_root / str(item.get('path') or '')
+            if wo_path.exists():
+                (run_root / 'workorder.yml').write_text(wo_path.read_text(encoding='utf-8'), encoding='utf-8')
+            meta = {'type': 'run_started', 'tenant_id': tenant_id, 'work_order_id': work_order_id, 'created_at': utcnow_iso()}
+            (run_root / 'run_started.json').write_text(json.dumps(meta, separators=(',', ':')) + "\n", encoding='utf-8')
+        except Exception:
+            pass
+
         # Preflight secret requirements gate (all module kinds).
         try:
             _preflight_assert_required_secrets(repo_root=repo_root, store=store, plan=plan)
