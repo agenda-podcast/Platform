@@ -1,0 +1,62 @@
+work_order_id: PlatWnIm
+enabled: true
+mode: PARTIAL_ALLOWED
+metadata:
+  title: "Verify: Search images -> download -> package -> GitHub Release"
+  created_at: "2026-01-21T00:00:00Z"
+  notes: "Real Google CSE images search for Trump (XLARGE), downloads images, packages and delivers."
+artifacts_requested: true
+
+steps:
+  - step_id: s1I
+    step_name: search_images_trump_xlarge_10
+    module_id: wxi
+    kind: transform
+    reuse_output_type: cache
+    deliverables:
+      - images
+    inputs:
+      queries:
+        - "Trump"
+      img_size: xlarge
+      safe: active
+      max_items_per_query: 10
+
+  - step_id: p2I
+    step_name: package_images_and_manifest
+    module_id: package_std
+    kind: packaging
+    deliverables:
+      - package_artifacts
+    inputs:
+      bound_outputs:
+        - from_step: s1I
+          output_id: images_dir
+          as_path: "images"
+        - from_step: s1I
+          output_id: images_index
+          as_path: "images/index.jsonl"
+        - from_step: s1I
+          output_id: results
+          as_path: "search/results.jsonl"
+        - from_step: s1I
+          output_id: report
+          as_path: "search/report.json"
+
+  - step_id: d3I
+    step_name: deliver_images_zip_to_github_release
+    module_id: deliver_github_release
+    kind: delivery
+    deliverables:
+      - delivery_receipt
+      - delivery_log
+    inputs:
+      release_tag: auto
+      release_name: "Platform Verify Images - PlatWnIm"
+      release_notes: "Real images search: Trump (XLARGE, 10). Downloads images and packages outputs."
+      package_zip:
+        from_step: p2I
+        output_id: package_zip
+      manifest_json:
+        from_step: p2I
+        output_id: manifest_json

@@ -1,7 +1,6 @@
 tenant_id,work_order_id,enabled,schedule_cron,title,notes,path
-00000t,PlatDb0T,true,,"Platform verification (package -> Dropbox delivery, dev stub).","Deterministic baseline. Generates a small fixed binary, packages it, and delivers via Dropbox module in dev stub mode (no secrets required).",tenants/00000t/workorders/PlatDb0T.yml
-00000t,PlatEm0T,true,,"Platform verification (package -> email delivery, dev stub).","Deterministic baseline. Generates a small fixed binary, packages it, and delivers via email module in dev stub mode (no secrets required).",tenants/00000t/workorders/PlatEm0T.yml
-00000t,PlatWn0V,true,,World news topic (Google pages) -> 10 XLARGE images (Google images) -> package -> publish artifacts,Uses wxz (google_search_pages) and wxi (google_search_images) and package_std. Artifacts are requested so the run publishes outputs as artifacts.,tenants/00000t/workorders/PlatWn0V.yml
+00000t,PlatWnIm,true,,Verify: Search images -> download -> package -> GitHub Release,"Real Google CSE images search for Trump (XLARGE), downloads images, packages and delivers.",tenants/00000t/workorders/PlatWnIm.yml
+00000t,PlatWnPg,true,,Verify: Search pages -> package -> GitHub Release,Real Google CSE pages search. Packages JSON outputs and delivers to a GitHub Release.,tenants/00000t/workorders/PlatWnPg.yml
 nxlkGI,Q1DrivEu,false,,OneDrive delivery verification.,Steps chaining demo: 9SD -> wxi -> U2T -> package_std -> deliver_onedrive (dev stub by default).,tenants/nxlkGI/workorders/Q1DrivEu.yml
 nxlkGI,SeCrEt0u,false,,Secret preflight negative scenario.,Intentionally fails when required module secrets are missing.,tenants/nxlkGI/workorders/SeCrEt0u.yml
 nxlkGI,UbjkpxZO,false,,New module verification.,Steps chaining demo: 9SD -> wxi -> U2T.,tenants/nxlkGI/workorders/UbjkpxZO.yml

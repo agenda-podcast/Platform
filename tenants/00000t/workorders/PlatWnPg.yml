@@ -1,0 +1,55 @@
+work_order_id: PlatWnPg
+enabled: true
+mode: PARTIAL_ALLOWED
+metadata:
+  title: "Verify: Search pages -> package -> GitHub Release"
+  created_at: "2026-01-21T00:00:00Z"
+  notes: "Real Google CSE pages search. Packages JSON outputs and delivers to a GitHub Release."
+artifacts_requested: true
+
+steps:
+  - step_id: s1P
+    step_name: search_pages_most_important_news_today
+    module_id: wxz
+    kind: transform
+    reuse_output_type: cache
+    deliverables:
+      - tenant_outputs
+    inputs:
+      queries:
+        - "Most important news today"
+      safe: active
+      max_items_per_query: 10
+
+  - step_id: p2P
+    step_name: package_pages_json
+    module_id: package_std
+    kind: packaging
+    deliverables:
+      - package_artifacts
+    inputs:
+      bound_outputs:
+        - from_step: s1P
+          output_id: results
+          as_path: "pages/results.jsonl"
+        - from_step: s1P
+          output_id: report
+          as_path: "pages/report.json"
+
+  - step_id: d3P
+    step_name: deliver_pages_zip_to_github_release
+    module_id: deliver_github_release
+    kind: delivery
+    deliverables:
+      - delivery_receipt
+      - delivery_log
+    inputs:
+      release_tag: auto
+      release_name: "Platform Verify Pages - PlatWnPg"
+      release_notes: "Real pages search: Most important news today. Packaged outputs."
+      package_zip:
+        from_step: p2P
+        output_id: package_zip
+      manifest_json:
+        from_step: p2P
+        output_id: manifest_json
