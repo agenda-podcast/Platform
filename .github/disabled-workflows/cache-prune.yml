@@ -1,10 +1,12 @@
 name: Cache Prune
 
-on:
-  workflow_dispatch: {}
-  schedule:
-    - cron: '17 3 * * *'
-
+# DISABLED: original workflow event-dispatch rules are commented out.
+# on:
+#   workflow_dispatch: {}
+#   schedule:
+#     - cron: '17 3 * * *'
+# 
+on: {}
 permissions:
   actions: write
   contents: write

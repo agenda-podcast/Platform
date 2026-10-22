@@ -1,10 +1,12 @@
 name: Prod Shadow Mode (Nightly)
 
-on:
-  schedule:
-    - cron: "30 3 * * *"  # 03:30 UTC daily
-  workflow_dispatch:
-
+# DISABLED: original workflow event-dispatch rules are commented out.
+# on:
+#   schedule:
+#     - cron: "30 3 * * *"  # 03:30 UTC daily
+#   workflow_dispatch:
+# 
+on: {}
 permissions:
   contents: read
 

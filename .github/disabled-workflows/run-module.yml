@@ -1,17 +1,19 @@
 name: Run Module (Manual)
 
-on:
-  workflow_dispatch:
-    inputs:
-      module_id:
-        description: "3-digit module ID"
-        required: true
-        default: "U2T"
-      params_json:
-        description: "JSON of module params"
-        required: true
-        default: '{"topic":"Example","language":"en","freshness_days":3}'
-
+# DISABLED: original workflow event-dispatch rules are commented out.
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       module_id:
+#         description: "3-digit module ID"
+#         required: true
+#         default: "U2T"
+#       params_json:
+#         description: "JSON of module params"
+#         required: true
+#         default: '{"topic":"Example","language":"en","freshness_days":3}'
+# 
+on: {}
 permissions:
   contents: write
 

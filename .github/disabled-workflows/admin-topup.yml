@@ -1,25 +1,27 @@
 name: Admin topup reconcile
 
-on:
-  workflow_dispatch:
-    inputs:
-      tenant_id:
-        description: "Tenant ID (6-char Base62)"
-        required: true
-      amount_credits:
-        description: "Amount of credits to top up (positive integer)"
-        required: true
-      topup_method_id:
-        description: "Top-up method ID (2-char Base62) from platform/billing/topup_instructions.csv"
-        required: true
-      reference:
-        description: "External reference (wire id, receipt id, etc.)"
-        required: true
-      note:
-        description: "Optional note"
-        required: false
-        default: ""
-
+# DISABLED: original workflow event-dispatch rules are commented out.
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       tenant_id:
+#         description: "Tenant ID (6-char Base62)"
+#         required: true
+#       amount_credits:
+#         description: "Amount of credits to top up (positive integer)"
+#         required: true
+#       topup_method_id:
+#         description: "Top-up method ID (2-char Base62) from platform/billing/topup_instructions.csv"
+#         required: true
+#       reference:
+#         description: "External reference (wire id, receipt id, etc.)"
+#         required: true
+#       note:
+#         description: "Optional note"
+#         required: false
+#         default: ""
+# 
+on: {}
 permissions:
   contents: write
 

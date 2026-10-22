@@ -1,9 +1,11 @@
 name: Maintenance
 
-on:
-  push:
-  workflow_dispatch:
-
+# DISABLED: original workflow event-dispatch rules are commented out.
+# on:
+#   push:
+#   workflow_dispatch:
+# 
+on: {}
 permissions:
   contents: write
   pull-requests: write
