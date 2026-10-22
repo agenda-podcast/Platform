@@ -1,9 +1,11 @@
 name: Verify Platform
 
-on:
-  workflow_dispatch:
-  workflow_call:
-
+# DISABLED: original workflow event-dispatch rules are commented out.
+# on:
+#   workflow_dispatch:
+#   workflow_call:
+# 
+on: {}
 permissions:
   contents: read
 
